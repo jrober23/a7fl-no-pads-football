@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.9.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.10.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -104,7 +104,9 @@ Every one of them anchors on the ball: wherever it goes, that is what the pictur
 about, and the aim lags a few frames behind it the way a heavy lens does instead of
 snapping from spot to spot. That is what keeps a long run in the frame — the shot used
 to be pinned to the line of scrimmage, so a runner who got past the defence walked out
-of the corner of a picture still framing the snap.
+of the corner of a picture still framing the snap. When a pass is in the air the shot
+leans a quarter of the way toward where the ball is going, so the pan starts on the
+release rather than at the catch.
 
 Throw-offs have their own shot, because no fixed camera can hold both ends of a
 sixty-yard, three-and-a-half-second throw. It opens from the throwing team's end

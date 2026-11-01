@@ -14,6 +14,7 @@
 //!   and the cadence stays in a range a human could actually run in.
 
 use a7fl_core::math::{Rgb, Vec3};
+use a7fl_core::moves::Kind;
 use a7fl_core::team::{HairStyle, JerseyPattern, Player, Uniform};
 
 use crate::scene::Mesh;
@@ -33,6 +34,12 @@ pub struct Pose {
     pub celebrating: f32,
     /// 0 = facing, 1 = lateral shuffle.
     pub strafe: f32,
+    /// The move the carrier is in the middle of, if any. A move named in the text
+    /// bar is not a move: the figure has to be the thing that is spinning, jumping
+    /// or going to ground, or the player is being lied to.
+    pub motion: Option<Kind>,
+    /// 0..1 through the move.
+    pub motion_progress: f32,
 }
 
 /// One leg through a running stride: `(phase, thigh angle, knee flexion, foot pitch)`.
@@ -217,6 +224,54 @@ fn shoe(mesh: &mut Mesh, ankle: Vec3, pitch: f32, color: Rgb) {
         color,
         0.95,
     );
+}
+
+/// Turn a built figure about the vertical axis it stands on.
+fn yaw_mesh(mesh: &mut Mesh, angle: f32) {
+    let (s, c) = angle.sin_cos();
+    for t in mesh.tris.iter_mut() {
+        for p in [&mut t.a, &mut t.b, &mut t.c] {
+            let (x, y) = (p.x, p.y);
+            p.x = x * c - y * s;
+            p.y = x * s + y * c;
+        }
+    }
+}
+
+/// Tip a built figure forward or back about a lateral axis at height `pivot`,
+/// which is how a dive and a slide are made out of a standing body.
+fn pitch_mesh(mesh: &mut Mesh, pivot: f32, angle: f32) {
+    let (s, c) = angle.sin_cos();
+    for t in mesh.tris.iter_mut() {
+        for p in [&mut t.a, &mut t.b, &mut t.c] {
+            let x = p.x;
+            let z = p.z - pivot;
+            p.x = x * c + z * s;
+            p.z = pivot + z * c - x * s;
+        }
+    }
+}
+
+fn lift_mesh(mesh: &mut Mesh, dz: f32) {
+    for t in mesh.tris.iter_mut() {
+        for p in [&mut t.a, &mut t.b, &mut t.c] {
+            p.z += dz;
+        }
+    }
+}
+
+/// A body tipped over about its feet swings its heels through the ground. Set him
+/// back down on the turf so nothing is buried in it.
+fn raise_to_turf(mesh: &mut Mesh) {
+    let mut lowest = f32::MAX;
+    for t in mesh.tris.iter() {
+        for p in [t.a, t.b, t.c] {
+            lowest = lowest.min(p.z);
+        }
+    }
+    if lowest < SOLE {
+        lift_mesh(mesh, SOLE - lowest);
+    }
 }
 
 pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_seed: u32) -> Mesh {
@@ -604,6 +659,29 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
         }
     }
 
+    if let Some(kind) = pose.motion {
+        // Eased so the pose does not snap on the frame the move starts or ends.
+        let p = pose.motion_progress.clamp(0.0, 1.0);
+        let e = p * p * (3.0 - 2.0 * p);
+        match kind {
+            // One full turn with his feet under him.
+            Kind::Spin => yaw_mesh(&mut mesh, e * std::f32::consts::TAU),
+            // Up and over a man: the whole body leaves the turf on an arc and
+            // comes back down inside the length of the move.
+            Kind::Hurdle => lift_mesh(&mut mesh, (std::f32::consts::PI * p).sin() * 0.62),
+            // Forward and out over his feet, ending parallel to the ground.
+            Kind::Dive => {
+                pitch_mesh(&mut mesh, SOLE, e * 1.30);
+                raise_to_turf(&mut mesh);
+            }
+            // Down and back onto his hip, the way a quarterback gives himself up.
+            Kind::Slide => {
+                pitch_mesh(&mut mesh, SOLE, -e * 1.15);
+                raise_to_turf(&mut mesh);
+            }
+        }
+    }
+
     if pose.celebrating > 0.01 {
         for t in mesh.tris.iter_mut() {
             for p in [&mut t.a, &mut t.b, &mut t.c] {
@@ -689,5 +767,133 @@ mod tests {
     fn standing_pose_is_soft_kneed() {
         let angles = leg_angles(0.25, 0.0, 0.0);
         assert!(angles[1] > 0.05 && angles[1] < 0.2, "knee {:?}", angles[1]);
+    }
+
+    // ---------------------------------------------------------------
+    // Moves have to happen to the body, not only to a line of text.
+    // ---------------------------------------------------------------
+
+    fn figure(motion: Option<Kind>, progress: f32) -> Mesh {
+        let teams = a7fl_core::team::league_teams();
+        let pose = Pose {
+            run_phase: 0.3,
+            speed: 0.75,
+            carrying: true,
+            motion,
+            motion_progress: progress,
+            ..Default::default()
+        };
+        build_mesh(&teams[0].roster[0], &teams[0].home, &pose, 0)
+    }
+
+    /// `(x_min, x_max, y_min, y_max, z_min, z_max)` over every vertex.
+    fn bounds(mesh: &Mesh) -> (f32, f32, f32, f32, f32, f32) {
+        let mut b = (f32::MAX, f32::MIN, f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+        for t in &mesh.tris {
+            for p in [t.a, t.b, t.c] {
+                b.0 = b.0.min(p.x);
+                b.1 = b.1.max(p.x);
+                b.2 = b.2.min(p.y);
+                b.3 = b.3.max(p.y);
+                b.4 = b.4.min(p.z);
+                b.5 = b.5.max(p.z);
+            }
+        }
+        b
+    }
+
+    #[test]
+    fn a_dive_puts_the_figure_on_the_ground_and_out_in_front() {
+        let standing = bounds(&figure(None, 0.0));
+        let dive = bounds(&figure(Some(Kind::Dive), 1.0));
+        assert!(
+            dive.5 < standing.5 * 0.75,
+            "a dive has to end low: head was at {:.2}, now {:.2}",
+            standing.5,
+            dive.5
+        );
+        assert!(
+            dive.1 > standing.1 + 0.6,
+            "a dive has to reach out in front: {:.2} vs {:.2}",
+            standing.1,
+            dive.1
+        );
+        assert!(dive.4 > -0.05, "a dive cannot sink through the turf: {:.2}", dive.4);
+    }
+
+    #[test]
+    fn a_hurdle_takes_him_off_his_feet() {
+        let standing = bounds(&figure(None, 0.0));
+        let air = bounds(&figure(Some(Kind::Hurdle), 0.5));
+        assert!(
+            air.4 > standing.4 + 0.45,
+            "a hurdle has to leave the ground: soles were at {:.2}, are at {:.2}",
+            standing.4,
+            air.4
+        );
+        // And he comes back down inside the move instead of floating away.
+        let landed = bounds(&figure(Some(Kind::Hurdle), 1.0));
+        assert!((landed.4 - standing.4).abs() < 0.02, "the landing is {:.2}", landed.4);
+    }
+
+    fn corner(mesh: &Mesh, index: usize) -> Vec3 {
+        let t = &mesh.tris[index / 3];
+        match index % 3 {
+            0 => t.a,
+            1 => t.b,
+            _ => t.c,
+        }
+    }
+
+    #[test]
+    fn a_spin_turns_him_around() {
+        let rest = figure(None, 0.0);
+        let standing = bounds(&rest);
+        let spun = figure(Some(Kind::Spin), 0.25);
+        let full = bounds(&figure(Some(Kind::Spin), 1.0));
+
+        // The build is the same figure vertex for vertex, so the corner that is
+        // furthest forward at rest has to have been turned by exactly the eased
+        // angle. `p = 0.25` eases to 0.15625 of a turn.
+        let face = (0..rest.tris.len() * 3)
+            .max_by(|a, b| corner(&rest, *a).x.total_cmp(&corner(&rest, *b).x))
+            .expect("a vertex");
+        let before = corner(&rest, face);
+        let after = corner(&spun, face);
+        let p: f32 = 0.25;
+        let turn = p * p * (3.0 - 2.0 * p) * std::f32::consts::TAU;
+        let (s, c) = turn.sin_cos();
+        let want = Vec3::new(before.x * c - before.y * s, before.x * s + before.y * c, before.z);
+        assert!(
+            (after.x - want.x).abs() < 1e-3 && (after.y - want.y).abs() < 1e-3,
+            "the front of him should have turned {turn:.2} rad: {after:?} instead of {want:?}"
+        );
+        // A whole spin puts him back the way he was.
+        assert!(
+            (full.1 - standing.1).abs() < 0.02 && (full.3 - standing.3).abs() < 0.02,
+            "a full spin should end where it started: {:.2}/{:.2} vs {:.2}/{:.2}",
+            full.1,
+            full.3,
+            standing.1,
+            standing.3
+        );
+    }
+
+    #[test]
+    fn a_slide_drops_him_down_and_back() {
+        let standing = bounds(&figure(None, 0.0));
+        let slide = bounds(&figure(Some(Kind::Slide), 1.0));
+        assert!(
+            slide.0 < standing.0 - 0.6,
+            "a slide has to go to ground behind him: {:.2} vs {:.2}",
+            slide.0,
+            standing.0
+        );
+        assert!(
+            slide.5 < standing.5 * 0.8,
+            "a slide is lower than standing: {:.2} vs {:.2}",
+            slide.5,
+            standing.5
+        );
     }
 }

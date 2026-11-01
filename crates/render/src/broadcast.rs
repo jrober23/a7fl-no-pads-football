@@ -49,12 +49,27 @@ struct RenderPlayer {
     blocking: bool,
     down: bool,
     celebrate: f32,
+    /// The move this man is in the middle of, if he is the carrier, and how far
+    /// through it he is.
+    motion: Option<a7fl_core::moves::Kind>,
+    motion_progress: f32,
 }
 
 /// How far the picture swings toward the ball each frame. A camera that snaps to
 /// it looks like a camera operator being yanked by the lens; this is the lag a
 /// heavy lens gives you, about four frames to get most of the way.
 const FOLLOW: f32 = 0.22;
+
+/// The rate while the ball is in the air. A throw is the fastest thing on the
+/// field, and a shot still easing at the runner's pace is always a step behind it.
+const FOLLOW_AIR: f32 = 0.30;
+
+/// How far toward the landing spot the aim leans while a pass is in the air. The
+/// pan has to start when the ball leaves his hand -- the ball is going where it is
+/// going, and the shot going with it is what "following the ball" means -- but a
+/// lean that is too deep leaves the ball itself out of the picture, so it is a
+/// quarter of the way and no more.
+const AIR_LEAD: f32 = 0.24;
 
 /// Where the camera is pointed: the ball, eased.
 ///
@@ -70,10 +85,14 @@ struct Focus {
 
 impl Focus {
     fn track(&mut self, ball: Vec2) -> Vec2 {
+        self.track_with(ball, FOLLOW)
+    }
+
+    fn track_with(&mut self, ball: Vec2, rate: f32) -> Vec2 {
         let spot = match self.spot {
             // The first frame after a cut starts on the ball, not halfway to it.
             None => ball,
-            Some(prev) => prev + (ball - prev) * FOLLOW,
+            Some(prev) => prev + (ball - prev) * rate,
         };
         self.spot = Some(spot);
         spot
@@ -179,8 +198,11 @@ impl Broadcast {
                 sim.step(dt);
                 elapsed += dt;
             }
+            let carrier = sim.carrier;
+            let motion = sim.carrier_move();
             let mut players = Vec::with_capacity(sim.players.len());
             for (i, p) in sim.players.iter().enumerate() {
+                let mine = Some(i) == carrier;
                 players.push(RenderPlayer {
                     team: if p.side == Side::Offense { off } else { def },
                     roster: p.player,
@@ -192,6 +214,8 @@ impl Broadcast {
                     blocking: p.engaged.is_some(),
                     down: p.down,
                     celebrate: p.celebrate,
+                    motion: if mine { motion.kind() } else { None },
+                    motion_progress: if mine { motion.progress() } else { 0.0 },
                 });
             }
             let flying_ball = if sim.ball.flight.is_some() || sim.ball.holder.is_none() {
@@ -336,6 +360,10 @@ impl Broadcast {
                 blocking: false,
                 down: p.down,
                 celebrate: 0.0,
+                // A returner is not moved to a dive or a spin yet: the throw-off
+                // has its own state machine and no move set of its own.
+                motion: None,
+                motion_progress: 0.0,
             })
             .collect();
         (players, ball)
@@ -391,8 +419,11 @@ impl Broadcast {
     fn live_scene(&mut self, sim: &PlaySim, mode: CameraMode) -> (Frame, Camera) {
         let off = sim.setup.offense_team;
         let def = sim.setup.defense_team;
+        let carrier = sim.carrier;
+        let motion = sim.carrier_move();
         let mut players = Vec::with_capacity(sim.players.len());
         for (i, p) in sim.players.iter().enumerate() {
+            let mine = Some(i) == carrier;
             players.push(RenderPlayer {
                 team: if p.side == Side::Offense { off } else { def },
                 roster: p.player,
@@ -404,12 +435,19 @@ impl Broadcast {
                 blocking: p.engaged.is_some(),
                 down: p.down,
                 celebrate: p.celebrate,
+                motion: if mine { motion.kind() } else { None },
+                motion_progress: if mine { motion.progress() } else { 0.0 },
             });
         }
 
         let (ball_pos, ball_z) = sim.ball_position();
-        // The ball is the anchor: the picture goes where it goes, eased.
-        let focus = self.focus.track(ball_pos);
+        // The ball is the anchor: the picture goes where it goes, eased -- and once
+        // it is in the air, a little ahead of it, on the way to where it is going.
+        let (anchor, rate) = match &sim.ball.flight {
+            Some(flight) => (ball_pos + (flight.to - ball_pos) * AIR_LEAD, FOLLOW_AIR),
+            None => (ball_pos, FOLLOW),
+        };
+        let focus = self.focus.track_with(anchor, rate);
         let camera = self.camera_for(mode, focus, sim.setup.direction, sim.los, sim.setup.ball_y);
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
@@ -441,6 +479,8 @@ impl Broadcast {
                 down: p.down,
                 celebrating: p.celebrate,
                 strafe: 0.0,
+                motion: p.motion,
+                motion_progress: p.motion_progress,
             };
             let mut mesh = players::build_mesh(roster, uniform, &pose, p.roster as u32);
             mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
@@ -784,6 +824,89 @@ mod tests {
             (focus.spot.unwrap().x - 30.0).abs() < 0.2,
             "it still has to arrive: {:?}",
             focus.spot
+        );
+    }
+
+    /// A ball thrown thirty yards downfield is the fastest thing on the field, and
+    /// the camera has to be on it for the whole flight -- not merely somewhere near
+    /// where it left from. This walks a real pass frame by frame and projects the
+    /// ball through the same lens the picture uses.
+    #[test]
+    fn the_shot_keeps_up_with_a_ball_thrown_downfield() {
+        for mode in [CameraMode::Classic, CameraMode::Broadcast, CameraMode::SkyCam] {
+            flight_stays_in_frame(mode);
+        }
+    }
+
+    fn flight_stays_in_frame(mode: CameraMode) {
+        use a7fl_core::sim::{QbControl, SNAP_DELAY};
+
+        let teams = league_teams();
+        let play = playbook()
+            .into_iter()
+            .find(|p| p.family.is_pass())
+            .expect("a pass play");
+        let def = defensive_playbook()[0].clone();
+        let setup = SnapSetup {
+            los: 30.0,
+            ball_y: 0.0,
+            direction: 1,
+            down: 1,
+            to_go: 10.0,
+            seed: 5,
+            offense_team: 0,
+            defense_team: 1,
+            is_try: false,
+        };
+        let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+        while sim.t < SNAP_DELAY + 1.0 && sim.result.is_none() {
+            sim.step(1.0 / 60.0);
+        }
+        let qb = sim.qb_pos();
+        let deep = sim
+            .eligible_targets()
+            .into_iter()
+            .map(|(_, i)| i)
+            .max_by(|a, b| {
+                let qb = sim.qb_pos();
+                sim.players[*a].pos.dist(qb).total_cmp(&sim.players[*b].pos.dist(qb))
+            })
+            .expect("a receiver");
+        sim.set_control(Some(QbControl {
+            move_dir: Vec2::ZERO,
+            target: Some(deep),
+            throw: true,
+            power: 1.0,
+            aim: Vec2::ZERO,
+        }));
+        for _ in 0..3 {
+            sim.step(1.0 / 60.0);
+        }
+        assert!(sim.ball.flight.is_some(), "the ball never left his hand");
+
+        let mut broadcast = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        let mut travelled = 0.0f32;
+        for frame_no in 0..120 {
+            if sim.ball.flight.is_none() || sim.result.is_some() {
+                break;
+            }
+            sim.step(1.0 / 60.0);
+            let cam = broadcast.live_scene(&sim, mode).1;
+            let (bp, bz) = sim.ball_position();
+            travelled = travelled.max(bp.dist(qb));
+            let lens = crate::scene::Projector::new(640, 360, cam.fov);
+            let shot = lens.project(cam.view(Vec3::new(bp.x, bp.y, bz.max(0.2))));
+            let Some((sx, sy, depth)) = shot else {
+                panic!("{mode:?} frame {frame_no}: the ball is behind the lens at ({}, {})", bp.x, bp.y);
+            };
+            assert!(
+                (0.0..640.0).contains(&sx) && (0.0..360.0).contains(&sy) && depth > 0.0,
+                "{mode:?} frame {frame_no}: the ball travelled {travelled:.1} yards and left the picture at screen ({sx:.0}, {sy:.0})"
+            );
+        }
+        assert!(
+            travelled > 15.0,
+            "{mode:?}: the test never threw the ball far enough to prove anything: {travelled:.1} yards"
         );
     }
 }

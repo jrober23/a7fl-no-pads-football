@@ -589,6 +589,55 @@ fn cmd_arcade(args: &[String]) {
             1000.0 / ms
         );
 
+        // A pass in the air, four stills a fraction of a second apart: the camera
+        // has to go where the ball goes, and this is how that gets looked at rather
+        // than argued about.
+        if let PlayRecord::Scrimmage(r) = &record {
+            let mut air = PlaySim::new(
+                &teams[r.setup.offense_team],
+                &teams[r.setup.defense_team],
+                &r.play,
+                &r.defense,
+                &r.setup,
+            );
+            while air.t < 1.2 && air.result.is_none() {
+                air.step(dt);
+            }
+            let deep = air
+                .eligible_targets()
+                .into_iter()
+                .map(|(_, i)| i)
+                .max_by(|a, b| {
+                    let qb = air.qb_pos();
+                    air.players[*a].pos.dist(qb).total_cmp(&air.players[*b].pos.dist(qb))
+                });
+            if let Some(index) = deep {
+                air.set_control(Some(a7fl_core::sim::QbControl {
+                    move_dir: Vec2::ZERO,
+                    target: Some(index),
+                    throw: true,
+                    power: 1.0,
+                    aim: Vec2::ZERO,
+                }));
+                air.step(dt);
+                for (n, gap) in [(0usize, 0.18f32), (1, 0.30), (2, 0.34), (3, 0.36)] {
+                    let mut left = gap;
+                    while left > 0.0 && air.result.is_none() {
+                        air.step(dt);
+                        left -= dt;
+                    }
+                    let (ball, _) = air.ball_position();
+                    println!("pass still {n}: ball at {:.1}, {:.1}", ball.x, ball.y);
+                    let framed = view::with_hud(
+                        live.live_frame(&air, CameraMode::Classic),
+                        &["PASS IN THE AIR".to_string()],
+                    );
+                    let path = format!("out/15_pass_{n}.png");
+                    let _ = write_png(&path, &framed);
+                }
+            }
+        }
+
         let last = broadcast.frame_at_clean(&probe, &record, 1.4, CameraMode::Broadcast);
         let path = "out/08_arcade_view.png";
         if write_png(path, &last).is_ok() {
