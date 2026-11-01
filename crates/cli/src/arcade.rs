@@ -63,6 +63,31 @@ fn cam_name(mode: CameraMode) -> &'static str {
     }
 }
 
+/// The stick, in screen space, turned into the world axes the sim wants.
+///
+/// The broadcast camera sits on the sideline and looks across the field, so up the
+/// screen is across the field and right is down it, whichever way the team is
+/// going -- that is the mapping this file used for every camera, and it is only
+/// right for one of the three. Classic and Sky stand behind the ball and look down
+/// the field instead, where the long axis runs up the screen: the same stick sent
+/// the quarterback sideways and drove him backwards whenever he changed ends.
+///
+/// `dir` is the way the shot points in world x, which is the offense's direction of
+/// travel, and the two axes swap roles around it.
+fn stick_to_world(stick: Vec2, flip_y: bool, mode: CameraMode, dir: i8) -> Vec2 {
+    // `flip_y` is for pads that report the stick's Y the other way round.
+    let up = if flip_y { -stick.y } else { stick.y };
+    match mode {
+        // Behind the ball: up the screen is up the field, right is his right.
+        CameraMode::Classic | CameraMode::SkyCam => {
+            let d = if dir >= 0 { 1.0 } else { -1.0 };
+            Vec2::new(d * up, d * stick.x)
+        }
+        // Sideline: the long axis runs across the screen either way.
+        _ => Vec2::new(stick.x, -up),
+    }
+}
+
 /// How long the direction has to be held before the call sheet starts scrolling.
 const REPEAT_DELAY: f32 = 0.34;
 /// How fast it then scrolls.
@@ -429,9 +454,20 @@ impl Arcade {
             if input.pressed.x {
                 self.cam = (self.cam + 1) % CAMS.len();
             }
-            // The same screen mapping as a scrimmage snap: screen-up is world -y.
-            let vertical = if self.flip_y { input.stick.y } else { -input.stick.y };
-            let stick = Vec2::new(input.stick.x, vertical);
+            // The same screen mapping as a scrimmage snap, pointed the way this
+            // shot points: downfield with the throw, then behind the returner once
+            // the ball is his.
+            let cam_dir = if matches!(sim.phase, ThrowPhase::Return | ThrowPhase::Dead) {
+                sim.setup.receive_direction
+            } else {
+                sim.setup.throwing_direction()
+            };
+            let stick = stick_to_world(
+                input.stick,
+                self.flip_y,
+                CAMS[self.cam % CAMS.len()],
+                cam_dir,
+            );
 
             if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
                 // Hold to wind the arm up, let go to throw it off. The aim can be
@@ -809,11 +845,10 @@ fn drive(
         } else {
             sim.eligible_targets()
         };
-        // The arcade camera looks across the field, so screen-right is world +x
-        // and screen-up is world -y. Feed the stick through that mapping: handed
-        // in raw, up and down ran backwards.
-        let vertical = if flip_y { input.stick.y } else { -input.stick.y };
-        let stick = Vec2::new(input.stick.x, vertical);
+        // Which way the stick points in the world depends on the shot on screen:
+        // the sideline camera and the two behind-the-ball ones disagree about
+        // which axis runs up it.
+        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.setup.direction);
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
         let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
         if running {
@@ -1039,4 +1074,54 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> Str
         arcade.game.teams[sim.setup.receiving_team].abbr,
         cam_name(CAMS[arcade.cam % CAMS.len()])
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close(a: Vec2, b: Vec2) -> bool {
+        (a - b).length() < 1e-5
+    }
+
+    #[test]
+    fn the_stick_follows_the_shot_on_screen() {
+        // The sideline camera: up the screen is across the field, right is
+        // downfield, and changing ends changes nothing.
+        for dir in [1i8, -1] {
+            let up = stick_to_world(Vec2::new(0.0, 1.0), false, CameraMode::Broadcast, dir);
+            assert!(close(up, Vec2::new(0.0, -1.0)), "broadcast up -> {:?}", up);
+            let right = stick_to_world(Vec2::new(1.0, 0.0), false, CameraMode::Broadcast, dir);
+            assert!(close(right, Vec2::new(1.0, 0.0)), "broadcast right -> {:?}", right);
+        }
+        // Behind the ball, driving +x: up the stick is +x, right is +y.
+        let up = stick_to_world(Vec2::new(0.0, 1.0), false, CameraMode::Classic, 1);
+        assert!(close(up, Vec2::new(1.0, 0.0)), "classic up -> {:?}", up);
+        let right = stick_to_world(Vec2::new(1.0, 0.0), false, CameraMode::Classic, 1);
+        assert!(close(right, Vec2::new(0.0, 1.0)), "classic right -> {:?}", right);
+        // Driving -x: up the stick is still up the field, which is now -x, and
+        // right is the runner's right hand, which is now -y.
+        let up = stick_to_world(Vec2::new(0.0, 1.0), false, CameraMode::SkyCam, -1);
+        assert!(close(up, Vec2::new(-1.0, 0.0)), "sky up -> {:?}", up);
+        let right = stick_to_world(Vec2::new(1.0, 0.0), false, CameraMode::SkyCam, -1);
+        assert!(close(right, Vec2::new(0.0, -1.0)), "sky right -> {:?}", right);
+    }
+
+    #[test]
+    fn the_inverted_pad_option_flips_up_and_down_only() {
+        for mode in [CameraMode::Broadcast, CameraMode::Classic, CameraMode::SkyCam] {
+            for dir in [1i8, -1] {
+                let flipped = stick_to_world(Vec2::new(0.4, 0.8), true, mode, dir);
+                let raw = stick_to_world(Vec2::new(0.4, -0.8), false, mode, dir);
+                assert!(
+                    close(flipped, raw),
+                    "{} {}: {:?} != {:?}",
+                    cam_name(mode),
+                    dir,
+                    flipped,
+                    raw
+                );
+            }
+        }
+    }
 }

@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.11.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.11.2-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -101,6 +101,14 @@ pause menu:
 * **Classic** — behind the ball, looking downfield at the defense, so the men you are
   throwing at are ahead of you rather than beside you.
 * **Sky** — overhead, for seeing the whole thing at once.
+
+The stick follows whichever of those is on screen, and they do not agree about which
+axis runs up it. Broadcast looks across the field, so up the stick is across the field
+and right is down it. Classic and Sky stand behind the ball and look down the field, so
+there up the stick is up the field — toward the end zone you are attacking — and right
+is the ball carrier's right hand, which means the mapping turns around with the teams
+when they change ends. It used to be broadcast's mapping for all three, so in Classic
+and Sky pushing up ran the man into the sideline.
 
 Every one of them anchors on the ball: wherever it goes, that is what the picture is
 about, and the aim lags a few frames behind it the way a heavy lens does instead of
