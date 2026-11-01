@@ -18,6 +18,7 @@ use crate::math::{approach_angle, clamp, lerp, Rng, Vec2};
 use crate::playbook::{
     defensive_alignment, Assign, Coverage, DefCall, DefRole, OffRole, Play, PlayFamily,
 };
+use crate::moves::{CarrierMove, Kind};
 use crate::rules::{PenaltyCall, PenaltyKind};
 use crate::team::{Attributes, Team};
 
@@ -239,6 +240,8 @@ pub struct PlaySim<'a> {
     pub result: Option<PlayResult>,
     /// `Some` when a human is driving the quarterback.
     pub control: Option<QbControl>,
+    /// The move the carrier is in the middle of, if somebody asked for one.
+    carrier_moves: CarrierMove,
     pub events: Vec<SimEvent>,
     read_timer: f32,
     catch_spot: f32,
@@ -348,6 +351,7 @@ impl<'a> PlaySim<'a> {
             catch_spot: setup.los,
             scramble_started: false,
             control: None,
+            carrier_moves: CarrierMove::default(),
             throw_away: false,
             pass_caught: false,
             possession_start: None,
@@ -1024,7 +1028,61 @@ impl<'a> PlaySim<'a> {
         self.carry_step(i, dt, target, speed);
     }
 
+    /// What the carrier is in the middle of doing, for the client's overlay.
+    pub fn carrier_move(&self) -> CarrierMove {
+        self.carrier_moves
+    }
+
+    /// True when the man with the ball cannot throw it any more, which frees the
+    /// face buttons to be his moves. A quarterback behind the line still passes;
+    /// a runner, a receiver after the catch, and a quarterback past the line have
+    /// nothing to do with the ball but run with it.
+    pub fn face_buttons_are_moves(&self) -> bool {
+        let Some(carrier) = self.carrier else { return false };
+        if self.ball.holder != Some(carrier) {
+            return false;
+        }
+        if carrier != self.qb {
+            return true;
+        }
+        // Past the line a forward pass is a penalty, so the buttons are his.
+        (self.players[carrier].pos.x - self.los) * self.dirf() > 0.0
+    }
+
+    /// The human runner asks for a move. Ignored unless he actually has the ball
+    /// in his hands, so a mash of the face buttons during the mesh, in the pocket
+    /// or after the throw cannot do anything.
+    pub fn request_move(&mut self, kind: Kind) {
+        let Some(carrier) = self.carrier else { return };
+        if self.ball.holder != Some(carrier) || self.players[carrier].down {
+            return;
+        }
+        let vel = self.players[carrier].vel;
+        let facing = if vel.length() > 0.4 { vel } else { Vec2::new(self.dirf(), 0.0) };
+        if !self.carrier_moves.start(kind, facing) {
+            return;
+        }
+        let name = self.name_of(carrier);
+        let text = match kind {
+            Kind::Spin => format!("{name} spins out"),
+            Kind::Hurdle => format!("{name} goes over the top"),
+            Kind::Dive => format!("{name} dives forward"),
+            Kind::Slide => format!("{name} slides down"),
+        };
+        self.events.push(SimEvent { t: self.t, text });
+    }
+
     fn carry_step(&mut self, i: usize, dt: f32, target: Vec2, speed: f32) {
+        // A move takes the stick away for as long as it runs: a dive goes where it
+        // was aimed, not where the stick is a frame later.
+        let mut target = target;
+        let mut speed = speed;
+        if let Some(kind) = self.carrier_moves.kind() {
+            speed *= self.carrier_moves.speed_scale();
+            if !kind.steerable() {
+                target = self.players[i].pos + self.carrier_moves.dir() * 2.6;
+            }
+        }
         self.steer(i, target, speed, dt);
         self.ball.pos = self.players[i].pos;
         self.ball.z = 1.0;
@@ -1047,6 +1105,20 @@ impl<'a> PlaySim<'a> {
             let desc = format!("{} is pushed out of bounds.", self.name_of(i));
             self.finish(PlayOutcome::Run, pos.x, desc);
             self.mark_out_of_bounds();
+            return;
+        }
+
+        // The end of a dive or a slide is the end of the play.
+        if let Some(kind) = self.carrier_moves.step(dt) {
+            if kind.commits() {
+                let spot = self.players[i].pos.x;
+                let name = self.name_of(i);
+                let desc = match kind {
+                    Kind::Slide => format!("{name} slides down and gives himself up."),
+                    _ => format!("{name} dives forward and is down."),
+                };
+                self.finish(PlayOutcome::Run, spot, desc);
+            }
         }
     }
 
@@ -1490,6 +1562,24 @@ impl<'a> PlaySim<'a> {
             let mut p = 0.30
                 + (defender_attrs.tackle_factor() - carrier_attrs.break_tackle_factor()) * 0.55
                 + (closing * 0.02).min(0.15);
+            // A man in the air cannot be wrapped up: the attempt goes under him and
+            // he is left grasping at the turf.
+            if self.carrier_moves.is_hurdling() {
+                self.players[d].stun = 0.55;
+                self.players[d].tackle_cooldown = 0.30;
+                self.events.push(SimEvent {
+                    t: self.t,
+                    text: format!(
+                        "{} hurdles {}!",
+                        self.name_of(carrier),
+                        self.name_of(d)
+                    ),
+                });
+                continue;
+            }
+            // A spin is a smaller window to hit, and a dive gives up some of the
+            // body to the hit in exchange for the yard.
+            p *= self.carrier_moves.tackle_scale();
             p = clamp(p, 0.08, 0.93);
             self.players[d].tackle_cooldown = 0.28;
 
@@ -1497,10 +1587,16 @@ impl<'a> PlaySim<'a> {
                 // Missed tackle: the defender is left grasping.
                 self.players[d].stun = 0.65;
                 self.players[carrier].vel *= 0.9;
-                self.events.push(SimEvent {
-                    t: self.t,
-                    text: format!("{} breaks the tackle!", self.name_of(carrier)),
-                });
+                let text = if self.carrier_moves.kind() == Some(Kind::Spin) {
+                    format!(
+                        "{} spins out of {}'s tackle!",
+                        self.name_of(carrier),
+                        self.name_of(d)
+                    )
+                } else {
+                    format!("{} breaks the tackle!", self.name_of(carrier))
+                };
+                self.events.push(SimEvent { t: self.t, text });
                 continue;
             }
 

@@ -726,6 +726,19 @@ fn cmd_arcade(args: &[String]) {
         if write_png(path, &framed).is_ok() {
             println!("wrote {path}");
         }
+
+        // Running with it: the face buttons are the carrier's moves.
+        let lines = vec![
+            "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
+            "ZONE READ - RUN - PISTOL   KAISER 6 for 9".to_string(),
+            "  [A] SPIN   [B] HURDLE   [X] DIVE   [Y] SLIDE      SPIN".to_string(),
+            "NEW ball   MOVE   [A/B/X/Y] MOVES   [RT] CLASSIC   [START] QUIT".to_string(),
+        ];
+        let framed = view::with_hud(live.live_frame(&sim, CameraMode::Classic), &lines);
+        let path = "out/14_running.png";
+        if write_png(path, &framed).is_ok() {
+            println!("wrote {path}");
+        }
         return;
     }
 

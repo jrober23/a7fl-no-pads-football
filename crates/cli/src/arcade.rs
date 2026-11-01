@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use a7fl_core::ai;
 use a7fl_core::game::{Action, GamePhase, GameState};
 use a7fl_core::math::{Rng, Vec2, Vec3};
+use a7fl_core::moves::Kind;
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
 use a7fl_core::rules::THROW_OFF_MIN_AIR_YARDS;
 use a7fl_core::sim::{PlaySim, QbControl};
@@ -41,6 +42,8 @@ const MIN_POWER: f32 = 0.18;
 const MAX_LEAD_YARDS: f32 = 7.5;
 /// The four passing buttons, in the order the badges are drawn.
 const PASS_LABELS: [&str; 4] = ["A", "B", "X", "Y"];
+/// The same four buttons once the ball is in a runner's hands.
+const MOVES: [Kind; 4] = [Kind::Spin, Kind::Hurdle, Kind::Dive, Kind::Slide];
 /// How far across the field a throw-off can be aimed: the width of the landing
 /// zone the returner has to work in.
 const THROW_OFF_AIM_YARDS: f32 = 13.0;
@@ -698,7 +701,14 @@ fn drive(
         }
         let view_mode = CAMS[*cam % CAMS.len()];
 
-        let targets = sim.eligible_targets();
+        // Once the ball is in a runner's hands and there is no pass to throw, the
+        // face buttons are his move set rather than the receivers'.
+        let running = sim.face_buttons_are_moves();
+        let targets = if running {
+            Vec::new()
+        } else {
+            sim.eligible_targets()
+        };
         // The arcade camera looks across the field, so screen-right is world +x
         // and screen-up is world -y. Feed the stick through that mapping: handed
         // in raw, up and down ran backwards.
@@ -706,6 +716,15 @@ fn drive(
         let stick = Vec2::new(input.stick.x, vertical);
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
         let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
+        if running {
+            // A pass wound up before he crossed the line is not a throw any more.
+            charge = None;
+            for (slot, kind) in MOVES.iter().enumerate() {
+                if down[slot] {
+                    sim.request_move(*kind);
+                }
+            }
+        }
 
         // Holding a receiver's button winds the pass up. The stick bends it off
         // him while the meter fills, which is how you lead a man into grass or
@@ -721,7 +740,7 @@ fn drive(
                 charge = Some((slot, held_for + frame_dt as f32));
             }
         }
-        if charge.is_none() {
+        if charge.is_none() && !running {
             if let Some(slot) = (0..targets.len().min(PASS_LABELS.len())).find(|&s| down[s]) {
                 charge = Some((slot, 0.0));
                 aim = Vec2::ZERO;
@@ -814,21 +833,30 @@ fn drive(
             let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
             let mut lines = vec![header.to_string(), play_line.to_string()];
 
-            // Who is open, on the buttons the badges are showing.
-            let mut row = String::new();
-            for (slot, (_, index)) in targets.iter().enumerate().take(PASS_LABELS.len()) {
-                let name = broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
-                if !row.is_empty() {
-                    row.push_str("   ");
+            if running {
+                // The moves, and which one is in flight right now.
+                let mut row = String::from("  [A] SPIN   [B] HURDLE   [X] DIVE   [Y] SLIDE");
+                if let Some(kind) = sim.carrier_move().kind() {
+                    row.push_str(&format!("      {}", kind.label()));
                 }
-                row.push_str(&format!(
-                    "{} {:<9} {:>4.1}",
-                    PASS_LABELS[slot],
-                    name,
-                    sim.separation(*index)
-                ));
+                lines.push(row);
+            } else {
+                // Who is open, on the buttons the badges are showing.
+                let mut row = String::new();
+                for (slot, (_, index)) in targets.iter().enumerate().take(PASS_LABELS.len()) {
+                    let name = broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
+                    if !row.is_empty() {
+                        row.push_str("   ");
+                    }
+                    row.push_str(&format!(
+                        "{} {:<9} {:>4.1}",
+                        PASS_LABELS[slot],
+                        name,
+                        sim.separation(*index)
+                    ));
+                }
+                lines.push(row);
             }
-            lines.push(row);
             lines.push(format!(
                 "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] QUIT",
                 cam_name(view_mode)

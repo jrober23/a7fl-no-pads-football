@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.7.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.8.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -59,20 +59,20 @@ Controls:
 | Input | On the call sheet | During the play |
 | --- | --- | --- |
 | D-pad or left stick | Highlight a play: sideways moves through the set on screen, up and down moves between sets | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
-| A / South | Snap the play that is highlighted | Hold to wind up, release to throw to A |
-| B / East | — | Hold to wind up, release to throw to B |
-| X / West | — | Throw to X |
-| Y / North | Ask the coach | Throw to Y |
+| A / South | Snap the play that is highlighted | Hold to wind up, release to throw to A; once you are running, spin |
+| B / East | — | Hold to wind up, release to throw to B; once you are running, hurdle |
+| X / West | — | Throw to X; once you are running, dive |
+| Y / North | Ask the coach | Throw to Y; once you are running, slide |
 | RT / ZR | — | Change camera |
 | Start | Quit | Quit |
 
 | Keyboard | On the call sheet | During the play |
 | --- | --- | --- |
 | Arrows or WASD | Highlight a play | Move the quarterback; aim the pass |
-| Space or Enter | Snap the play that is highlighted | Hold to wind up, release to throw to A |
-| X | — | Throw to B |
-| Z | — | Throw to X |
-| C | Ask the coach | Throw to Y |
+| Space or Enter | Snap the play that is highlighted | Hold to wind up, release to throw to A; once you are running, spin |
+| X | — | Throw to B; once you are running, hurdle |
+| Z | — | Throw to X; once you are running, dive |
+| C | Ask the coach | Throw to Y; once you are running, slide |
 | Left Shift | — | Change camera |
 | Esc | Quit | Quit |
 
@@ -127,6 +127,26 @@ Fourth downs get their own prompt (go for it, or throw it off), drawn with the s
 bitmap font as the broadcast overlay. Conversions are called and played like any
 other snap. In terminal mode the picture is sized from `COLUMNS` and `LINES`, so it
 adapts to whatever terminal you run it in.
+
+### Running with it
+
+Once the ball is in your hands and there is no pass left to throw, the four face
+buttons stop being receivers and become the runner's moves. On a run play that is
+the moment the back takes the handoff. On a pass it is the moment the ball is caught,
+or the moment the quarterback crosses the line of scrimmage — past the line a forward
+pass is a penalty, so he has nothing left to do with it but run.
+
+| Move | What it does | What it costs |
+| --- | --- | --- |
+| **Spin** (A) | Keeps his feet and changes the angle; a wrap-up is nearly half as likely to land while he is turning | Nothing but the beat it takes |
+| **Hurdle** (B) | Leaves his feet over a defender; a tackle attempt goes under him and the defender is left on the ground | A fifth of his speed, and the stick stops steering him until he lands |
+| **Dive** (X) | Lunges forward for the extra yard at half again his speed | The play is over where he lands |
+| **Slide** (Y) | Gives himself up, the way a quarterback does rather than take the hit | The play is over, and he does not get the extra yard a dive would |
+
+A move is a state, not a button press that does something on the frame it is pressed:
+it runs for a fixed time, the tackle mathematics know what he is in the middle of, and
+there is a short cooldown afterwards so mashing the buttons cannot chain moves into a
+permanent immunity. The active move is named in the text bar while it runs.
 
 ### Throw-offs
 
