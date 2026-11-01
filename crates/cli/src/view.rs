@@ -60,7 +60,9 @@ impl View {
     pub fn show(&mut self, frame: &mut Frame, lines: &[String]) -> bool {
         match self {
             View::Window(window) => {
-                draw_hud(frame, lines);
+                if frame.w == CANVAS_W && frame.h == CANVAS_H {
+                    draw_hud(frame, lines);
+                }
                 window.blit(frame)
             }
             View::Term(screen) => {
@@ -69,6 +71,14 @@ impl View {
                 true
             }
         }
+    }
+
+    /// Show a frame rendered below canvas resolution, scaled up first so the
+    /// text bar stays sharp. Live play uses this: the field is drawn at half
+    /// size, which is what lets the client run at a playable frame rate.
+    pub fn show_scaled(&mut self, frame: &mut Frame, lines: &[String]) -> bool {
+        let mut canvas = compose_live(frame, lines);
+        self.show(&mut canvas, lines)
     }
 
     /// A full screen of text: the call sheet, a prompt, the box score.
@@ -143,18 +153,18 @@ impl WindowView {
         if self.buf.len() != w * h {
             self.buf = vec![0; w * h];
         }
-        let scale = (w as f32 / CANVAS_W as f32).min(h as f32 / CANVAS_H as f32);
-        let dw = ((CANVAS_W as f32 * scale) as usize).min(w);
-        let dh = ((CANVAS_H as f32 * scale) as usize).min(h);
+        let scale = (w as f32 / frame.w as f32).min(h as f32 / frame.h as f32);
+        let dw = ((frame.w as f32 * scale) as usize).min(w);
+        let dh = ((frame.h as f32 * scale) as usize).min(h);
         let ox = (w - dw) / 2;
         let oy = (h - dh) / 2;
         self.buf.fill(0);
         for y in 0..dh {
-            let sy = y * CANVAS_H / dh;
-            let row = (sy.min(frame.h - 1)) * frame.w;
+            let sy = (y * frame.h / dh).min(frame.h - 1);
+            let row = sy * frame.w;
             let out_row = (oy + y) * w + ox;
             for x in 0..dw {
-                let sx = (x * CANVAS_W / dw).min(frame.w - 1);
+                let sx = (x * frame.w / dw).min(frame.w - 1);
                 let c = frame.color[row + sx];
                 self.buf[out_row + x] =
                     ((c.r as u32) << 16) | ((c.g as u32) << 8) | c.b as u32;
@@ -200,16 +210,39 @@ impl WindowView {
     }
 }
 
+/// Scale a live frame onto the canvas and lay the text bar over it, so the HUD
+/// stays at full resolution even when the field was drawn at half size.
+pub fn compose_live(frame: &Frame, lines: &[String]) -> Frame {
+    let mut canvas = Frame::new(CANVAS_W, CANVAS_H);
+    upscale(frame, &mut canvas);
+    draw_hud(&mut canvas, lines);
+    canvas
+}
+
+/// Nearest-neighbour scale of one frame onto another.
+fn upscale(from: &Frame, to: &mut Frame) {
+    for y in 0..to.h {
+        let sy = (y * from.h / to.h).min(from.h - 1);
+        let row = sy * from.w;
+        let out = y * to.w;
+        for x in 0..to.w {
+            let sx = (x * from.w / to.w).min(from.w - 1);
+            to.color[out + x] = from.color[row + sx];
+        }
+    }
+}
+
 /// Text bar drawn straight into the picture, in the broadcast font.
 fn draw_hud(frame: &mut Frame, lines: &[String]) {
     let count = lines.len() as i32;
     if count == 0 {
         return;
     }
+    let width = frame.w as i32;
     let height = count * 10 + 6;
-    let top = CANVAS_H as i32 - height;
-    frame.fill_rect_alpha(0, top, CANVAS_W as i32, height, backdrop(), 0.78);
-    frame.fill_rect(0, top, CANVAS_W as i32, 1, Rgb::new(48, 92, 148));
+    let top = frame.h as i32 - height;
+    frame.fill_rect_alpha(0, top, width, height, backdrop(), 0.78);
+    frame.fill_rect(0, top, width, 1, Rgb::new(48, 92, 148));
     for (i, line) in lines.iter().enumerate() {
         let color = if line.contains(">>") || line.starts_with("TARGET") {
             accent()
@@ -290,6 +323,18 @@ mod tests {
         for word in line.split_whitespace() {
             assert!(joined.contains(word), "{word:?} went missing");
         }
+    }
+
+    #[test]
+    fn a_half_size_frame_scales_up_to_the_canvas() {
+        let mut small = Frame::new(CANVAS_W / 2, CANVAS_H / 2);
+        small.fill_rect(10, 10, 4, 4, Rgb::new(255, 0, 0));
+        let mut canvas = Frame::new(CANVAS_W, CANVAS_H);
+        upscale(&small, &mut canvas);
+
+        let scaled = canvas.color[20 * CANVAS_W + 20];
+        assert_eq!((scaled.r, scaled.g, scaled.b), (255, 0, 0));
+        assert_eq!(canvas.color.len(), CANVAS_W * CANVAS_H);
     }
 
     #[test]

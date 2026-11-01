@@ -84,6 +84,47 @@ fn the_throw_button_releases_the_ball() {
 }
 
 #[test]
+fn the_stick_runs_the_ball_carrier() {
+    let teams = league_teams();
+    let book = playbook();
+    let defs = defensive_playbook();
+    let play = book
+        .iter()
+        .find(|p| p.family.is_run())
+        .expect("a run play");
+    let mut sim = PlaySim::new(&teams[0], &teams[1], play, &defs[0], &setup(9));
+
+    let mut guard = 0;
+    while sim.carrier.is_none() && sim.result.is_none() && guard < 240 {
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    let carrier = sim.carrier.expect("the handoff should come early in a run play");
+    let before = sim.players[carrier].pos;
+
+    // Push across the field: the AI carrier would be heading for the end zone, so
+    // sideways movement is the stick's doing.
+    let mut after = before;
+    for _ in 0..45 {
+        if sim.result.is_some() {
+            break;
+        }
+        sim.set_control(Some(QbControl {
+            move_dir: Vec2::new(0.0, 1.0),
+            target: None,
+            throw: false,
+        }));
+        sim.step(1.0 / 60.0);
+        after = sim.players[carrier].pos;
+    }
+
+    assert!(
+        after.y > before.y + 0.3,
+        "the carrier did not answer the stick: {before:?} -> {after:?}"
+    );
+}
+
+#[test]
 fn a_human_snap_is_booked_by_the_game() {
     let teams = league_teams();
     let mut game = GameState::new(teams[0].clone(), teams[1].clone(), 21);

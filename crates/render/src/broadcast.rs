@@ -606,6 +606,24 @@ mod tests {
         let total = frame.w * frame.h;
         assert!(grass > total / 6, "almost no turf in the live frame: {grass}/{total}");
     }
+
+    /// The client turns the stick into world space, so the arcade camera's
+    /// orientation has to stay what that mapping assumes: screen-right is world
+    /// `+x` (downfield on a rightward drive) and screen-up is world `-y` (away
+    /// from the sideline the camera sits on).
+    #[test]
+    fn the_broadcast_camera_puts_x_right_and_neg_y_up() {
+        let mut cam = Camera::new(Vec3::new(-6.0, 32.0, 17.5), 0.0, 0.0);
+        cam.look_at(Vec3::new(4.0, 0.0, 0.8));
+        let lens = crate::scene::Projector::new(1920, 1080, cam.fov);
+        let project = |w: Vec3| lens.project(cam.view(w)).expect("in front of the lens");
+        let centre = project(Vec3::new(0.0, 0.0, 0.5));
+        let right = project(Vec3::new(6.0, 0.0, 0.5));
+        let away = project(Vec3::new(0.0, -6.0, 0.5));
+
+        assert!(right.0 > centre.0 + 20.0, "world +x should sit screen right");
+        assert!(away.1 < centre.1 - 20.0, "world -y should sit screen up");
+    }
 }
 
 /// Darken the top and bottom edges so overlay text reads cleanly.

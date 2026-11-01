@@ -32,7 +32,8 @@ XInput, DirectInput or Switch mode) and run `cargo run --release`. It opens a
 window (1280x720 by default, resizable) and draws the field with the same
 software renderer as the broadcast package — no GPU, no game engine. Run it with
 `--terminal` (or on a machine with no display) and the same game is drawn in ANSI
-colour blocks straight into the terminal instead. With no controller attached the
+colour blocks straight into the terminal instead. Add `--flip-y` if your pad
+reports its stick's vertical axis the other way round. With no controller attached the
 keyboard drives it, so the game is always playable.
 
 ```

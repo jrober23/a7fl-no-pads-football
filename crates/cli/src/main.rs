@@ -534,23 +534,38 @@ fn cmd_arcade(args: &[String]) {
             return;
         };
         let teams = [probe.teams[0].clone(), probe.teams[1].clone()];
-        let mut broadcast = Broadcast::new(view::CANVAS_W, view::CANVAS_H, teams);
         let frames = 20;
-        let start = std::time::Instant::now();
-        for i in 0..frames {
-            let t = 0.2 + i as f32 * 0.12;
-            let _ = broadcast.frame_at_clean(&probe, &record, t, CameraMode::Broadcast);
-        }
-        let ms = start.elapsed().as_secs_f64() * 1000.0 / frames as f64;
-        println!(
-            "{}x{} live frame: {ms:.1} ms ({:.1} fps ceiling)",
-            view::CANVAS_W,
-            view::CANVAS_H,
-            1000.0 / ms
-        );
+        let time_it = |w: usize, h: usize, label: &str| {
+            let mut shot = Broadcast::new(w, h, teams.clone());
+            let start = std::time::Instant::now();
+            for i in 0..frames {
+                let t = 0.2 + i as f32 * 0.12;
+                let _ = shot.frame_at_clean(&probe, &record, t, CameraMode::Broadcast);
+            }
+            let ms = start.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+            println!("{label} {w}x{h}: {ms:.1} ms ({:.1} fps ceiling)", 1000.0 / ms);
+            shot
+        };
+        // Both paths the client can take: the full canvas the stills use, and the
+        // half-size field live play draws on.
+        let mut broadcast = time_it(view::CANVAS_W, view::CANVAS_H, "canvas");
+        let mut live = time_it(arcade::LIVE_W, arcade::LIVE_H, "live  ");
         let last = broadcast.frame_at_clean(&probe, &record, 1.4, CameraMode::Broadcast);
         let path = "out/08_arcade_view.png";
         if write_png(path, &last).is_ok() {
+            println!("wrote {path}");
+        }
+        // What the interactive client actually puts on screen: a half-size field
+        // scaled up to the canvas, with the text bar drawn over it at full size.
+        let frame = live.frame_at_clean(&probe, &record, 1.4, CameraMode::Broadcast);
+        let lines = vec![
+            "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
+            "TARGET WR  Frankie Kelsey     4.2 yds  OPEN".to_string(),
+            "NEW ball   MOVE  TARGET  THROW  [START] QUIT".to_string(),
+        ];
+        let composed = view::compose_live(&frame, &lines);
+        let path = "out/09_live_scaled.png";
+        if write_png(path, &composed).is_ok() {
             println!("wrote {path}");
         }
         return;
@@ -577,7 +592,8 @@ fn cmd_arcade(args: &[String]) {
     println!("Starting in a moment.");
     std::thread::sleep(std::time::Duration::from_millis(900));
 
-    arcade::Arcade::new(game, pad, view).run();
+    let flip_y = has(args, "--flip-y");
+    arcade::Arcade::new(game, pad, view).with_flip_y(flip_y).run();
 }
 
 fn cmd_film(args: &[String]) {

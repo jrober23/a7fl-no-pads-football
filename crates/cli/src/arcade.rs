@@ -12,18 +12,23 @@ use std::time::{Duration, Instant};
 
 use a7fl_core::ai;
 use a7fl_core::game::{Action, GameState};
-use a7fl_core::math::Rng;
+use a7fl_core::math::{Rng, Vec2};
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
 use a7fl_core::sim::{PlaySim, QbControl};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::terminal;
 
 use crate::pad::{self, Input, Pad};
-use crate::view::{View, CANVAS_H, CANVAS_W};
+use crate::view::View;
 
-/// Picture refresh. Rendering a 640x360 field costs about 40 ms on a laptop CPU,
-/// so this leaves room to breathe on slower machines.
-const FRAME: Duration = Duration::from_millis(62);
+/// The live field is drawn at half the canvas and scaled up to it. A 640x360
+/// frame costs about 40 ms, which caps the client at 16 fps and makes the
+/// controls feel laggy; the half-size field costs a fraction of that.
+pub const LIVE_W: usize = 320;
+pub const LIVE_H: usize = 180;
+/// Picture refresh for live play: 50 fps on the half-size field, which leaves
+/// headroom on a slower CPU because the render is 9 ms rather than 25 ms.
+const FRAME: Duration = Duration::from_millis(20);
 const STEP: f32 = 1.0 / 60.0;
 /// How long a result stays on screen before it moves on by itself.
 const RESULT_HOLD: Duration = Duration::from_millis(2600);
@@ -38,6 +43,8 @@ pub struct Arcade {
     pick: usize,
     target: usize,
     quit: bool,
+    /// Penalty insurance: some pads report the stick's Y the other way round.
+    flip_y: bool,
 }
 
 impl Arcade {
@@ -45,8 +52,25 @@ impl Arcade {
         let book = playbook();
         let defbook = defensive_playbook();
         let teams = [game.teams[0].clone(), game.teams[1].clone()];
-        let broadcast = Broadcast::new(CANVAS_W, CANVAS_H, teams);
-        Arcade { game, pad, view, broadcast, book, defbook, pick: 0, target: 0, quit: false }
+        let broadcast = Broadcast::new(LIVE_W, LIVE_H, teams);
+        Arcade {
+            game,
+            pad,
+            view,
+            broadcast,
+            book,
+            defbook,
+            pick: 0,
+            target: 0,
+            quit: false,
+            flip_y: false,
+        }
+    }
+
+    /// Reverse the stick's vertical axis, for pads that report it inverted.
+    pub fn with_flip_y(mut self, flip: bool) -> Self {
+        self.flip_y = flip;
+        self
     }
 
     pub fn run(&mut self) {
@@ -249,6 +273,7 @@ impl Arcade {
         let pad = &mut self.pad;
         let target = &mut self.target;
         let quit = &mut self.quit;
+        let flip_y = self.flip_y;
 
         let record = game.snap_with(play, def, |sim| {
             let finished = drive(
@@ -257,6 +282,7 @@ impl Arcade {
                 view,
                 pad.as_mut(),
                 target,
+                flip_y,
                 &header,
                 &play_line,
                 &off_abbr,
@@ -411,6 +437,7 @@ fn drive(
     view: &mut View,
     mut pad: Option<&mut Pad>,
     target: &mut usize,
+    flip_y: bool,
     header: &str,
     play_line: &str,
     off_abbr: &str,
@@ -438,8 +465,13 @@ fn drive(
             }
         }
         let locked = if targets.is_empty() { None } else { Some(targets[*target % targets.len()]) };
+        // The arcade camera looks across the field, so screen-right is world +x
+        // and screen-up is world -y. Feed the stick through that mapping: handed
+        // in raw, up and down ran backwards.
+        let vertical = if flip_y { input.stick.y } else { -input.stick.y };
+        let stick = Vec2::new(input.stick.x, vertical);
         sim.set_control(Some(QbControl {
-            move_dir: input.stick,
+            move_dir: stick,
             target: locked.map(|(_, index)| index),
             throw: input.pressed.a || input.pressed.throw,
         }));
@@ -477,7 +509,7 @@ fn drive(
                 "{off_abbr} ball   MOVE  TARGET  THROW  [START] QUIT"
             ));
 
-            if !view.show(&mut frame, &lines) {
+            if !view.show_scaled(&mut frame, &lines) {
                 return false;
             }
         }

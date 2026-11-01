@@ -177,14 +177,16 @@ pub struct SimEvent {
     pub text: String,
 }
 
-/// Live human input for the quarterback, set by an interactive client.
+/// Live human input for the ball in play, set by an interactive client: the
+/// quarterback before the throw, and whoever is carrying it afterwards.
 ///
 /// Absent during ordinary AI play, so the simulation behaves exactly as it does
 /// in `sim` and `film` unless somebody is holding the stick.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct QbControl {
-    /// Stick direction in world space, length 0..1: `x` runs down the field,
-    /// `y` across it, so the caller does not need to know the drive direction.
+    /// Stick direction in **world space**, length 0..1: `x` runs down the field,
+    /// `y` across it. Mapping the stick out of screen space is the client's job,
+    /// because only the client knows where its camera is pointing.
     pub move_dir: Vec2,
     /// Locked-on receiver, as an index into `players`.
     pub target: Option<usize>,
@@ -624,13 +626,6 @@ impl<'a> PlaySim<'a> {
         };
         self.ball.holder = Some(self.qb);
         self.events.push(SimEvent { t: self.t, text: "Snap".to_string() });
-        if self.play.family.is_run() && self.carrier.is_none() {
-            if let Some((idx, at)) = self.handoff {
-                if self.t >= at {
-                    self.carrier = Some(idx);
-                }
-            }
-        }
     }
 
     // -----------------------------------------------------------------
@@ -638,6 +633,23 @@ impl<'a> PlaySim<'a> {
     // -----------------------------------------------------------------
 
     fn update_offense(&mut self, dt: f32) {
+        // The mesh point. The handoff is scheduled after the snap, so it has to be
+        // completed here rather than at the snap itself: a run play gives the ball
+        // to the back on its own beat, while a play-action fake schedules one too
+        // and the quarterback keeps it.
+        if self.carrier.is_none() && self.play.family.is_run() {
+            if let Some((idx, at)) = self.handoff {
+                if self.t >= at && !self.players[idx].down {
+                    self.carrier = Some(idx);
+                    self.ball.holder = Some(idx);
+                    let name = self.name_of(idx);
+                    self.events.push(SimEvent {
+                        t: self.t,
+                        text: format!("{name} takes the handoff"),
+                    });
+                }
+            }
+        }
         for i in 0..7 {
             if self.players[i].down || self.players[i].stun > 0.0 {
                 continue;
@@ -653,13 +665,16 @@ impl<'a> PlaySim<'a> {
                 continue;
             }
             if Some(i) == self.carrier {
-                // A human running with the ball steers with the stick; the goal
-                // line and the sideline still rule.
+                // Whoever has the ball answers the stick — the quarterback on a
+                // scramble, the back on a handoff, the receiver after a catch.
+                // With the stick at rest he coasts instead of being handed back
+                // to the AI, so the runner never cuts away under the player.
                 match self.control {
-                    Some(ctl) if i == self.qb && ctl.move_dir.length() > 0.2 => {
+                    Some(ctl) if ctl.move_dir.length() > 0.18 => {
                         self.update_carrier_human(i, dt, ctl)
                     }
-                    _ => self.update_carrier(i, dt),
+                    Some(_) => self.update_carrier_idle(i, dt),
+                    None => self.update_carrier(i, dt),
                 }
             } else if is_qb && self.ball.holder == Some(i) {
                 self.update_qb(i, dt);
@@ -922,6 +937,20 @@ impl<'a> PlaySim<'a> {
     fn update_carrier_human(&mut self, i: usize, dt: f32, ctl: QbControl) {
         let target = self.players[i].pos + ctl.move_dir.normalize_or_zero() * 4.0;
         let speed = self.speed_cap(i) * ctl.move_dir.length().clamp(0.55, 1.0);
+        self.carry_step(i, dt, target, speed);
+    }
+
+    /// Carrier with the stick at rest: no AI lanes and no surprise cuts, just a
+    /// runner running out of steam on his current line.
+    fn update_carrier_idle(&mut self, i: usize, dt: f32) {
+        let p = &self.players[i];
+        let ahead = if p.vel.length() > 0.4 {
+            p.vel.normalize_or_zero()
+        } else {
+            Vec2::new(self.dirf(), 0.0)
+        };
+        let target = p.pos + ahead * 1.1;
+        let speed = self.speed_cap(i) * 0.4;
         self.carry_step(i, dt, target, speed);
     }
 
