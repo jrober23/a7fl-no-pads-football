@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.8.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.9.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -96,9 +96,15 @@ RT (Left Shift on the keyboard) cycles the shot while the ball is live:
 
 * **Broadcast** — the high sideline camera the broadcast package uses, panning with
   the ball.
-* **Classic** — behind your own offense, looking downfield at the defense, so the men
-  you are throwing at are ahead of you rather than beside you.
+* **Classic** — behind the ball, looking downfield at the defense, so the men you are
+  throwing at are ahead of you rather than beside you.
 * **Sky** — overhead, for seeing the whole thing at once.
+
+Every one of them anchors on the ball: wherever it goes, that is what the picture is
+about, and the aim lags a few frames behind it the way a heavy lens does instead of
+snapping from spot to spot. That is what keeps a long run in the frame — the shot used
+to be pinned to the line of scrimmage, so a runner who got past the defence walked out
+of the corner of a picture still framing the snap.
 
 Throw-offs have their own shot, because no fixed camera can hold both ends of a
 sixty-yard, three-and-a-half-second throw. It opens from the throwing team's end
@@ -115,10 +121,17 @@ lead a receiver into grass or put it on his back shoulder — and a guide runs o
 across the turf to a marker showing exactly where the ball will come down. Let go
 and he throws it.
 
-Power is range, not effort. A tap drops the ball in front of the man; a full meter
-carries it over his head. There is a notch on the meter at the weight that would
-just reach him, so an underthrow is something you can see coming rather than
-something the game does to you. The badge colours are live, the guide is drawn
+The meter is a range of passes, not one pass thrown harder. Tap the button and it is a
+floater — slow, high, and short enough that it cannot be a bomb; hold it and it is a
+rope that gets downfield in a hurry. The meter names what it has in it as it fills
+(TOUCH, DRIVE, BOMB), and the ball is timed on the grass it actually has to cover, so
+a swing pass to the flat crosses the field at the same speed as a comeback instead of
+arriving like a fastball.
+
+Power is also range: a tap drops the ball in front of the man and a full meter carries
+it over his head. There is a notch on the meter at the weight that would just reach
+him, so an underthrow is something you can see coming rather than something the game
+does to you. The badge colours are live, the guide is drawn
 from the same function that flies the ball, and an overthrown pass is incomplete —
 there is no fifty-fifty for a receiver to win on a ball that lands ten yards from
 him.

@@ -165,6 +165,10 @@ pub struct Flight {
     pub target: Option<usize>,
     pub thrower: usize,
     pub air_yards: f32,
+    /// How fast the ball left the hand, in yards per second. The picture does not
+    /// need it; it is the honest measure of how hard a throw was, and it is what
+    /// "too fast" means.
+    pub speed: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -946,7 +950,7 @@ impl<'a> PlaySim<'a> {
                     + plan.air_yards * 0.024
                     + (1.0 - accuracy) * 1.4
                     + (2.5 - pressure).max(0.0) * 0.30
-                    + (1.0 - power) * 0.9;
+                    + (1.0 - power * power) * 0.6;
                 let err = Vec2::new(self.rng.gauss() * sigma, self.rng.gauss() * sigma * 0.85);
                 (plan.landing + err, plan.air_yards, Some(t))
             }
@@ -963,9 +967,23 @@ impl<'a> PlaySim<'a> {
         };
 
         let arm = self.attrs(qb).arm_strength();
-        let speed = 15.0 + 14.0 * power + arm * 0.30;
-        let dur = (air / speed).clamp(0.30, 2.6);
-        let peak = 0.6 + air * 0.16 + (1.0 - power) * 0.9;
+        // The meter is a range of passes, not one pass thrown harder. A tap is a
+        // floater: slow enough to watch, high enough to come down over a linebacker,
+        // and it hangs long enough that underthrowing a man is a real mistake. Held
+        // all the way down it is a rope. Squaring the meter keeps the soft end soft,
+        // which is the half of the range a hand actually plays in, and keeps the arm
+        // from turning every throw into a fastball — the old formula added the whole
+        // arm rating to the speed, so a strong quarterback could not throw softly at
+        // all.
+        let touch = power * power;
+        let speed = 7.0 + 22.0 * touch + arm * 0.10;
+        // Time the flight on the grass the ball actually has to cover. Timing it on
+        // the downfield component alone made a swing pass to the flat, which covers
+        // twelve yards sideways and two downfield, arrive like a fastball -- and a
+        // floater over the middle is the whole point of the soft end of the meter.
+        let carry = (to - qb_pos).length().max(1.0);
+        let dur = (carry / speed).clamp(0.35, 3.0);
+        let peak = 0.45 + carry * 0.12 + (1.0 - touch) * 1.9;
         self.ball.flight = Some(Flight {
             from: qb_pos,
             to: Vec2::new(to.x, clamp(to.y, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH)),
@@ -975,6 +993,7 @@ impl<'a> PlaySim<'a> {
             target: receiver,
             thrower: qb,
             air_yards: air,
+            speed,
         });
         self.ball.holder = None;
         self.ball.pos = qb_pos;

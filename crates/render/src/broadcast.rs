@@ -51,6 +51,35 @@ struct RenderPlayer {
     celebrate: f32,
 }
 
+/// How far the picture swings toward the ball each frame. A camera that snaps to
+/// it looks like a camera operator being yanked by the lens; this is the lag a
+/// heavy lens gives you, about four frames to get most of the way.
+const FOLLOW: f32 = 0.22;
+
+/// Where the camera is pointed: the ball, eased.
+///
+/// Football is shot with the ball as the anchor. Every mode used to build its own
+/// aim out of a mix of the line of scrimmage and the play's action point, so a run
+/// that got past the defence walked out of the frame while the camera stayed on a
+/// line the ball had left behind. One tracked point, shared by all of them, makes
+/// the picture follow the play.
+#[derive(Clone, Copy, Debug, Default)]
+struct Focus {
+    spot: Option<Vec2>,
+}
+
+impl Focus {
+    fn track(&mut self, ball: Vec2) -> Vec2 {
+        let spot = match self.spot {
+            // The first frame after a cut starts on the ball, not halfway to it.
+            None => ball,
+            Some(prev) => prev + (ball - prev) * FOLLOW,
+        };
+        self.spot = Some(spot);
+        spot
+    }
+}
+
 pub struct Broadcast {
     pub w: usize,
     pub h: usize,
@@ -59,6 +88,7 @@ pub struct Broadcast {
     pub teams: [Team; 2],
     pub uniforms: [Uniform; 2],
     stands: Mesh,
+    focus: Focus,
 }
 
 impl Broadcast {
@@ -67,7 +97,7 @@ impl Broadcast {
         let uniforms = [teams[0].home, teams[1].away];
         let scene = SceneRenderer::new(w, h, 46f32.to_radians());
         let stands = build_stands(&teams);
-        Broadcast { w, h, field, scene, teams, uniforms, stands }
+        Broadcast { w, h, field, scene, teams, uniforms, stands, focus: Focus::default() }
     }
 
     /// Render one frame of a recorded play at time `t` (seconds after the snap).
@@ -378,7 +408,9 @@ impl Broadcast {
         }
 
         let (ball_pos, ball_z) = sim.ball_position();
-        let camera = self.camera_for(mode, ball_pos, sim.setup.direction, sim.los, sim.setup.ball_y);
+        // The ball is the anchor: the picture goes where it goes, eased.
+        let focus = self.focus.track(ball_pos);
+        let camera = self.camera_for(mode, focus, sim.setup.direction, sim.los, sim.setup.ball_y);
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
@@ -506,6 +538,9 @@ impl Broadcast {
         }
     }
 
+    /// `action` is the point the camera is anchored on: the ball, eased, for a
+    /// live snap. Every mode places itself relative to it, so no shot can lose
+    /// track of where the ball is.
     fn camera_for(
         &self,
         mode: CameraMode,
@@ -517,13 +552,16 @@ impl Broadcast {
         let d = direction as f32;
         let (pos, look, fov) = match mode {
             CameraMode::Broadcast => (
-                Vec3::new(action.x - d * 6.0, 32.0, 17.5),
-                Vec3::new(action.x + d * 4.0, action.y * 0.65, 0.8),
+                Vec3::new(action.x - d * 3.0, 32.0, 17.5),
+                Vec3::new(action.x + d * 5.0, action.y * 0.62, 0.8),
                 30f32,
             ),
+            // Behind the ball and looking past it: the old version was pinned to
+            // the line of scrimmage, so the further the runner got the smaller he
+            // was in the corner of a shot still framing the snap.
             CameraMode::Classic => (
-                Vec3::new(los - d * 13.0, ball_y * 0.45, 10.5),
-                Vec3::new(action.x + d * 7.0, action.y * 0.75, 0.9),
+                Vec3::new(action.x - d * 11.0, action.y * 0.5, 10.2),
+                Vec3::new(action.x + d * 8.0, action.y * 0.8, 0.9),
                 42f32,
             ),
             CameraMode::BehindQb => (
@@ -704,6 +742,49 @@ mod tests {
 
         assert!(right.0 > centre.0 + 20.0, "world +x should sit screen right");
         assert!(away.1 < centre.1 - 20.0, "world -y should sit screen up");
+    }
+
+    /// The ball is the anchor. The classic camera used to be pinned to the line of
+    /// scrimmage, so a run down the field walked out of a shot still framing the
+    /// snap; wherever the ball gets to, it has to be in the picture.
+    #[test]
+    fn the_cameras_keep_the_ball_in_the_picture_wherever_it_gets_to() {
+        let teams = league_teams();
+        let b = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        for (x, y) in [(20.0, 0.0), (55.0, -12.0), (95.0, 8.0), (108.0, 0.0)] {
+            for mode in [CameraMode::Classic, CameraMode::Broadcast, CameraMode::SkyCam] {
+                let ball = Vec2::new(x, y);
+                let cam = b.camera_for(mode, ball, 1, 40.0, 0.0);
+                let lens = crate::scene::Projector::new(640, 360, cam.fov);
+                let (sx, sy, _) = lens
+                    .project(cam.view(Vec3::new(x, y, 1.0)))
+                    .unwrap_or_else(|| panic!("{mode:?} lost the ball at rest at ({x}, {y})"));
+                assert!(
+                    (0.0..640.0).contains(&sx) && (0.0..360.0).contains(&sy),
+                    "{mode:?} put the ball at ({x}, {y}) off the frame: screen ({sx}, {sy})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_aim_eases_toward_the_ball_instead_of_snapping_to_it() {
+        let mut focus = Focus::default();
+        assert_eq!(focus.track(Vec2::new(10.0, 0.0)), Vec2::new(10.0, 0.0));
+        let eased = focus.track(Vec2::new(30.0, 0.0));
+        assert!(
+            eased.x > 10.0 && eased.x < 30.0,
+            "the aim should lag behind the ball, not jump to it: {}",
+            eased.x
+        );
+        for _ in 0..40 {
+            focus.track(Vec2::new(30.0, 0.0));
+        }
+        assert!(
+            (focus.spot.unwrap().x - 30.0).abs() < 0.2,
+            "it still has to arrive: {:?}",
+            focus.spot
+        );
     }
 }
 

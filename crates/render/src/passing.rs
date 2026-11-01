@@ -183,6 +183,16 @@ fn draw_meter(frame: &mut Frame, power: f32, short: bool, needed: Option<f32>) {
     for i in 1..4 {
         frame.fill_rect(x + w * i / 4, y, 1, h, Rgb::hex(0x0C0F14));
     }
+    // Name the ball this weight throws, so the meter can be learned rather than
+    // guessed at: the difference between a tap and a hold is not just power.
+    let (label, tint): (&str, Rgb) = if power < 0.34 {
+        ("TOUCH", OPEN)
+    } else if power < 0.72 {
+        ("DRIVE", TIGHT)
+    } else {
+        ("BOMB", COVERED)
+    };
+    font::draw_centered(frame, frame.w as i32 / 2, y + h + 7, label, 1, tint, 1);
 }
 
 #[cfg(test)]

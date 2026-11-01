@@ -35,7 +35,7 @@ const STEP: f32 = 1.0 / 60.0;
 /// How long a result stays on screen before it moves on by itself.
 const RESULT_HOLD: Duration = Duration::from_millis(2600);
 /// How long the pass meter takes to fill from nothing to a full-weight throw.
-const CHARGE_TIME: f32 = 0.85;
+const CHARGE_TIME: f32 = 1.05;
 /// Even a tap throws the ball; it just does not throw it far.
 const MIN_POWER: f32 = 0.18;
 /// How far the aim stick can bend a pass off the man it is aimed at.
