@@ -142,7 +142,10 @@ fn a_spin_makes_a_tackle_less_likely() {
             }
             sim.set_control(stick(Vec2::new(1.0, 0.0)));
             sim.step(1.0 / 60.0);
-            if sim.result.is_none() {
+            // A tackle is not the end of the play any more: the hit starts a wrap
+            // that puts him on the ground a beat later. Getting out of it means no
+            // arms on him at all, not merely that the card is not up as well.
+            if sim.result.is_none() && sim.wrap.is_none() {
                 *count += 1;
             }
         }

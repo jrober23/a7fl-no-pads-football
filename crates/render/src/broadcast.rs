@@ -48,6 +48,9 @@ struct RenderPlayer {
     carrying: bool,
     blocking: bool,
     down: bool,
+    /// 0..1 through a tackle, for the two men in it: one wrapping, one going down.
+    wrap: f32,
+    tackled: f32,
     celebrate: f32,
     /// The move this man is in the middle of, if he is the carrier, and how far
     /// through it he is.
@@ -214,6 +217,8 @@ impl Broadcast {
                     carrying: sim.ball.holder == Some(i) && !p.down,
                     blocking: p.engaged.is_some(),
                     down: p.down,
+                wrap: p.wrap,
+                tackled: p.tackled,
                     celebrate: p.celebrate,
                     motion: if mine { motion.kind() } else { None },
                     motion_progress: if mine { motion.progress() } else { 0.0 },
@@ -362,6 +367,8 @@ impl Broadcast {
                     && ball.1 < 1.3,
                 blocking: false,
                 down: p.down,
+                wrap: p.wrap,
+                tackled: p.tackled,
                 celebrate: 0.0,
                 // A returner is not moved to a dive or a spin yet: the throw-off
                 // has its own state machine and no move set of its own.
@@ -448,6 +455,8 @@ impl Broadcast {
                 carrying: sim.ball.holder == Some(i) && !p.down,
                 blocking: p.engaged.is_some(),
                 down: p.down,
+                wrap: p.wrap,
+                tackled: p.tackled,
                 celebrate: p.celebrate,
                 motion: if mine { motion.kind() } else { None },
                 motion_progress: if mine { motion.progress() } else { 0.0 },
@@ -474,6 +483,9 @@ impl Broadcast {
         if sim.ball.flight.is_some() || sim.ball.holder.is_none() {
             let ball = players::ball_mesh(Vec3::new(ball_pos.x, ball_pos.y, ball_z.max(0.2)));
             self.scene.draw_mesh(&mut frame, &ball, &camera);
+        }
+        if let Some(result) = &sim.result {
+            self.paint_result_word(&mut frame, result);
         }
         (frame, camera)
     }
@@ -509,6 +521,34 @@ impl Broadcast {
         frame.text_shadowed(x, 12, &label, 2, hud::YELLOW, 1);
     }
 
+    /// The word over a dead ball: SACK, TACKLE FOR LOSS, INTERCEPTION, PASS BATTED
+    /// DOWN. The card explains it a beat later; this is what the picture says while
+    /// the two men who just hit each other are still on the ground.
+    fn paint_result_word(&self, frame: &mut Frame, result: &a7fl_core::sim::PlayResult) {
+        let Some(word) = result.headline() else {
+            return;
+        };
+        let scale = 3;
+        let tw = crate::font::text_width(word, scale) as i32;
+        let th = crate::font::text_height(scale) as i32;
+        let x = (frame.w as i32 - tw) / 2;
+        let y = 20;
+        let color = if result.turnover {
+            hud::YELLOW
+        } else {
+            hud::WHITE
+        };
+        frame.fill_rect_alpha(x - 14, y - 8, tw + 28, th + 16, hud::INK, 0.74);
+        frame.text_shadowed(x, y, word, scale, color, 1);
+
+        let lower = result.description.to_uppercase();
+        let sub: String = lower.chars().take(58).collect();
+        let sw = crate::font::text_width(&sub, 1) as i32;
+        let sx = (frame.w as i32 - sw) / 2;
+        frame.fill_rect_alpha(sx - 8, y + th + 12, sw + 16, 18, hud::INK, 0.60);
+        frame.text_shadowed(sx, y + th + 17, &sub, 1, hud::WHITE, 1);
+    }
+
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
         // Shadows first so every player casts one.
         for p in bodies {
@@ -525,6 +565,8 @@ impl Broadcast {
                 carrying: p.carrying,
                 blocking: p.blocking,
                 down: p.down,
+                wrapping: p.wrap,
+                tackled: p.tackled,
                 celebrating: p.celebrate,
                 strafe: 0.0,
                 motion: p.motion,
@@ -578,6 +620,22 @@ impl Broadcast {
             return Some(Banner {
                 title: "SACK".to_string(),
                 subtitle: self.teams[def].full_name().to_uppercase(),
+                color: self.teams[def].primary,
+            });
+        }
+        if record.result.batted_down {
+            let def = record.setup.defense_team;
+            return Some(Banner {
+                title: "PASS BATTED DOWN".to_string(),
+                subtitle: record.result.description.to_uppercase(),
+                color: self.teams[def].primary,
+            });
+        }
+        if !record.result.incomplete && record.result.yards < -0.5 {
+            let def = record.setup.defense_team;
+            return Some(Banner {
+                title: "TACKLE FOR LOSS".to_string(),
+                subtitle: record.result.description.to_uppercase(),
                 color: self.teams[def].primary,
             });
         }

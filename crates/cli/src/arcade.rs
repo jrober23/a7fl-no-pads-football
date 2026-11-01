@@ -34,6 +34,13 @@ const FRAME: Duration = Duration::from_millis(16);
 const STEP: f32 = 1.0 / 60.0;
 /// How long a result stays on screen before it moves on by itself.
 const RESULT_HOLD: Duration = Duration::from_millis(2600);
+/// How long the picture holds on the dead ball before the card comes up: long
+/// enough for the tackle to finish, the men to land, and the word over the picture
+/// to be read. The play used to cut to the card a quarter of a second after the
+/// hit, which put the result screen over a tackle nobody had seen.
+const DEAD_BALL_HOLD: Duration = Duration::from_millis(1500);
+/// How long before [A] can move it on: past the hit, not past the replay.
+const DEAD_BALL_SKIP: Duration = Duration::from_millis(520);
 /// How long the pass meter takes to fill from nothing to a full-weight throw.
 const CHARGE_TIME: f32 = 1.05;
 /// Even a tap throws the ball; it just does not throw it far.
@@ -560,6 +567,8 @@ impl Arcade {
         let mut aim_y = 0.0f32;
         // The throw button has been up since this throw-off started.
         let mut armed = false;
+        // When the ball died, so the picture can hold on the tackle before the card.
+        let mut dead_at: Option<Instant> = None;
 
         loop {
             let now = Instant::now();
@@ -671,9 +680,15 @@ impl Arcade {
             }
 
             if sim.result.is_some() {
-                // Let the last picture sit so the catch or the return reads.
-                std::thread::sleep(Duration::from_millis(260));
-                return true;
+                // The ball is dead; the picture is not. A return that ends in a
+                // tackle gets the hit and the landing before the card.
+                let since = *dead_at.get_or_insert(now);
+                let waited = since.elapsed();
+                if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                    return true;
+                }
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
             }
             std::thread::sleep(Duration::from_millis(2));
         }
@@ -1018,6 +1033,8 @@ fn drive(
     let mut charge: Option<(usize, f32)> = None;
     // Where the aim stick has bent the throw, in yards off the receiver.
     let mut aim = Vec2::ZERO;
+    // When the ball died, so the picture can hold on the tackle before the card.
+    let mut dead_at: Option<Instant> = None;
 
     loop {
         let now = Instant::now();
@@ -1221,9 +1238,15 @@ fn drive(
         }
 
         if sim.result.is_some() {
-            // Let the last picture sit for a moment so the catch or the hit reads.
-            std::thread::sleep(Duration::from_millis(260));
-            return true;
+            // The ball is dead; the picture is not. Hold the shot while the hit
+            // finishes and the players get up, then let the card come up.
+            let since = *dead_at.get_or_insert(now);
+            let waited = since.elapsed();
+            if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            continue;
         }
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -1278,6 +1301,9 @@ fn throw_off_line(
         }
         ThrowPhase::Flight => "  THE BALL IS IN THE AIR".to_string(),
         ThrowPhase::Loose => "  LOOSE BALL - SOMEBODY GET ON IT".to_string(),
+        ThrowPhase::Return if sim.tackle_in_progress() => {
+            "  THE RETURNER IS DOWN".to_string()
+        }
         ThrowPhase::Return => format!(
             "  RETURN - {} BALL IN HAND",
             abbr(sim.setup.receiving_team)

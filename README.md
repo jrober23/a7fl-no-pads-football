@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.12.3-windows-x86_64.zip` from the
+Grab `a7fl-v0.13.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -286,6 +286,24 @@ with the correct enforcement spot — basic spot, previous spot, spot of foul or
 of run — plus half-the-distance-to-the-goal limits, automatic first downs and loss
 of down.
 
+### Defense
+
+Defense is played out on the field, not decided in the dark:
+
+- **Wrap tackles.** A tackle is not a switch. The defender has to close, get his
+  arms around the man and go to the ground with him: the figure sinks, wraps and
+  drives, the carrier goes over the top of the hit, and the ball is dead when the
+  two of them are on the turf. The clock stops on contact, so the extra beat costs
+  picture and not time played.
+- **Sacks.** A quarterback still holding the ball in the pocket is a live target.
+  The rush gets home, the hit is the same wrap, and the picture says `SACK`.
+- **Tackles for loss.** A run stopped behind the line is read as a tackle for loss
+  on the picture and on the card, with the yards lost spelled out.
+- **Balls in the air.** A defender standing in the flight path is not scenery. He
+  either knocks the ball down or takes it away, depending on how well he covers
+  and how good his hands are. Height matters — nobody bats down a ball over his
+  head — and it is one chance per throw, not a dice roll on every frame of it.
+
 ### Simulation
 
 `a7fl_core::sim` runs one snap as a continuous 7-on-7 play at 60 Hz: dropback,
@@ -295,6 +313,12 @@ tackles, fumbles, interceptions, defensive pass interference, sacks, safeties,
 touchdowns and out-of-bounds. `a7fl_core::throwoff` runs the throw-off the same
 way, phase by phase (presnap, flight, return, result), with fair catches, muffs,
 touchbacks, return touchdowns and safeties.
+
+A tackle, a sack and a return stopped in the open field all resolve the same way:
+contact starts a wrap, the two men go to the ground, and the result is read when the
+ball is dead. The client holds the shot through the hit and the landing before the
+card comes up, so the next screen is about a play you watched rather than one that
+happened underneath it.
 
 Each snap is seeded, so a recorded play replays bit-for-bit. That is what lets the
 renderer produce a frame for any moment of a play that was already simulated.
@@ -327,8 +351,9 @@ ever getting between the camera and the ball.
 
 The overlay is 2K5-flavoured: a score bug with possession highlight and timeout
 pips, a down-and-distance card with play clock bar, the A7FL badge, a lower-third
-ticker carrying the play-by-play line, big TOUCHDOWN / TURNOVER / SACK / FLAG
-banners, and a full-screen post-game stats panel.
+ticker carrying the play-by-play line, big TOUCHDOWN / TURNOVER / SACK / TACKLE FOR
+LOSS / PASS BATTED DOWN / FLAG banners, the word over the dead ball while the
+players get up off the turf, and a full-screen post-game stats panel.
 
 Players are built at runtime from their attributes and appearance (skin tone,
 hair, beard, build) so the seven on the field match the roster. The body is a
@@ -337,6 +362,11 @@ that tapers into a waist over a seat, quadriceps that swell above the knee, calv
 that fill a sock, deltoids that overhang the ribcage — and the jersey carries its
 number, painted onto the cloth front and back, so the man wearing 23 is the man
 wearing 23.
+
+The figure animates the hits too. A tackle is a pose, not a state flag: the defender
+reaches out and around the man with his chest over his toes, and the carrier tips
+over the top of it, hips first, until he is flat on the turf. A finished contract is
+not needed to see who hit whom.
 
 Each figure is built at one of three detail levels chosen by its distance from the
 lens, so a man on the far hash is not paying for eyes, a bicep and forty digit

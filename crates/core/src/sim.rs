@@ -23,6 +23,12 @@ use crate::rules::{PenaltyCall, PenaltyKind};
 use crate::team::{Attributes, Team};
 
 pub const TACKLE_RADIUS: f32 = 0.95;
+
+/// How long the wrap takes: the arms go on him, the feet drive, and the two of
+/// them go to the turf. Contact is not the end of the play. A tackle that
+/// resolved on the frame the defender arrived was a teleport with a sound effect:
+/// there was nothing on the field to see, and the next screen was already coming.
+pub const WRAP_SECONDS: f32 = 0.42;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
@@ -95,6 +101,9 @@ pub struct PlayResult {
     pub incomplete: bool,
     pub out_of_bounds: bool,
     pub sack: bool,
+    /// A defender got a hand in the way and knocked the ball down before it
+    /// arrived, rather than the throw simply missing its man.
+    pub batted_down: bool,
     pub air_yards: f32,
     pub penalty: Option<PenaltyCall>,
     pub passer: Option<usize>,
@@ -106,6 +115,39 @@ pub struct PlayResult {
     pub description: String,
     /// Frames of broadcast-worthy events for the highlight package.
     pub highlight: bool,
+}
+
+impl PlayResult {
+    /// The word the picture puts over a dead ball: what just happened, in the one
+    /// word a broadcast says first. The card can explain it afterwards; while the
+    /// players are still getting up, this is the whole caption.
+    pub fn headline(&self) -> Option<&'static str> {
+        if self.touchdown {
+            return Some("TOUCHDOWN");
+        }
+        if self.safety {
+            return Some("SAFETY");
+        }
+        if self.outcome == PlayOutcome::Interception {
+            return Some("INTERCEPTION");
+        }
+        if self.sack {
+            return Some("SACK");
+        }
+        if self.batted_down {
+            return Some("PASS BATTED DOWN");
+        }
+        if self.turnover {
+            return Some("TURNOVER");
+        }
+        if !self.incomplete && self.yards < -0.5 {
+            return Some("TACKLE FOR LOSS");
+        }
+        if self.incomplete {
+            return Some("INCOMPLETE");
+        }
+        None
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,6 +175,26 @@ pub enum Phase {
     Dead,
 }
 
+/// A tackle in progress.
+///
+/// The hit has landed and the result is already decided, but the ball is not dead
+/// until the two men are on the ground: the defender closes and wraps, the carrier
+/// goes over the top of it, and only then is the play over.
+#[derive(Clone, Debug)]
+pub struct Wrap {
+    pub carrier: usize,
+    pub tackler: usize,
+    /// Seconds since the arms went on him.
+    pub t: f32,
+    pub outcome: PlayOutcome,
+    pub spot: f32,
+    pub description: String,
+    /// Where the game clock stopped: at the contact, not at the landing.
+    pub elapsed: f32,
+    pub tackler_roster: usize,
+    pub fumbled: bool,
+}
+
 #[derive(Clone, Debug)]
 pub struct SimPlayer {
     pub side: Side,
@@ -153,6 +215,10 @@ pub struct SimPlayer {
     pub job: CoverageJob,
     pub run_phase: f32,
     pub celebrate: f32,
+    /// 0..1 through a tackle: a defender driving one home, or the man going down
+    /// under it. The picture animates from these; the sim decides when they pass 1.
+    pub wrap: f32,
+    pub tackled: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -259,6 +325,13 @@ pub struct PlaySim<'a> {
     pub flag: Option<PenaltyCall>,
     /// Sim time the flag came in, so the picture can pulse it.
     pub flag_at: f32,
+    /// A tackle in progress: the hit is on and the two men are going down.
+    pub wrap: Option<Wrap>,
+    /// Whether a defender has already had his chance at a ball in the air, so one
+    /// throw is not swatted at on every frame of its flight.
+    pass_contacted: bool,
+    /// What the game clock stopped at, when the ball died before the wrap finished.
+    elapsed_override: Option<f32>,
 }
 
 fn roster_of<'t>(team: &'t Team, idx: usize) -> &'t crate::team::Player {
@@ -304,6 +377,8 @@ impl<'a> PlaySim<'a> {
                 job: CoverageJob::Rush,
                 run_phase: 0.0,
                 celebrate: 0.0,
+                wrap: 0.0,
+                tackled: 0.0,
             });
         }
         for role in DefRole::ALL {
@@ -335,6 +410,8 @@ impl<'a> PlaySim<'a> {
                 job: CoverageJob::Rush,
                 run_phase: 0.0,
                 celebrate: 0.0,
+                wrap: 0.0,
+                tackled: 0.0,
             });
         }
 
@@ -367,6 +444,9 @@ impl<'a> PlaySim<'a> {
             possession_start: None,
             flag: None,
             flag_at: 0.0,
+            wrap: None,
+            pass_contacted: false,
+            elapsed_override: None,
         };
         sim.ball.pos = sim.players[0].pos;
         sim.build_routes();
@@ -646,6 +726,13 @@ impl<'a> PlaySim<'a> {
                 self.snap();
             }
             return None;
+        }
+
+        // A tackle in flight: the two men are still going to the ground, so
+        // nothing else on the field moves and the ball is not dead until they are.
+        if self.wrap.is_some() {
+            self.advance_wrap(dt);
+            return self.result.as_ref();
         }
 
         self.update_offense(dt);
@@ -944,6 +1031,8 @@ impl<'a> PlaySim<'a> {
     }
 
     fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32, aim: Vec2) {
+        // A new throw is a new chance for somebody to get a hand on it.
+        self.pass_contacted = false;
         let qb_pos = self.players[qb].pos;
         let power = power.clamp(0.0, 1.0);
 
@@ -1649,16 +1738,11 @@ impl<'a> PlaySim<'a> {
                 && holder == Some(self.qb)
                 && self.play.family.is_pass();
             let tackler_roster = self.roster_index(d);
-            self.finish_tackle(carrier, Some(d));
 
             if high_tackle {
                 let mut call = PenaltyCall::new(PenaltyKind::Unsportsmanlike, spot);
                 call.player = Some(tackler_roster);
                 self.penalty(call);
-            }
-            if fumbled {
-                self.fumble(carrier, d);
-                return;
             }
 
             let outcome = if sack {
@@ -1689,6 +1773,12 @@ impl<'a> PlaySim<'a> {
                     yards.round() as i32,
                     self.name_of(d)
                 ),
+                _ if yards < -0.5 => format!(
+                    "{} drops {} {} yards behind the line.",
+                    self.name_of(d),
+                    self.name_of(carrier),
+                    (-yards).round() as i32
+                ),
                 _ => format!(
                     "{} stops {} after {} yards.",
                     self.name_of(d),
@@ -1696,11 +1786,108 @@ impl<'a> PlaySim<'a> {
                     yards.round() as i32
                 ),
             };
-            let mut r = self.finish(outcome, spot, desc);
-            r.tackler = Some(tackler_roster);
-            self.result = Some(r);
+            // The hit is a wrap, not a teleport: the defender has to get his arms
+            // around the man and ride him down, and the ball is not dead until the
+            // two of them are on the turf.
+            self.start_wrap(carrier, d, outcome, spot, desc, tackler_roster, fumbled);
             return;
         }
+    }
+
+    /// The first wrap of a tackle.
+    ///
+    /// Everything the play will become is decided here — the spot, the sack, the
+    /// lost fumble — and then held: contact is not the end of the play, and a card
+    /// that comes up on the frame the defender arrives is a card over a man still
+    /// standing. The wrap runs for [`WRAP_SECONDS`] and the ball dies on the turf.
+    #[allow(clippy::too_many_arguments)]
+    fn start_wrap(
+        &mut self,
+        carrier: usize,
+        tackler: usize,
+        outcome: PlayOutcome,
+        spot: f32,
+        description: String,
+        tackler_roster: usize,
+        fumbled: bool,
+    ) {
+        self.players[carrier].vel = Vec2::ZERO;
+        self.players[carrier].tackled = 0.0;
+        self.players[tackler].wrap = 0.0;
+        self.wrap = Some(Wrap {
+            carrier,
+            tackler,
+            t: 0.0,
+            outcome,
+            spot,
+            description,
+            elapsed: (self.t - SNAP_DELAY).max(0.0),
+            tackler_roster,
+            fumbled,
+        });
+        let text = format!(
+            "{} wraps up {}!",
+            self.name_of(tackler),
+            self.name_of(carrier)
+        );
+        self.events.push(SimEvent { t: self.t, text });
+    }
+
+    /// Drive the tackle home: the defender closes and wraps, the carrier goes over
+    /// the top of it, and the ball is dead when they are both on the turf.
+    fn advance_wrap(&mut self, dt: f32) {
+        let Some(mut w) = self.wrap.clone() else {
+            return;
+        };
+        w.t += dt;
+        let p = (w.t / WRAP_SECONDS).clamp(0.0, 1.0);
+        self.players[w.carrier].tackled = p;
+        self.players[w.carrier].vel = Vec2::ZERO;
+        self.players[w.tackler].wrap = p;
+        let spot = self.players[w.carrier].pos;
+        let d = &mut self.players[w.tackler];
+        d.pos = d.pos.lerp(spot, (dt * 7.0).min(1.0));
+        if w.t > 0.06 {
+            d.heading = (spot.y - d.pos.y).atan2(spot.x - d.pos.x);
+        }
+        if p < 1.0 {
+            self.wrap = Some(w);
+            return;
+        }
+        self.wrap = None;
+        self.players[w.tackler].wrap = 0.0;
+        self.players[w.tackler].tackle_cooldown = 0.40;
+        self.finish_tackle(w.carrier, Some(w.tackler));
+        // The clock stopped on contact; the wrap was picture, not time played.
+        self.elapsed_override = Some(w.elapsed);
+        if w.fumbled {
+            self.fumble(w.carrier, w.tackler);
+            return;
+        }
+        let mut r = self.finish(w.outcome, w.spot, w.description);
+        r.tackler = Some(w.tackler_roster);
+        self.result = Some(r);
+    }
+
+    /// The defender closest to a ball in the air, if he is close enough to reach
+    /// it. A man cannot get a hand on one over his head, which is what the caller
+    /// checks before it asks.
+    fn in_the_way(&self) -> Option<(usize, f32)> {
+        let mut best: Option<(usize, f32)> = None;
+        for d in 7..14 {
+            let p = &self.players[d];
+            if p.down || p.stun > 0.0 {
+                continue;
+            }
+            let dist = p.pos.dist(self.ball.pos);
+            if dist > 1.1 {
+                continue;
+            }
+            if best.map(|(_, b)| dist < b).unwrap_or(true) {
+                best = Some((d, dist));
+            }
+        }
+        best
     }
 
     fn finish_tackle(&mut self, carrier: usize, _tackler: Option<usize>) {
@@ -1755,6 +1942,48 @@ impl<'a> PlaySim<'a> {
         let progress = (flight.t / flight.duration).clamp(0.0, 1.0);
         self.ball.pos = flight.from.lerp(flight.to, progress);
         self.ball.z = lerp(1.5, 1.0, progress) + flight.peak * (std::f32::consts::PI * progress).sin();
+        // A defender standing in the way of the ball gets a hand on it before it
+        // arrives. This is not the landing-spot contest: it is the safety drifting
+        // over the top and the corner who undercut the route. He either knocks it
+        // down or takes it away -- he is not allowed to stand there and do nothing.
+        if progress > 0.15 && progress < 0.97 && self.ball.z < 3.0 && !self.pass_contacted {
+            if let Some((d, dist)) = self.in_the_way() {
+                self.pass_contacted = true;
+                let cov = self.attrs(d).coverage_factor();
+                let hands = self.attrs(d).catching as f32 / 100.0;
+                // Right in front of him is a play; a lunge at the last inch is not.
+                let reached = if dist < 0.7 { 1.0 } else { 0.45 };
+                let pick = (0.02 + cov * 0.09 + hands * 0.05) * reached;
+                let bat = (0.12 + cov * 0.16 + hands * 0.08) * reached;
+                let spot = self.ball.pos.x;
+                if self.rng.chance(pick) {
+                    let desc = format!("{} jumps the route and picks it off!", self.name_of(d));
+                    let mut r = self.finish(PlayOutcome::Interception, spot, desc);
+                    r.turnover = true;
+                    r.tackler = Some(self.roster_index(d));
+                    r.air_yards = flight.air_yards;
+                    r.passer = Some(self.roster_index(flight.thrower));
+                    r.receiver = flight.target.map(|t| self.roster_index(t));
+                    r.highlight = true;
+                    self.result = Some(r);
+                    self.ball.flight = None;
+                    self.catch_spot = spot;
+                    return;
+                }
+                if self.rng.chance(bat) {
+                    let desc = format!("{} gets a hand in and bats it down!", self.name_of(d));
+                    let mut r = self.finish(PlayOutcome::PassIncomplete, self.los, desc);
+                    r.batted_down = true;
+                    r.air_yards = flight.air_yards;
+                    r.passer = Some(self.roster_index(flight.thrower));
+                    r.receiver = flight.target.map(|t| self.roster_index(t));
+                    self.result = Some(r);
+                    self.ball.flight = None;
+                    self.catch_spot = spot;
+                    return;
+                }
+            }
+        }
         if progress < 1.0 {
             self.ball.flight = Some(flight);
             return;
@@ -1916,7 +2145,12 @@ impl<'a> PlaySim<'a> {
         let yards = (end_spot - self.los) * self.dirf();
         let score_play = outcome == PlayOutcome::Touchdown;
         let safety = outcome == PlayOutcome::Safety;
-        let elapsed = (self.t - SNAP_DELAY).max(0.0);
+        // The clock stops on contact, not on the turf: a wrap that takes four
+        // tenths of a second is picture, not time played.
+        let elapsed = self
+            .elapsed_override
+            .take()
+            .unwrap_or_else(|| (self.t - SNAP_DELAY).max(0.0));
         let mut result = PlayResult {
             outcome,
             yards: if score_play {
@@ -1934,6 +2168,7 @@ impl<'a> PlaySim<'a> {
             incomplete: outcome == PlayOutcome::PassIncomplete,
             out_of_bounds: false,
             sack: outcome == PlayOutcome::Sack,
+            batted_down: false,
             air_yards: 0.0,
             penalty: self.flag.take(),
             passer: None,
@@ -2232,5 +2467,126 @@ mod tests {
             assert!(r.end_spot.is_finite() && r.elapsed.is_finite());
             assert!(r.end_spot >= -10.0 && r.end_spot <= 110.0, "spot {}", r.end_spot);
         }
+    }
+
+    /// Contact is not the end of the play: the defender wraps, the carrier goes
+    /// over the top of it, and only then is the ball dead. A card one frame after
+    /// the hit is a card over two men still on their feet.
+    #[test]
+    fn a_tackle_takes_a_beat_before_the_ball_is_dead() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 3));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+
+        // Put the nearest defender on him every frame until the arms go on.
+        let mut guard = 0;
+        while sim.wrap.is_none() && sim.result.is_none() && guard < 300 {
+            sim.players[7].pos = sim.players[carrier].pos + Vec2::new(0.25, 0.0);
+            sim.players[7].stun = 0.0;
+            sim.players[7].down = false;
+            sim.players[7].tackle_cooldown = 0.0;
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert!(sim.wrap.is_some(), "no tackle was ever attempted");
+        assert!(
+            sim.result.is_none(),
+            "the hit ended the play on the spot: {:?}",
+            sim.result.as_ref().map(|r| &r.description)
+        );
+        assert!(
+            !sim.players[carrier].down,
+            "he is on the turf before the wrap has even started"
+        );
+
+        // And then it finishes, on the ground, a good part of a second later.
+        let mut t = 0.0;
+        while sim.result.is_none() && t < 3.0 {
+            sim.step(1.0 / 60.0);
+            t += 1.0 / 60.0;
+        }
+        let r = sim.result.clone().expect("the tackle has to end the play");
+        assert!(
+            t > 0.30,
+            "the wrap resolved in {t:.2}s: there is nothing to watch"
+        );
+        assert!(sim.players[carrier].down, "nobody ends up on the ground");
+        assert!(r.tackler.is_some(), "nobody gets credit for the tackle");
+    }
+
+    /// A defender in the air's path is not scenery. He either knocks it down or
+    /// takes it away, and the picture says which.
+    #[test]
+    fn a_defender_in_the_way_gets_a_hand_on_the_ball() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_pass()).expect("a pass play");
+        let mut stops = 0;
+        for seed in 0..60u64 {
+            let mut sim = PlaySim::new(
+                &off,
+                &def_,
+                play,
+                &dbook[seed as usize % dbook.len()],
+                &setup(40.0, 1, 10.0, seed),
+            );
+            let mut guard = 0;
+            // Stand a defender directly in the flight path once it is up.
+            while sim.result.is_none() && guard < 1500 {
+                if sim.ball.flight.is_some() {
+                    let ball = sim.ball.pos;
+                    sim.players[7].pos = ball;
+                    sim.players[7].down = false;
+                    sim.players[7].stun = 0.0;
+                }
+                sim.step(1.0 / 60.0);
+                guard += 1;
+            }
+            if let Some(r) = &sim.result {
+                if r.batted_down {
+                    stops += 1;
+                    assert!(r.incomplete, "a batted ball is not a completion");
+                    assert_eq!(r.headline(), Some("PASS BATTED DOWN"));
+                } else if r.outcome == PlayOutcome::Interception {
+                    stops += 1;
+                    assert_eq!(r.headline(), Some("INTERCEPTION"));
+                }
+            }
+        }
+        assert!(stops > 0, "a man standing under the ball never touched it");
+    }
+
+    /// The word over the dead ball has to be the thing that just happened.
+    #[test]
+    fn the_picture_names_the_hit_it_just_saw() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let mut r = simulate_play(&off, &def_, &book[0], &dbook[0], &setup(40.0, 1, 10.0, 9));
+        r.sack = false;
+        r.touchdown = false;
+        r.safety = false;
+        r.turnover = false;
+        r.incomplete = false;
+        r.batted_down = false;
+        r.outcome = PlayOutcome::Run;
+        r.yards = -3.0;
+        assert_eq!(r.headline(), Some("TACKLE FOR LOSS"));
+        r.yards = 4.0;
+        assert_eq!(r.headline(), None);
+        r.sack = true;
+        assert_eq!(r.headline(), Some("SACK"));
+        r.sack = false;
+        r.batted_down = true;
+        assert_eq!(r.headline(), Some("PASS BATTED DOWN"));
     }
 }

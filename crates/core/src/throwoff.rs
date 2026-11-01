@@ -124,6 +124,9 @@ pub struct ThrowPlayer {
     pub down: bool,
     pub run_phase: f32,
     pub heading: f32,
+    /// 0..1 through the hit: the gunner driving it home, the returner going down.
+    pub wrap: f32,
+    pub tackled: f32,
 }
 
 /// Where a throw-off at a given weight and aim comes down, worked out before it
@@ -149,6 +152,23 @@ const THROW_OFF_LIGHT_AIR: f32 = THROW_OFF_MIN_AIR_YARDS - 6.0;
 /// How long a loose ball lies there while everybody converges on it, before the
 /// nearest man is on it and the play is dead.
 const LOOSE_SECONDS: f32 = 1.35;
+
+/// How long the tackle that ends a return takes to put him on the turf. The ball
+/// is dead at the moment of contact; this is the picture of it, so the return does
+/// not vanish into a card while both men are still standing.
+const TACKLE_SECONDS: f32 = 0.40;
+
+/// A tackle in progress: who has him, who is hitting him, and how long ago the
+/// arms went on.
+#[derive(Clone, Copy, Debug)]
+struct TackleBeat {
+    returner: usize,
+    gunner: usize,
+    t: f32,
+    spot: f32,
+    safety: bool,
+    yards: f32,
+}
 
 /// Air yards a throw-off carries at a given weight on the meter. It tops out on
 /// the receiving team's 20 — 45 yards from the 35 — instead of sailing into the
@@ -205,6 +225,9 @@ pub struct ThrowOffSim<'a> {
     violation: Option<(ThrowOffOutcome, String)>,
     /// Seconds the loose ball has been on the ground.
     loose_t: f32,
+    /// A tackle that is still ending: the returner is going down and the card has
+    /// not been called for yet.
+    tackle: Option<TackleBeat>,
 }
 
 impl<'a> ThrowOffSim<'a> {
@@ -234,6 +257,8 @@ impl<'a> ThrowOffSim<'a> {
             down: false,
             run_phase: 0.0,
             heading: 0.0,
+            wrap: 0.0,
+            tackled: 0.0,
         }];
         for (n, &g) in gunners.iter().enumerate() {
             let y = (n as f32 - 1.0) * 3.2;
@@ -246,6 +271,8 @@ impl<'a> ThrowOffSim<'a> {
                 down: false,
                 run_phase: 0.0,
                 heading: 0.0,
+                wrap: 0.0,
+                tackled: 0.0,
             });
         }
         // Returner sits where a 45-yard throw would land.
@@ -259,6 +286,8 @@ impl<'a> ThrowOffSim<'a> {
             down: false,
             run_phase: 0.0,
             heading: 0.0,
+            wrap: 0.0,
+            tackled: 0.0,
         });
         let _ = &mut rng;
         ThrowOffSim {
@@ -283,6 +312,7 @@ impl<'a> ThrowOffSim<'a> {
             catch_t: None,
             violation: None,
             loose_t: 0.0,
+            tackle: None,
         }
     }
 
@@ -665,6 +695,61 @@ impl<'a> ThrowOffSim<'a> {
     fn update_return(&mut self, dt: f32) {
         let dir = self.setup.receive_direction;
         let returner = self.returner();
+
+        // A tackle that is being made: he has him, and the two of them are going to
+        // the turf. The play is over when they get there, not when the hands close.
+        if let Some(mut b) = self.tackle {
+            b.t += dt;
+            let p = (b.t / TACKLE_SECONDS).clamp(0.0, 1.0);
+            self.players[b.returner].tackled = p;
+            self.players[b.returner].vel = Vec2::ZERO;
+            self.players[b.gunner].wrap = p;
+            let spot = self.players[b.returner].pos;
+            self.players[b.gunner].pos = self.players[b.gunner].pos.lerp(spot, (dt * 7.0).min(1.0));
+            self.ball = spot;
+            self.ball_z = 1.0;
+            if p < 1.0 {
+                self.tackle = Some(b);
+                return;
+            }
+            self.tackle = None;
+            self.players[b.returner].down = true;
+            self.players[b.gunner].wrap = 0.0;
+            if b.safety {
+                let desc = format!(
+                    "{} is dragged down in the end zone. Safety!",
+                    self.name(b.returner)
+                );
+                self.finish(
+                    ThrowOffOutcome::Safety,
+                    self.setup.receiving_team,
+                    0.0,
+                    2,
+                    Some(self.setup.throwing_team),
+                    desc,
+                );
+            } else {
+                let desc = format!(
+                    "{} returns it {} yards before {} gets him.",
+                    self.name(b.returner),
+                    b.yards.round() as i32,
+                    self.name(b.gunner)
+                );
+                self.finish(
+                    ThrowOffOutcome::Returned,
+                    self.setup.receiving_team,
+                    b.spot,
+                    0,
+                    None,
+                    desc,
+                );
+                if let Some(r) = self.result.as_mut() {
+                    r.return_yards = b.yards;
+                }
+            }
+            return;
+        }
+
         let goal = field::opponent_goal_side(dir);
         let target = Vec2::new(goal, self.players[returner].pos.y * 0.6);
         let human = self.human;
@@ -720,46 +805,22 @@ impl<'a> ThrowOffSim<'a> {
                 let returner_skill = self.attrs(returner).break_tackle_factor();
                 let p = clamp(0.36 + (defender - returner_skill) * 0.5, 0.1, 0.9);
                 if self.rng.chance(p) {
-                    let own_goal = field::opponent_goal_side(-dir);
+                    // The hit lands here. What it is worth is settled when he is
+                    // on the ground.
                     let in_own_endzone = if dir > 0 {
                         pos.x <= 0.0
                     } else {
                         pos.x >= FIELD_LENGTH
                     };
-                    let _ = own_goal;
-                    if in_own_endzone {
-                        let desc = format!(
-                            "{} is dragged down in the end zone. Safety!",
-                            self.name(returner)
-                        );
-                        self.finish(
-                            ThrowOffOutcome::Safety,
-                            self.setup.receiving_team,
-                            0.0,
-                            2,
-                            Some(self.setup.throwing_team),
-                            desc,
-                        );
-                    } else {
-                        let yards = (pos.x - self.setup.spot()).abs();
-                        let desc = format!(
-                            "{} returns it {} yards before {} gets him.",
-                            self.name(returner),
-                            (self.rng.range(0.0, 1.0) * 0.0 + yards).round() as i32,
-                            self.name(g)
-                        );
-                        self.finish(
-                            ThrowOffOutcome::Returned,
-                            self.setup.receiving_team,
-                            pos.x,
-                            0,
-                            None,
-                            desc,
-                        );
-                        if let Some(r) = self.result.as_mut() {
-                            r.return_yards = (pos.x - self.setup.spot()).abs();
-                        }
-                    }
+                    let yards = (pos.x - self.setup.spot()).abs();
+                    self.tackle = Some(TackleBeat {
+                        returner,
+                        gunner: g,
+                        t: 0.0,
+                        spot: pos.x,
+                        safety: in_own_endzone,
+                        yards,
+                    });
                     return;
                 } else {
                     self.players[g].down = true;
@@ -815,6 +876,12 @@ impl<'a> ThrowOffSim<'a> {
 
     pub fn is_snapped(&self) -> bool {
         self.t >= self.snap_delay
+    }
+
+    /// A tackle is being made right now: the picture has a hit to show and the
+    /// card should wait for it.
+    pub fn tackle_in_progress(&self) -> bool {
+        self.tackle.is_some()
     }
 
     /// Seconds left before a computer thrower lets it go.
@@ -1043,5 +1110,55 @@ mod tests {
         sim.launch_with(0.8, -9.0);
         let flight = sim.flight.expect("the throw should be in the air");
         assert!((flight.to.y + 9.0).abs() < 1e-3, "landed at y={}", flight.to.y);
+    }
+
+    /// A return that ends in a tackle is not called the instant the hands close:
+    /// he has to go to the ground first, the way a tackle anywhere else does.
+    #[test]
+    fn a_return_tackle_puts_him_down_before_the_play_is_called() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        sim.launch_with(0.7, 0.0);
+        // Keep the returner under the ball so it is caught, then let a gunner get
+        // to him.
+        let mut guard = 0;
+        while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 900 {
+            if let Some(spot) = sim.landing_spot() {
+                sim.players[4].pos = spot;
+            }
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(
+            sim.phase,
+            ThrowPhase::Return,
+            "nobody caught it: {:?}",
+            sim.result.as_ref().map(|r| &r.outcome)
+        );
+
+        let mut guard = 0;
+        while !sim.tackle_in_progress() && sim.result.is_none() && guard < 900 {
+            sim.players[1].pos = sim.players[4].pos;
+            sim.players[1].down = false;
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert!(sim.tackle_in_progress(), "no tackle was ever made on the return");
+        assert!(
+            sim.result.is_none(),
+            "the return was called on the hit, before he went down"
+        );
+        assert!(!sim.players[4].down, "he is down before the wrap has run");
+
+        let mut t = 0.0;
+        while sim.result.is_none() && t < 2.0 {
+            sim.step(1.0 / 60.0);
+            t += 1.0 / 60.0;
+        }
+        let r = sim.result.clone().expect("the tackle has to end the return");
+        assert!(t > 0.25, "the hit resolved in {t:.2}s");
+        assert!(sim.players[4].down, "the returner never went down");
+        assert_eq!(r.outcome, ThrowOffOutcome::Returned, "{:?}", r.outcome);
     }
 }

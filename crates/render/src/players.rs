@@ -109,6 +109,10 @@ pub struct Pose {
     pub motion: Option<Kind>,
     /// 0..1 through the move.
     pub motion_progress: f32,
+    /// 0..1 through a tackle he is making: arms out, chest over his toes.
+    pub wrapping: f32,
+    /// 0..1 through a tackle he is taking: going over the hit to the turf.
+    pub tackled: f32,
 }
 
 /// One leg through a running stride: `(phase, thigh angle, knee flexion, foot pitch)`.
@@ -556,6 +560,12 @@ pub fn build_mesh_at(
             angles[1] += 0.45;
             angles[0] *= 0.6;
         }
+        if pose.wrapping > 0.0 {
+            // A tackler does not run into a man upright: he sinks, gets his hips
+            // under him and drives up through the hit.
+            angles[1] += 0.34 * pose.wrapping.clamp(0.0, 1.0);
+            angles[0] *= 1.0 - 0.25 * pose.wrapping.clamp(0.0, 1.0);
+        }
         legs[i] = angles;
         reach = reach.max(leg_reach(angles[0], angles[1], thigh_len, shin_len));
     }
@@ -655,7 +665,9 @@ pub fn build_mesh_at(
     // The whole upper body hangs off the hips and leans as one piece. Shoulders
     // counter-rotate against the pelvis, which is what stops a runner looking
     // like a rigid block with arms attached.
-    let lean = live * (0.08 + 0.24 * speed) + if pose.blocking { 0.34 } else { 0.0 };
+    let lean = live * (0.08 + 0.24 * speed)
+        + if pose.blocking { 0.34 } else { 0.0 }
+        + 0.30 * pose.wrapping.clamp(0.0, 1.0);
     let spine_dir = Vec3::new(lean.sin(), 0.0, lean.cos());
     let spine = |f: f32| pelvis + spine_dir * (torso_len * f);
     let chest_yaw = -hip_yaw * 0.7;
@@ -784,17 +796,26 @@ pub fn build_mesh_at(
         // shoulder alone and it projects off the front of the chest like a plank.
         let counter = legs[1 - i][0];
         let ball_arm = pose.carrying && *side > 0.0;
+        let wrap = pose.wrapping.clamp(0.0, 1.0);
         let mut swing = counter * (0.50 + 0.30 * run_blend) * live - 0.30 * live;
         if ball_arm {
             swing = swing * 0.20 - 0.10;
         }
-        let flex = if ball_arm {
+        let mut flex = if ball_arm {
             1.85
         } else if pose.blocking {
             1.05
         } else {
             0.25 + 1.20 * run_blend * live
         };
+        if wrap > 0.0 {
+            // Arms out and around the man: upper arms forward at shoulder height
+            // and the elbows folded, so the hands close on his far side instead of
+            // hanging at his own ribs. This is the difference between a tackle and
+            // two men standing next to each other.
+            swing += (1.25 - swing) * wrap;
+            flex += (1.20 - flex) * wrap;
+        }
 
         let up_dir = Vec3::new(swing.sin(), side * 0.12, -swing.cos()).normalize_or_zero();
         let elbow = shoulder + up_dir * upper_len;
@@ -1009,15 +1030,15 @@ pub fn build_mesh_at(
     }
     // Helmet? Never. The A7FL plays without them.
 
-    if pose.down {
-        // Tipped over: rotate the whole figure onto the turf.
-        for t in mesh.tris.iter_mut() {
-            for p in [&mut t.a, &mut t.b, &mut t.c] {
-                let z = p.z;
-                p.z = z * 0.32 + 0.1;
-                p.x = p.x * 0.7 - z * 0.55;
-            }
-        }
+    // A man on the ground got there over the top of a hit, and that is what the
+    // figure has to show: the hips drop first, then the chest follows the shoulder
+    // and the whole body goes flat. The old pose squashed a standing man where he
+    // stood, which read as a doll being tipped over sideways.
+    let fall = if pose.down { 1.0 } else { pose.tackled.clamp(0.0, 1.0) };
+    if fall > 0.001 {
+        let e = fall * fall * (3.0 - 2.0 * fall);
+        pitch_mesh(&mut mesh, SOLE, e * 1.42);
+        raise_to_turf(&mut mesh);
     }
 
     if let Some(kind) = pose.motion {
@@ -1343,6 +1364,67 @@ mod tests {
             standing.1,
             standing.3
         );
+    }
+
+    fn posed(wrapping: f32, tackled: f32) -> Mesh {
+        let teams = a7fl_core::team::league_teams();
+        let pose = Pose {
+            run_phase: 0.3,
+            speed: 0.75,
+            wrapping,
+            tackled,
+            ..Default::default()
+        };
+        build_mesh(&teams[0].roster[0], &teams[0].home, &pose, 0)
+    }
+
+    /// A tackler has to reach out and around the man, not jog past him with his
+    /// arms at his sides.
+    #[test]
+    fn a_tackler_wraps_his_arms_around_the_man() {
+        let standing = bounds(&posed(0.0, 0.0));
+        let wrapping = bounds(&posed(1.0, 0.0));
+        assert!(
+            wrapping.1 > standing.1 + 0.18,
+            "the wrap has to reach in front of him: {:.2} vs {:.2}",
+            wrapping.1,
+            standing.1
+        );
+        assert!(
+            wrapping.5 < standing.5 - 0.03,
+            "a tackler gets low: head was at {:.2}, is at {:.2}",
+            standing.5,
+            wrapping.5
+        );
+        assert!(wrapping.4 > -0.05, "he cannot sink through the turf: {:.2}", wrapping.4);
+    }
+
+    /// Being tackled is an animation, not a switch: half way through he is lower
+    /// than he was, and at the end he is on the turf and out in front.
+    #[test]
+    fn a_tackled_man_goes_down_over_the_hit() {
+        let standing = bounds(&posed(0.0, 0.0));
+        let falling = bounds(&posed(0.0, 0.5));
+        let down = bounds(&posed(0.0, 1.0));
+        assert!(
+            falling.5 < standing.5 - 0.1,
+            "he has to be going down half way through: {:.2} vs {:.2}",
+            falling.5,
+            standing.5
+        );
+        assert!(
+            down.5 < standing.5 * 0.55,
+            "he ends on the turf: head was at {:.2}, is at {:.2}",
+            standing.5,
+            down.5
+        );
+        assert!(
+            down.1 > standing.1 + 0.7,
+            "a body on the ground reaches out in front: {:.2} vs {:.2}",
+            down.1,
+            standing.1
+        );
+        assert!(down.4 > -0.05, "he cannot sink through the turf: {:.2}", down.4);
     }
 
     #[test]
