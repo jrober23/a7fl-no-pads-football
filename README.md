@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.12.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.12.1-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -166,10 +166,12 @@ from the same function that flies the ball, and an overthrown pass is incomplete
 there is no fifty-fifty for a receiver to win on a ball that lands ten yards from
 him.
 
-Fourth downs get their own prompt (go for it, or throw it off), drawn with the same
-bitmap font as the broadcast overlay. Conversions are called and played like any
-other snap. In terminal mode the picture is sized from `COLUMNS` and `LINES`, so it
-adapts to whatever terminal you run it in.
+Fourth downs get their own prompt (go for it, or throw it off), and so do conversions
+(one point from the 5, two from the 10). Both are lists you drive with the d-pad or
+the stick — sideways or up and down, whichever way the list runs — with the
+highlighted line in the call sheet's accent, and A takes the answer. Conversions are
+then called and played like any other snap. In terminal mode the picture is sized
+from `COLUMNS` and `LINES`, so it adapts to whatever terminal you run it in.
 
 ### Running with it
 
@@ -198,13 +200,24 @@ yards in the air. It is yours to throw whenever your team is the one throwing it
 off — which is right after you score — and yours to return whenever the other lot
 throw it.
 
-Throwing it off works like a pass. Hold the throw button and the meter fills; while
-it fills a guide runs out to a marker showing where the ball will come down, and the
-stick steers that marker across the field. You can pick the spot before you start
-charging. The notch on the meter is the 40-yard rule, and a throw short of it is a
-Run Back, so the first thing you learn is that a soft throw is a penalty. Past the
-notch it goes where you aim it, and full power comes down on the receiving team's
-20 — twenty yards short of the end zone, with eighty in front of the return.
+Throwing it off is three beats, the way a kickoff is. First the line: left and right
+on the stick walks the landing marker across the field, and the bar under the picture
+reads the aim back to you in yards. Then the arm: press and hold A and the meter fills
+with the marker locked where you left it. Then the throw: let go, and the ball goes on
+the weight you gave it. The notch on the meter is the 40-yard rule, and a throw short
+of it is a Run Back, so the first thing you learn is that a soft throw is a penalty.
+Past the notch it goes where you aim it, and full power comes down on the receiving
+team's 20 — twenty yards short of the end zone, with eighty in front of the return.
+
+None of that is on a clock: a throw-off waits for the man on the pad, and the game no
+longer opens in the middle of one. A kickoff card sits in front of the first snap with
+the matchup, who is throwing it off and what the pad does, and it waits for A. Back to
+receive, the computer's throw is held a beat longer and the bar counts it in, so the
+ball is never in the air before you have found it.
+
+The aim used to run up and down the stick, which in this lens — behind the ball,
+looking downfield — is towards the camera rather than across the field, so the one
+thing a throw-off asks you to choose was the one thing the stick could not do.
 
 It used to top out at seventy-four air yards, which put every hard throw into the
 end zone for a touchback and turned the play into nothing but a ball in the air.

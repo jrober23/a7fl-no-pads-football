@@ -179,7 +179,10 @@ pub struct ThrowOffSim<'a> {
     pub result: Option<ThrowOffResult>,
     pub events: Vec<String>,
     flight: Option<Flight>,
-    snap_delay: f32,
+    /// How long the thrower waits before he lets it go. A client with a human
+    /// returner on the other end raises it so the ball is not in the air before
+    /// he has looked up.
+    pub snap_delay: f32,
     returner_has_ball: bool,
     safety_risk: bool,
     /// The man the human is steering, and which way he is pushing him.
@@ -760,6 +763,11 @@ impl<'a> ThrowOffSim<'a> {
 
     pub fn is_snapped(&self) -> bool {
         self.t >= self.snap_delay
+    }
+
+    /// Seconds left before a computer thrower lets it go.
+    pub fn presnap_left(&self) -> f32 {
+        (self.snap_delay - self.t).max(0.0)
     }
 
     pub fn ball_position(&self) -> (Vec2, f32) {

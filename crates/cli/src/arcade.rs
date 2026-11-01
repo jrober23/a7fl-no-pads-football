@@ -47,6 +47,11 @@ const MOVES: [Kind; 4] = [Kind::Spin, Kind::Hurdle, Kind::Dive, Kind::Slide];
 /// How far across the field a throw-off can be aimed: the width of the landing
 /// zone the returner has to work in.
 const THROW_OFF_AIM_YARDS: f32 = 13.0;
+/// How fast the aim marker sweeps across the field while the stick is held.
+const AIM_SWEEP: f32 = 26.0;
+/// How long the thrower waits before the ball goes when the computer is throwing
+/// it at a human returner. Long enough to see the field and find the ball.
+const WATCH_SNAP_DELAY: f32 = 2.6;
 
 /// The views the player can switch between while the ball is live.
 const CAMS: [CameraMode; 3] = [
@@ -85,6 +90,34 @@ fn stick_to_world(stick: Vec2, flip_y: bool, mode: CameraMode, dir: i8) -> Vec2 
         }
         // Sideline: the long axis runs across the screen either way.
         _ => Vec2::new(stick.x, -up),
+    }
+}
+
+/// Sweep the throw-off aim marker across the field.
+///
+/// The lens sits behind the ball looking downfield in all three cameras, so the
+/// field's width runs left and right across the screen: the stick's horizontal
+/// axis is the one that moves the marker, and it stops at the sideline.
+fn aim_step(aim_y: f32, stick_x: f32, dt: f32) -> f32 {
+    if stick_x.abs() <= 0.20 {
+        return aim_y;
+    }
+    (aim_y + stick_x * AIM_SWEEP * dt).clamp(-THROW_OFF_AIM_YARDS, THROW_OFF_AIM_YARDS)
+}
+
+/// The aim in the words the player sees it in: the marker is on the field, this
+/// is the readout under the picture.
+fn aim_readout(throw_dir: i8, aim_y: f32) -> String {
+    // Screen right for a lens looking along `dir` is `dir` in world y.
+    let across = throw_dir as f32 * aim_y;
+    if across.abs() < 0.5 {
+        "DOWN THE MIDDLE".to_string()
+    } else {
+        format!(
+            "{:.0} YARDS {}",
+            across.abs().round(),
+            if across > 0.0 { "RIGHT" } else { "LEFT" }
+        )
     }
 }
 
@@ -207,6 +240,9 @@ impl Arcade {
     }
 
     fn play(&mut self) {
+        if !self.kickoff_card() {
+            return;
+        }
         while !self.game.is_over() && !self.quit {
             match self.game.action() {
                 Action::GameOver => break,
@@ -303,72 +339,157 @@ impl Arcade {
         lines
     }
 
-    fn choose_points(&mut self) -> bool {
-        // The second overtime round forces two-point tries.
-        let mut two = self.game.conversion_forced_two();
+    /// A question with a few answers: left, right, up and down on the stick move
+    /// the highlight, A takes it. Returns `None` when the player quit.
+    ///
+    /// These screens used to flash between two options on B, so a player reaching
+    /// for the d-pad — the thing that moves a highlight everywhere else in the
+    /// game — got nothing back.
+    fn ask(&mut self, title: &str, note: &[&str], options: &[String], start: usize) -> Option<usize> {
+        let mut nav = Nav::default();
+        let mut pick = start.min(options.len().saturating_sub(1));
+        let mut last = Instant::now();
+        // A button held from the last screen must not answer this one.
+        self.view.reset();
         loop {
-            let lines = vec![
-                self.header(),
-                String::new(),
-                "  CONVERSION".to_string(),
-                String::new(),
-                format!("    {} 1 point from the 5", if two { "  " } else { ">>" }),
-                format!("    {} 2 points from the 10", if two { ">>" } else { "  " }),
-                String::new(),
-                "  [B] TOGGLE   [A] CONFIRM".to_string(),
-            ];
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f32().min(0.1);
+            last = now;
+            let mut lines = vec![self.header(), String::new(), format!("  {title}"), String::new()];
+            for (n, option) in options.iter().enumerate() {
+                lines.push(format!("    {} {}", if n == pick { ">>" } else { "  " }, option));
+            }
+            lines.push(String::new());
+            for line in note {
+                lines.push(format!("  {line}"));
+            }
+            lines.push(String::new());
+            lines.push("  [STICK] CHOOSE   [A] CONFIRM   [START] PAUSE".to_string());
             if !self.view.page(&lines) {
                 self.quit = true;
-                return two;
+                return None;
             }
-            let input = self.wait(Duration::from_millis(16));
+            let input = self.input();
             if input.pressed.start {
                 if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
                     self.quit = true;
-                    return two;
+                    return None;
                 }
+                last = Instant::now();
                 continue;
             }
-            if input.pressed.b {
-                two = !two;
+            // Up and down always work, and left and right do too: with only two
+            // answers standing side by side in some of these, either reads right.
+            let count = options.len();
+            match nav.step(input.stick, dt) {
+                Some(Dir::Up | Dir::Left) if count > 1 => pick = (pick + count - 1) % count,
+                Some(Dir::Down | Dir::Right) if count > 1 => pick = (pick + 1) % count,
+                _ => {}
             }
             if input.pressed.a {
-                return two;
+                return Some(pick);
             }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+    }
+
+    fn choose_points(&mut self) -> bool {
+        // The second overtime round forces two-point tries.
+        let forced = self.game.conversion_forced_two();
+        if forced {
+            let options = vec!["2 POINTS - SNAP FROM THE 10".to_string()];
+            return self
+                .ask(
+                    "CONVERSION",
+                    &["Overtime: the two-point try is the only one on offer."],
+                    &options,
+                    0,
+                )
+                .is_some();
+        }
+        let options = vec![
+            "1 POINT  - SNAP FROM THE 5".to_string(),
+            "2 POINTS - SNAP FROM THE 10".to_string(),
+        ];
+        match self.ask(
+            "CONVERSION",
+            &["The A7FL lets the offense pick the try, and it is locked in."],
+            &options,
+            0,
+        ) {
+            Some(pick) => pick == 1,
+            None => false,
         }
     }
 
     /// Fourth down: go for it, or use the A7FL throw-off in place of a punt.
     fn ask_throw_off(&mut self) -> bool {
-        let mut throw_off = false;
+        let options = vec![
+            "GO FOR IT  - SNAP THE FOURTH DOWN".to_string(),
+            "THROW IT OFF - THE THROW-OFF REPLACES THE PUNT".to_string(),
+        ];
+        match self.ask(
+            "FOURTH DOWN",
+            &["No punting in this league. The throw-off hands the ball back from the 35."],
+            &options,
+            0,
+        ) {
+            Some(pick) => pick == 1,
+            None => false,
+        }
+    }
+
+    /// The card in front of the first snap of the game. The client used to drop a
+    /// player straight into a throw-off that was already in the air, so this holds
+    /// the kickoff until he has seen the matchup and knows what the pad does.
+    fn kickoff_card(&mut self) -> bool {
+        let (receiving, from_own) = match self.game.phase {
+            GamePhase::ThrowOff { receiving, from_own } => (receiving, from_own),
+            _ => return true,
+        };
+        let throwing = 1 - receiving;
+        let lines = vec![
+            String::new(),
+            "  A7FL NO PADS FOOTBALL".to_string(),
+            String::new(),
+            format!(
+                "  {} AT {}",
+                self.game.teams[throwing].display_upper(),
+                self.game.teams[receiving].display_upper()
+            ),
+            String::new(),
+            format!(
+                "  TO OPEN: {} THROWS IT OFF FROM ITS OWN {} - {} RECEIVES",
+                self.game.teams[throwing].abbr, from_own as i32, self.game.teams[receiving].abbr
+            ),
+            format!(
+                "  YOU RUN {} - IT TAKES THE FIELD FIRST",
+                self.game.teams[receiving].abbr
+            ),
+            String::new(),
+            "  THROW-OFF: STICK AIMS ACROSS THE FIELD, HOLD A TO LOAD POWER, LET GO TO THROW"
+                .to_string(),
+            "  RETURN: STICK RUNS, [X] CHANGES CAMERA, [START] PAUSES".to_string(),
+            String::new(),
+            "  [A] START THE GAME".to_string(),
+        ];
+        if !self.view.page(&lines) {
+            return false;
+        }
         loop {
-            let lines = vec![
-                self.header(),
-                String::new(),
-                "  FOURTH DOWN - no punting in this league".to_string(),
-                String::new(),
-                format!("    {} GO FOR IT", if throw_off { "  " } else { ">>" }),
-                format!("    {} THROW IT OFF", if throw_off { ">>" } else { "  " }),
-                String::new(),
-                "  [B] TOGGLE   [A] CONFIRM".to_string(),
-            ];
-            if !self.view.page(&lines) {
-                self.quit = true;
-                return false;
-            }
-            let input = self.wait(Duration::from_millis(16));
+            let input = self.wait(Duration::from_millis(24));
             if input.pressed.start {
                 if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
                     self.quit = true;
                     return false;
                 }
+                if !self.view.page(&lines) {
+                    return false;
+                }
                 continue;
             }
-            if input.pressed.b {
-                throw_off = !throw_off;
-            }
             if input.pressed.a {
-                return throw_off;
+                return true;
             }
         }
     }
@@ -396,6 +517,11 @@ impl Arcade {
         let receiving = self.game.teams[setup.receiving_team].clone();
         let mut sim = ThrowOffSim::new(&setup, &throwing, &receiving);
         sim.human_thrower = setup.throwing_team == my_team;
+        if !sim.human_thrower {
+            // The ball is coming at you: give the man on the pad a moment to see
+            // the field before it goes.
+            sim.snap_delay = WATCH_SNAP_DELAY;
+        }
 
         let finished = self.drive_throw_off(&mut sim, my_team, &header);
         if !finished {
@@ -432,6 +558,8 @@ impl Arcade {
         let mut charging = false;
         // Where across the field the throw is aimed, in yards.
         let mut aim_y = 0.0f32;
+        // The throw button has been up since this throw-off started.
+        let mut armed = false;
 
         loop {
             let now = Instant::now();
@@ -462,28 +590,30 @@ impl Arcade {
             } else {
                 sim.setup.throwing_direction()
             };
-            let stick = stick_to_world(
-                input.stick,
-                self.flip_y,
-                CAMS[self.cam % CAMS.len()],
-                cam_dir,
-            );
+            let stick = stick_to_world(input.stick, self.flip_y, CameraMode::Classic, cam_dir);
 
             if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
-                // Hold to wind the arm up, let go to throw it off. The aim can be
-                // picked before the charge starts, which is what the guide is for.
+                // Three beats, the way a kickoff is played: pick the line the ball
+                // will take, hold A to load the arm, let go to throw it. The throw
+                // waits for the man on the pad, so there is no clock to beat.
                 let holding = input.held.a || input.held.throw;
-                if holding {
+                // A still held from the kickoff card must not load the arm: the
+                // button has to come up once before it means anything here.
+                if !holding {
+                    armed = true;
+                }
+                if holding && armed {
                     charging = true;
                     hold = (hold + frame_dt as f32).min(CHARGE_TIME);
-                } else if charging {
+                } else if charging && !holding {
                     let power = (hold / CHARGE_TIME).clamp(MIN_POWER, 1.0);
                     sim.launch_with(power, aim_y);
                     charging = false;
                     hold = 0.0;
                 }
-                if stick.y.abs() > 0.30 {
-                    aim_y = stick.y.clamp(-1.0, 1.0) * THROW_OFF_AIM_YARDS;
+                // The line is set before the arm comes back and locked there.
+                if !charging {
+                    aim_y = aim_step(aim_y, input.stick.x, frame_dt as f32);
                 }
             }
 
@@ -528,7 +658,7 @@ impl Arcade {
                 let mut frame = self.broadcast.throw_off_frame_live(sim, mode, &ui);
                 let lines = vec![
                     header.to_string(),
-                    throw_off_line(self, sim, my_team),
+                    throw_off_line(self, sim, my_team, aim_y, charging),
                     throw_off_controls(self, sim, my_team),
                 ];
                 if !self.view.show(&mut frame, &lines) {
@@ -1035,21 +1165,26 @@ fn human_man(sim: &ThrowOffSim, my_team: usize) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
-fn throw_off_line(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> String {
+fn throw_off_line(
+    arcade: &Arcade,
+    sim: &ThrowOffSim,
+    my_team: usize,
+    aim_y: f32,
+    charging: bool,
+) -> String {
     let abbr = |t: usize| arcade.game.teams[t].abbr.clone();
     match sim.phase {
         ThrowPhase::Presnap => {
             if sim.human_thrower {
-                format!(
-                    "  {} THROW-OFF FROM THE {} - HOLD A TO WIND UP, LET GO TO THROW",
-                    abbr(sim.setup.throwing_team),
-                    sim.setup.from_own_yards as i32
-                )
+                let aim = aim_readout(sim.setup.throwing_direction(), aim_y);
+                let job = if charging { "RELEASE [A] TO THROW" } else { "AIM, THEN HOLD [A]" };
+                format!("  {} THROW-OFF FROM THE {} - {job} - AIMING {aim}", abbr(sim.setup.throwing_team), sim.setup.from_own_yards as i32)
             } else {
                 format!(
-                    "  {} THROW-OFF FROM THE {} - GET UNDER IT",
+                    "  {} THROW-OFF FROM THE {} - GET UNDER IT IN {}",
                     abbr(sim.setup.throwing_team),
-                    sim.setup.from_own_yards as i32
+                    sim.setup.from_own_yards as i32,
+                    sim.presnap_left().ceil() as i32
                 )
             }
         }
@@ -1105,6 +1240,34 @@ mod tests {
         assert!(close(up, Vec2::new(-1.0, 0.0)), "sky up -> {:?}", up);
         let right = stick_to_world(Vec2::new(1.0, 0.0), false, CameraMode::SkyCam, -1);
         assert!(close(right, Vec2::new(0.0, -1.0)), "sky right -> {:?}", right);
+    }
+
+    #[test]
+    fn the_way_marker_walks_with_the_stick_and_stops_at_the_sideline() {
+        // Right on the stick moves it one way, left the other, and the centre is
+        // where it starts.
+        let right = aim_step(0.0, 1.0, 0.1);
+        let left = aim_step(0.0, -1.0, 0.1);
+        assert!(right > 0.0 && left < 0.0, "right {right} left {left}");
+        assert!(close(Vec2::new(right, left), Vec2::new(-left, -right)));
+        // A resting stick leaves it where it was put, so the aim is a choice and
+        // not a balancing act.
+        assert_eq!(aim_step(6.0, 0.0, 0.1), 6.0);
+        // And it cannot be walked off the field.
+        let mut aim = 0.0;
+        for _ in 0..600 {
+            aim = aim_step(aim, 1.0, 0.1);
+        }
+        assert!((aim - THROW_OFF_AIM_YARDS).abs() < 1e-4, "aim ran to {aim}");
+    }
+
+    #[test]
+    fn the_aim_readout_calls_the_side_the_player_sees() {
+        // Screen right for a lens looking along +x is +y, and along -x it is -y.
+        assert_eq!(aim_readout(1, 8.0), "8 YARDS RIGHT");
+        assert_eq!(aim_readout(1, -8.0), "8 YARDS LEFT");
+        assert_eq!(aim_readout(-1, 8.0), "8 YARDS LEFT");
+        assert_eq!(aim_readout(-1, 0.0), "DOWN THE MIDDLE");
     }
 
     #[test]
