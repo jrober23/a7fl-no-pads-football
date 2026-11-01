@@ -262,7 +262,8 @@ impl<'a> ThrowOffSim<'a> {
         if p.vel.length() > 0.3 {
             p.heading = approach_angle(p.heading, p.vel.angle(), 9.0 * dt);
         }
-        p.run_phase += p.vel.length() * dt * 2.0;
+        p.run_phase =
+            (p.run_phase + p.vel.length() * dt / crate::sim::STRIDE_YARDS).rem_euclid(1.0);
     }
 
     pub fn run_to_completion(&mut self) -> ThrowOffResult {

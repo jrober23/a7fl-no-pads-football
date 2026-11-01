@@ -26,6 +26,9 @@ pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
 pub const FIXED_DT: f32 = 1.0 / 60.0;
+/// Ground covered by one full stride cycle (two steps). Drives the run animation:
+/// about 3.2 yards at speed, which is five or so steps a second flat out.
+pub const STRIDE_YARDS: f32 = 3.2;
 
 // ---------------------------------------------------------------------------
 // Setup / results
@@ -588,7 +591,11 @@ impl<'a> PlaySim<'a> {
             if p.beaten > 0.0 {
                 p.beaten = (p.beaten - dt).max(0.0);
             }
-            p.run_phase += p.vel.length() * dt * 1.9;
+            // A stride is one pair of steps of a fixed length, so the cycle is
+            // advanced by the distance covered rather than by a frame rate. This
+            // keeps the feet gripping the turf at any speed and holds the cadence
+            // in a range a person could run in.
+            p.run_phase = (p.run_phase + p.vel.length() * dt / STRIDE_YARDS).rem_euclid(1.0);
         }
 
         if self.phase == Phase::PreSnap {
