@@ -116,6 +116,13 @@ mod backend {
                     gamepad.value(Axis::LeftStickX),
                     gamepad.value(Axis::LeftStickY),
                 );
+                // An 8BitDo reports the d-pad as buttons rather than as an axis, so
+                // fold it into the stick: the call sheet and the quarterback both
+                // read one value.
+                let press = |b: Button| if gamepad.is_pressed(b) { 1.0 } else { 0.0 };
+                raw.x += press(Button::DPadRight) - press(Button::DPadLeft);
+                raw.y += press(Button::DPadUp) - press(Button::DPadDown);
+                raw = Vec2::new(raw.x.clamp(-1.0, 1.0), raw.y.clamp(-1.0, 1.0));
                 held.a = gamepad.is_pressed(Button::South);
                 held.b = gamepad.is_pressed(Button::East);
                 held.x = gamepad.is_pressed(Button::West);

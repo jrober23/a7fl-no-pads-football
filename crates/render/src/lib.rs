@@ -17,6 +17,7 @@ pub mod fieldtex;
 pub mod font;
 pub mod hud;
 pub mod passing;
+pub mod playsheet;
 pub mod players;
 pub mod raster;
 pub mod scene;

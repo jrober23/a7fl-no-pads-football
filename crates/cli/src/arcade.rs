@@ -19,6 +19,7 @@ use a7fl_core::sim::{PlaySim, QbControl};
 use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
+use a7fl_render::playsheet::{self, Dir};
 use a7fl_render::terminal;
 
 use crate::pad::{self, Input, Pad};
@@ -56,6 +57,66 @@ fn cam_name(mode: CameraMode) -> &'static str {
         CameraMode::Classic => "CLASSIC",
         CameraMode::SkyCam => "SKY",
         _ => "BROADCAST",
+    }
+}
+
+/// How long the direction has to be held before the call sheet starts scrolling.
+const REPEAT_DELAY: f32 = 0.34;
+/// How fast it then scrolls.
+const REPEAT_EVERY: f32 = 0.09;
+
+/// Menu navigation off the stick: one step for the push, then repeats while it
+/// is held, the way a call sheet is meant to feel.
+#[derive(Default)]
+struct Nav {
+    x: i8,
+    y: i8,
+    held: f32,
+}
+
+impl Nav {
+    fn step(&mut self, stick: Vec2, dt: f32) -> Option<Dir> {
+        let x = axis(stick.x);
+        let y = axis(stick.y);
+        // The stick is round, so a diagonal has to pick one axis: vertical wins,
+        // because moving between sets is the bigger jump.
+        let (dx, dy) = if y != 0 { (0, y) } else { (x, 0) };
+        if (dx, dy) != (self.x, self.y) {
+            self.x = dx;
+            self.y = dy;
+            self.held = 0.0;
+            // A fresh push is a fresh step, including when the stick was let go.
+            return dir_of(dx, dy);
+        }
+        if (dx, dy) == (0, 0) {
+            return None;
+        }
+        self.held += dt;
+        if self.held >= REPEAT_DELAY {
+            self.held -= REPEAT_EVERY;
+            return dir_of(dx, dy);
+        }
+        None
+    }
+}
+
+fn dir_of(dx: i8, dy: i8) -> Option<Dir> {
+    match (dx, dy) {
+        (0, d) if d > 0 => Some(Dir::Up),
+        (0, d) if d < 0 => Some(Dir::Down),
+        (d, _) if d > 0 => Some(Dir::Right),
+        (d, _) if d < 0 => Some(Dir::Left),
+        _ => None,
+    }
+}
+
+fn axis(v: f32) -> i8 {
+    if v > 0.5 {
+        1
+    } else if v < -0.5 {
+        -1
+    } else {
+        0
     }
 }
 
@@ -154,11 +215,15 @@ impl Arcade {
     // Play calling
     // ------------------------------------------------------------------
 
-    /// The call sheet. Returns true when a play has been chosen.
+    /// The call sheet: one set of plays as diagrams, highlighted with the d-pad.
+    /// Returns true when a play has been chosen.
     fn call_sheet(&mut self) -> bool {
+        let mut nav = Nav::default();
         loop {
+            let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
+            playsheet::draw(&mut frame, &self.book, self.pick);
             let lines = self.call_sheet_lines();
-            if !self.view.page(&lines) {
+            if !self.view.show(&mut frame, &lines) {
                 self.quit = true;
                 return false;
             }
@@ -167,16 +232,13 @@ impl Arcade {
                 self.quit = true;
                 return false;
             }
-            if input.pressed.b {
-                self.pick = (self.pick + 1) % self.book.len();
-            }
-            if input.pressed.x {
-                self.pick = (self.pick + self.book.len() - 1) % self.book.len();
-            }
             if input.pressed.y {
                 // "Ask the coach": let the AI call it.
                 let mut rng = Rng::new(self.game.seed ^ 0x51CE);
                 self.pick = rng.index(self.book.len());
+            }
+            if let Some(dir) = nav.step(input.stick, 0.016) {
+                self.pick = playsheet::step(self.book.len(), self.pick, dir);
             }
             if input.pressed.a {
                 return true;
@@ -185,36 +247,23 @@ impl Arcade {
     }
 
     fn call_sheet_lines(&self) -> Vec<String> {
+        let play = &self.book[self.pick];
+        let pages = (self.book.len() + playsheet::PER_PAGE - 1) / playsheet::PER_PAGE;
         let mut lines = vec![
             self.header(),
-            String::new(),
             format!(
-                "  CALL SHEET - {} / {}",
-                self.book[self.pick].family.label(),
-                self.book[self.pick].formation.label()
-            ),
-            String::new(),
-        ];
-        let window = 11usize;
-        let len = self.book.len();
-        let start = self.pick.saturating_sub(window / 2).min(len.saturating_sub(window));
-        for (i, play) in self.book.iter().enumerate().skip(start).take(window) {
-            let marker = if i == self.pick { ">>" } else { "  " };
-            lines.push(format!(
-                "{marker} {:>2}. {:<16} {:<9} {}",
-                i + 1,
+                "  {:<16} {} / {}        PLAY {} OF {}   SET {} OF {}",
                 play.name,
                 play.family.label(),
-                play.formation.label()
-            ));
-        }
-        lines.push(String::new());
-        if matches!(self.game.action(), Action::CallPlay { fourth_down: true }) {
-            lines.push("  4TH DOWN - go for it, or B on the next prompt to throw it off".to_string());
-        }
-        lines.push("  [B] NEXT   [X] PREVIOUS   [Y] ASK COACH   [A] SNAP   [START] QUIT".to_string());
+                play.formation.label(),
+                self.pick + 1,
+                self.book.len(),
+                playsheet::page_of(self.pick) + 1,
+                pages
+            ),
+            "  DPAD / STICK: HIGHLIGHT   [A] SNAP   [Y] ASK COACH   [START] QUIT".to_string(),
+        ];
         if let Some(last) = self.game.recent_plays(1).pop() {
-            lines.push(String::new());
             lines.push(format!("  Last: {last}"));
         }
         lines

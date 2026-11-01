@@ -712,6 +712,20 @@ fn cmd_arcade(args: &[String]) {
         if write_png(path, &framed).is_ok() {
             println!("wrote {path}");
         }
+
+        // The call sheet, the way it is drawn when the player is picking a play.
+        let mut sheet = a7fl_render::Frame::new(640, 360);
+        a7fl_render::playsheet::draw(&mut sheet, &playbook(), 1);
+        let lines = vec![
+            "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
+            "  POWER O          RUN / BONE          PLAY 2 OF 22   SET 1 OF 3".to_string(),
+            "  DPAD / STICK: HIGHLIGHT   [A] SNAP   [Y] ASK COACH   [START] QUIT".to_string(),
+        ];
+        let framed = view::with_hud(sheet, &lines);
+        let path = "out/13_call_sheet.png";
+        if write_png(path, &framed).is_ok() {
+            println!("wrote {path}");
+        }
         return;
     }
 

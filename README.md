@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.6.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.7.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -58,23 +58,37 @@ Controls:
 
 | Input | On the call sheet | During the play |
 | --- | --- | --- |
-| Left stick | — | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
-| A / South | Snap the ball | Hold to wind up, release to throw to A |
-| B / East | Next play | Hold to wind up, release to throw to B |
-| X / West | Previous play | Throw to X |
+| D-pad or left stick | Highlight a play: sideways moves through the set on screen, up and down moves between sets | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
+| A / South | Snap the play that is highlighted | Hold to wind up, release to throw to A |
+| B / East | — | Hold to wind up, release to throw to B |
+| X / West | — | Throw to X |
 | Y / North | Ask the coach | Throw to Y |
 | RT / ZR | — | Change camera |
 | Start | Quit | Quit |
 
 | Keyboard | On the call sheet | During the play |
 | --- | --- | --- |
-| Arrows or WASD | — | Move the quarterback; aim the pass |
-| Space or Enter | Snap the ball | Hold to wind up, release to throw to A |
-| X | Next play | Throw to B |
-| Z | Previous play | Throw to X |
+| Arrows or WASD | Highlight a play | Move the quarterback; aim the pass |
+| Space or Enter | Snap the play that is highlighted | Hold to wind up, release to throw to A |
+| X | — | Throw to B |
+| Z | — | Throw to X |
 | C | Ask the coach | Throw to Y |
 | Left Shift | — | Change camera |
 | Esc | Quit | Quit |
+
+### Calling plays
+
+The call sheet is a grid of cards, one card per play, with the set you are picking
+from on screen at once: eight plays in two rows of four. Each card is a small
+diagram of the play it calls — the formation, every route, the run path, the blocks
+and the line of scrimmage — drawn from the same data the simulation runs, so a card
+can never advertise a play the game does not play. The highlighted card is ringed in
+yellow and its name and concept are echoed along the bottom of the screen.
+
+The d-pad (or the left stick, or the arrow keys) moves the highlight. Sideways walks
+through the plays in the set on screen and wraps around it; up and down move between
+sets, dropping off the bottom row into the top of the next set. Press A to snap the
+one you are on, or Y to let the coach call it.
 
 ### Cameras
 
