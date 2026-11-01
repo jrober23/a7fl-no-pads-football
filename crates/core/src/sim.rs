@@ -1056,32 +1056,38 @@ impl<'a> PlaySim<'a> {
     /// face buttons to be his moves. A quarterback behind the line still passes;
     /// a runner, a receiver after the catch, and a quarterback past the line have
     /// nothing to do with the ball but run with it.
+    ///
+    /// This asks the ball, not the sim's own idea of who the carrier is: the
+    /// carrier field is promoted a frame after a handoff or a scramble, and while
+    /// it lagged, a man was visibly running with the ball while the buttons were
+    /// still showing him his receivers.
     pub fn face_buttons_are_moves(&self) -> bool {
-        let Some(carrier) = self.carrier else { return false };
-        if self.ball.holder != Some(carrier) {
+        let Some(holder) = self.ball.holder else { return false };
+        if self.ball.flight.is_some() || self.result.is_some() || self.players[holder].down {
             return false;
         }
-        if carrier != self.qb {
-            return true;
-        }
-        // Past the line a forward pass is a penalty, so the buttons are his.
-        (self.players[carrier].pos.x - self.los) * self.dirf() > 0.0
+        // Only a quarterback behind the line still has a pass to throw.
+        holder != self.qb || (self.players[holder].pos.x - self.los) * self.dirf() > 0.0
     }
 
     /// The human runner asks for a move. Ignored unless he actually has the ball
     /// in his hands, so a mash of the face buttons during the mesh, in the pocket
     /// or after the throw cannot do anything.
     pub fn request_move(&mut self, kind: Kind) {
-        let Some(carrier) = self.carrier else { return };
-        if self.ball.holder != Some(carrier) || self.players[carrier].down {
+        // The man with the ball is the man the buttons belong to. Anything else
+        // lets a live-looking button do nothing, which is how a dead button feels.
+        let Some(holder) = self.ball.holder else { return };
+        if self.ball.flight.is_some() || self.result.is_some() || !self.face_buttons_are_moves() {
             return;
         }
-        let vel = self.players[carrier].vel;
+        let vel = self.players[holder].vel;
         let facing = if vel.length() > 0.4 { vel } else { Vec2::new(self.dirf(), 0.0) };
         if !self.carrier_moves.start(kind, facing) {
             return;
         }
-        let name = self.name_of(carrier);
+        // A move is a run, so the sim has to be treating him as the runner too.
+        self.carrier = Some(holder);
+        let name = self.name_of(holder);
         let text = match kind {
             Kind::Spin => format!("{name} spins out"),
             Kind::Hurdle => format!("{name} goes over the top"),

@@ -170,6 +170,45 @@ fn a_move_needs_the_ball_in_his_hands() {
 }
 
 #[test]
+fn a_quarterback_past_the_line_owns_the_face_buttons() {
+    // The buttons have to go by the ball, not by the sim's carrier field: that
+    // field is promoted a frame behind a handoff or a scramble, and in that gap a
+    // man ran with the ball while the screen still offered him his receivers.
+    let teams = league_teams();
+    let book = playbook();
+    let defs = defensive_playbook();
+    let play = book
+        .iter()
+        .find(|p| p.family.is_pass())
+        .expect("a pass play")
+        .clone();
+    let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &defs[0], &setup(41));
+    for _ in 0..40 {
+        sim.step(1.0 / 60.0);
+    }
+    assert!(sim.ball.holder.is_some(), "he has the snap");
+    assert!(
+        !sim.face_buttons_are_moves(),
+        "behind the line the buttons are the receivers'"
+    );
+
+    // Over the line, ball still in his hands.
+    let qb = sim.qb;
+    sim.players[qb].pos.x = sim.los + 0.6;
+    assert!(
+        sim.face_buttons_are_moves(),
+        "past the line there is no pass to throw, so the buttons are his"
+    );
+    sim.request_move(Kind::Dive);
+    assert_eq!(
+        sim.carrier_move().kind(),
+        Some(Kind::Dive),
+        "the button has to do the thing it is showing"
+    );
+    assert_eq!(sim.carrier, Some(qb), "the man with the ball is the runner");
+}
+
+#[test]
 fn the_face_buttons_are_passes_in_the_pocket_and_moves_once_he_runs() {
     let teams = league_teams();
     let book = playbook();
