@@ -16,6 +16,7 @@ pub mod capture;
 pub mod fieldtex;
 pub mod font;
 pub mod hud;
+pub mod passing;
 pub mod players;
 pub mod raster;
 pub mod scene;

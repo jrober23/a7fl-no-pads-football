@@ -12,12 +12,14 @@ use std::io::{self, BufRead, Write};
 
 use a7fl_core::ai;
 use a7fl_core::game::{GamePhase, GameState, PlayRecord};
+use a7fl_core::math::{Vec2, Vec3};
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
 use a7fl_core::sim::PlaySim;
 use a7fl_core::team::{league_teams, Team};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::capture::{write_gif, write_png};
 use a7fl_render::hud;
+use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
 use a7fl_render::raster::Frame;
 
 mod arcade;
@@ -603,6 +605,64 @@ fn cmd_arcade(args: &[String]) {
         if write_png(path, &framed).is_ok() {
             println!("wrote {path}");
         }
+
+        // What live play puts on screen with a pass being wound up: a button over
+        // every eligible man and the aim guide out on the grass.
+        let targets = sim.eligible_targets();
+        let mut badges = Vec::new();
+        for (slot, (_, index)) in targets.iter().enumerate().take(4) {
+            let separation = sim.separation(*index);
+            let tone = if separation > 3.0 {
+                Tone::Open
+            } else if separation > 1.6 {
+                Tone::Tight
+            } else {
+                Tone::Covered
+            };
+            let man = sim.players[*index].pos;
+            badges.push(Badge {
+                at: Vec3::new(man.x, man.y, 2.15),
+                label: ["A", "B", "X", "Y"][slot],
+                tone,
+                aimed: slot == 0,
+            });
+        }
+        let mut guide = None;
+        let mut short = false;
+        let mut needed = None;
+        if let Some((_, index)) = targets.first() {
+            let plan = sim.throw_plan(sim.qb, *index, 0.62, Vec2::new(0.0, 3.0));
+            short = plan.distance > plan.reach + 0.4;
+            needed = Some(plan.power_needed);
+            let hand = sim.qb_pos();
+            let man = sim.players[*index].pos;
+            guide = Some(Guide {
+                from: Vec3::new(hand.x, hand.y, 1.8),
+                receiver: Vec3::new(man.x, man.y, 1.0),
+                landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+            });
+        }
+        let ui = PassUi {
+            badges,
+            guide,
+            power: Some(0.62),
+            short,
+            needed,
+        };
+        let lines = vec![
+            "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
+            "SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2".to_string(),
+            "A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9".to_string(),
+            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] QUIT".to_string(),
+        ];
+        let framed = view::with_hud(
+            live.live_frame_ui(&sim, CameraMode::Broadcast, &ui),
+            &lines,
+        );
+        let path = "out/10_passing.png";
+        if write_png(path, &framed).is_ok() {
+            println!("wrote {path}");
+        }
         return;
     }
 
@@ -622,8 +682,9 @@ fn cmd_arcade(args: &[String]) {
     }
     println!("Display: {}", view.describe());
     println!("  move: stick / arrows+WASD");
-    println!("  snap or throw: A / Space");
-    println!("  next target: B / X      ask coach: Y / C      quit: START / Esc");
+    println!("  snap, call, confirm: A / Space");
+    println!("  pass: hold A, B, X or Y (Space / X / Z / C) and release; the stick aims it");
+    println!("  ask the coach: Y / C      quit: START / Esc");
     println!("Starting in a moment.");
     std::thread::sleep(std::time::Duration::from_millis(900));
 

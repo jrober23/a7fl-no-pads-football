@@ -12,10 +12,11 @@ use std::time::{Duration, Instant};
 
 use a7fl_core::ai;
 use a7fl_core::game::{Action, GameState};
-use a7fl_core::math::{Rng, Vec2};
+use a7fl_core::math::{Rng, Vec2, Vec3};
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
 use a7fl_core::sim::{PlaySim, QbControl};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
+use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
 use a7fl_render::terminal;
 
 use crate::pad::{self, Input, Pad};
@@ -29,6 +30,14 @@ const FRAME: Duration = Duration::from_millis(16);
 const STEP: f32 = 1.0 / 60.0;
 /// How long a result stays on screen before it moves on by itself.
 const RESULT_HOLD: Duration = Duration::from_millis(2600);
+/// How long the pass meter takes to fill from nothing to a full-weight throw.
+const CHARGE_TIME: f32 = 0.85;
+/// Even a tap throws the ball; it just does not throw it far.
+const MIN_POWER: f32 = 0.18;
+/// How far the aim stick can bend a pass off the man it is aimed at.
+const MAX_LEAD_YARDS: f32 = 7.5;
+/// The four passing buttons, in the order the badges are drawn.
+const PASS_LABELS: [&str; 4] = ["A", "B", "X", "Y"];
 
 pub struct Arcade {
     game: GameState,
@@ -38,7 +47,6 @@ pub struct Arcade {
     book: Vec<Play>,
     defbook: Vec<DefCall>,
     pick: usize,
-    target: usize,
     quit: bool,
     /// Penalty insurance: some pads report the stick's Y the other way round.
     flip_y: bool,
@@ -58,7 +66,6 @@ impl Arcade {
             book,
             defbook,
             pick: 0,
-            target: 0,
             quit: false,
             flip_y: false,
         }
@@ -93,12 +100,10 @@ impl Arcade {
                     self.show_result(&text, None);
                 }
                 Action::ChooseConversion => {
+                    // Pick the try, then go back round: a conversion is a snap
+                    // like any other, so it gets called and played, not rolled.
                     let two = self.choose_points();
-                    if let Some(record) = self.game.choose_conversion(two) {
-                        let text = record.description().to_string();
-                        let points = if two { 2 } else { 1 };
-                        self.show_result(&text, Some(points));
-                    }
+                    self.game.set_conversion(two);
                 }
                 Action::CallPlay { fourth_down } => {
                     if fourth_down && self.ask_throw_off() {
@@ -268,7 +273,6 @@ impl Arcade {
         let broadcast = &mut self.broadcast;
         let view = &mut self.view;
         let pad = &mut self.pad;
-        let target = &mut self.target;
         let quit = &mut self.quit;
         let flip_y = self.flip_y;
 
@@ -278,7 +282,6 @@ impl Arcade {
                 broadcast,
                 view,
                 pad.as_mut(),
-                target,
                 flip_y,
                 &header,
                 &play_line,
@@ -433,7 +436,6 @@ fn drive(
     broadcast: &mut Broadcast,
     view: &mut View,
     mut pad: Option<&mut Pad>,
-    target: &mut usize,
     flip_y: bool,
     header: &str,
     play_line: &str,
@@ -442,10 +444,16 @@ fn drive(
     let mut acc = 0.0f64;
     let mut last = Instant::now();
     let mut drew = Instant::now() - FRAME;
+    // The button being held for a pass: which receiver, and for how long. The
+    // meter fills while it is down and the ball leaves when it comes up.
+    let mut charge: Option<(usize, f32)> = None;
+    // Where the aim stick has bent the throw, in yards off the receiver.
+    let mut aim = Vec2::ZERO;
 
     loop {
         let now = Instant::now();
-        acc += now.duration_since(last).as_secs_f64();
+        let frame_dt = now.duration_since(last).as_secs_f64();
+        acc += frame_dt;
         last = now;
 
         let input = pad::mix(pad.as_deref_mut(), view.poll());
@@ -454,24 +462,63 @@ fn drive(
         }
 
         let targets = sim.eligible_targets();
-        if !targets.is_empty() {
-            if input.pressed.b {
-                *target = (*target + 1) % targets.len();
-            } else if input.pressed.x {
-                *target = (*target + targets.len() - 1) % targets.len();
-            }
-        }
-        let locked = if targets.is_empty() { None } else { Some(targets[*target % targets.len()]) };
         // The arcade camera looks across the field, so screen-right is world +x
         // and screen-up is world -y. Feed the stick through that mapping: handed
         // in raw, up and down ran backwards.
         let vertical = if flip_y { input.stick.y } else { -input.stick.y };
         let stick = Vec2::new(input.stick.x, vertical);
+        let held = [input.held.a, input.held.b, input.held.x, input.held.y];
+        let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
+
+        // Holding a receiver's button winds the pass up. The stick bends it off
+        // him while the meter fills, which is how you lead a man into grass or
+        // put it on his back shoulder.
+        if let Some((slot, held_for)) = charge {
+            if slot >= targets.len() {
+                charge = None;
+            } else {
+                if stick.length() > 0.30 {
+                    aim = Vec2::new(stick.x, stick.y).normalize_or_zero()
+                        * (MAX_LEAD_YARDS * stick.length().min(1.0));
+                }
+                charge = Some((slot, held_for + frame_dt as f32));
+            }
+        }
+        if charge.is_none() {
+            if let Some(slot) = (0..targets.len().min(PASS_LABELS.len())).find(|&s| down[s]) {
+                charge = Some((slot, 0.0));
+                aim = Vec2::ZERO;
+            }
+        }
+
+        // Letting go throws it at whatever weight the meter got to.
+        let mut release: Option<(usize, f32)> = None;
+        if let Some((slot, held_for)) = charge {
+            if !held[slot] {
+                let power = (held_for / CHARGE_TIME).clamp(MIN_POWER, 1.0);
+                release = Some((targets[slot].1, power));
+                charge = None;
+            }
+        }
+
+        let aimed = charge
+            .map(|(slot, _)| targets[slot].1)
+            .or_else(|| release.map(|(index, _)| index));
+        let power = release.map(|(_, p)| p).unwrap_or_else(|| {
+            charge
+                .map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
+                .unwrap_or(0.0)
+        });
         sim.set_control(Some(QbControl {
             move_dir: stick,
-            target: locked.map(|(_, index)| index),
-            throw: input.pressed.a || input.pressed.throw,
+            target: aimed,
+            throw: release.is_some(),
+            power,
+            aim,
         }));
+        if release.is_some() {
+            aim = Vec2::ZERO;
+        }
 
         while acc >= STEP as f64 && sim.result.is_none() {
             sim.step(STEP);
@@ -480,30 +527,73 @@ fn drive(
 
         if now.duration_since(drew) >= FRAME || sim.result.is_some() {
             drew = now;
-            let mut frame = broadcast.live_frame(sim, CameraMode::Broadcast);
+            // A button over every eligible man, and while a pass is wound up,
+            // the guide showing where it will come down and the meter showing
+            // whether the arm can get it there.
+            let mut badges = Vec::new();
+            for (slot, (_, index)) in targets.iter().enumerate().take(PASS_LABELS.len()) {
+                let separation = sim.separation(*index);
+                let tone = if separation > 3.0 {
+                    Tone::Open
+                } else if separation > 1.6 {
+                    Tone::Tight
+                } else {
+                    Tone::Covered
+                };
+                let man = sim.players[*index].pos;
+                badges.push(Badge {
+                    at: Vec3::new(man.x, man.y, 2.15),
+                    label: PASS_LABELS[slot],
+                    tone,
+                    aimed: charge.map(|(s, _)| s) == Some(slot),
+                });
+            }
+
+            let mut guide = None;
+            let mut short = false;
+            let mut needed = None;
+            if let Some((slot, _)) = charge {
+                if let Some((_, index)) = targets.get(slot) {
+                    let plan = sim.throw_plan(sim.qb, *index, power, aim);
+                    short = plan.distance > plan.reach + 0.4;
+                    needed = Some(plan.power_needed);
+                    let hand = sim.qb_pos();
+                    let man = sim.players[*index].pos;
+                    guide = Some(Guide {
+                        from: Vec3::new(hand.x, hand.y, 1.8),
+                        receiver: Vec3::new(man.x, man.y, 1.0),
+                        landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+                    });
+                }
+            }
+            let ui = PassUi {
+                badges,
+                guide,
+                power: charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0)),
+                short,
+                needed,
+            };
+
+            let mut frame = broadcast.live_frame_ui(sim, CameraMode::Broadcast, &ui);
             let mut lines = vec![header.to_string(), play_line.to_string()];
 
-            if let Some((role, index)) = locked {
-                let name = broadcast.teams[sim.setup.offense_team].roster[index].full_name();
-                let separation = sim.separation(index);
-                let read = if separation > 3.0 {
-                    "OPEN"
-                } else if separation > 1.6 {
-                    "TIGHT"
-                } else {
-                    "COVERED"
-                };
-                lines.push(format!(
-                    "TARGET {:<3} {:<20} {:>4.1} yds  {read}",
-                    role.label(),
+            // Who is open, on the buttons the badges are showing.
+            let mut row = String::new();
+            for (slot, (_, index)) in targets.iter().enumerate().take(PASS_LABELS.len()) {
+                let name = broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
+                if !row.is_empty() {
+                    row.push_str("   ");
+                }
+                row.push_str(&format!(
+                    "{} {:<9} {:>4.1}",
+                    PASS_LABELS[slot],
                     name,
-                    separation
+                    sim.separation(*index)
                 ));
-            } else {
-                lines.push("TARGET --".to_string());
             }
+            lines.push(row);
             lines.push(format!(
-                "{off_abbr} ball   MOVE  TARGET  THROW  [START] QUIT"
+                "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] QUIT"
             ));
 
             if !view.show(&mut frame, &lines) {

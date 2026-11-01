@@ -405,7 +405,9 @@ impl GameState {
         Some(self.run_throw_off(self.defense(), from_own, true))
     }
 
-    pub fn choose_conversion(&mut self, two_point: bool) -> Option<PlayRecord> {
+    /// Set up a conversion attempt without running it, so a human can call the
+    /// try and play the snap out themselves.
+    pub fn set_conversion(&mut self, two_point: bool) {
         let offense = match self.phase {
             GamePhase::ConversionChoice { offense } => offense,
             GamePhase::Conversion { offense, .. } => offense,
@@ -419,6 +421,10 @@ impl GameState {
         self.down = 1;
         self.to_go = yards;
         self.phase = GamePhase::Conversion { offense, points };
+    }
+
+    pub fn choose_conversion(&mut self, two_point: bool) -> Option<PlayRecord> {
+        self.set_conversion(two_point);
         let seed = self.next_seed();
         let play = ai::choose_offense(self, seed);
         let seed = self.next_seed();

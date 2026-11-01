@@ -195,6 +195,28 @@ pub struct QbControl {
     pub target: Option<usize>,
     /// Set for the frame the throw button went down.
     pub throw: bool,
+    /// How hard the ball is thrown, 0..1: the pass meter. The AI ignores this
+    /// because it picks its own weight for every throw.
+    pub power: f32,
+    /// Where to put the ball relative to the receiver, in yards: `x` down the
+    /// field, `y` across it. Zero aims at the receiver's numbers, which is what
+    /// the AI does.
+    pub aim: Vec2,
+}
+
+/// What a throw of a given weight, bent off a receiver, would do. The interactive
+/// client draws its aim guide from this, so the guide and the ball cannot
+/// disagree about where the pass is going.
+#[derive(Clone, Copy, Debug)]
+pub struct ThrowPlan {
+    pub landing: Vec2,
+    pub air_yards: f32,
+    /// Yards from the passer to the spot being asked for.
+    pub distance: f32,
+    /// How far a throw of this weight actually carries.
+    pub reach: f32,
+    /// Meter reading that would just reach the spot.
+    pub power_needed: f32,
 }
 
 pub struct PlaySim<'a> {
@@ -746,10 +768,14 @@ impl<'a> PlaySim<'a> {
             return;
         }
 
-        if ctl.throw && self.phase == Phase::Dropback && self.t > SNAP_DELAY + 0.25 {
+        // Taking off does not end the play: a quarterback on the move can still
+        // let it go downfield, which is half of what the scramble is for.
+        let can_throw = self.phase == Phase::Dropback
+            || (self.phase == Phase::Scramble && self.carrier == Some(i));
+        if ctl.throw && can_throw && self.t > SNAP_DELAY + 0.25 {
             if let Some(target) = ctl.target {
                 if !self.players[target].down {
-                    self.throw_to(i, Some(target));
+                    self.throw_to_with(i, Some(target), ctl.power, ctl.aim);
                 }
             }
         }
@@ -864,27 +890,61 @@ impl<'a> PlaySim<'a> {
     }
 
     fn throw_to(&mut self, qb: usize, target: Option<usize>) {
+        self.throw_to_with(qb, target, 0.8, Vec2::ZERO);
+    }
+
+    /// What a throw of this weight, bent this far off a receiver, would do.
+    ///
+    /// The thrower's arm sets how far the ball can carry: the meter is a range,
+    /// so a soft throw dies in front of the man and a hard one carries over his
+    /// head. Leading him is automatic, and `aim` is on top of that, which is what
+    /// lets a player throw somebody open.
+    pub fn throw_plan(&self, qb: usize, target: usize, power: f32, aim: Vec2) -> ThrowPlan {
         let qb_pos = self.players[qb].pos;
+        let power = power.clamp(0.0, 1.0);
+        let arm = self.attrs(qb).arm_strength();
+        let receiver = self.players[target].pos;
+        let speed = 17.0 + arm * 0.5;
+        let rough = (receiver - qb_pos).length().max(0.1);
+        let lead = self.players[target].vel * (rough / speed).clamp(0.25, 2.4) * 0.75;
+        let wanted = receiver + lead + aim;
+        let offset = wanted - qb_pos;
+        let distance = offset.length();
+        let reach = 9.0 + (arm * 0.42 + 8.0) * power;
+        let landing = qb_pos + offset.normalize_or_zero() * distance.min(reach);
+        let landing = Vec2::new(
+            clamp(landing.x, -field::ENDZONE_DEPTH, FIELD_LENGTH + field::ENDZONE_DEPTH),
+            clamp(landing.y, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH),
+        );
+        let air_yards = ((landing.x - qb_pos.x) * self.dirf()).max(0.0);
+        let power_needed = ((distance - 9.0) / (arm * 0.42 + 8.0)).clamp(0.0, 1.0);
+        ThrowPlan {
+            landing,
+            air_yards,
+            distance,
+            reach,
+            power_needed,
+        }
+    }
+
+    fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32, aim: Vec2) {
+        let qb_pos = self.players[qb].pos;
+        let power = power.clamp(0.0, 1.0);
 
         let (to, air, receiver) = match target {
             Some(t) => {
-                let receiver = self.players[t].pos;
-                let air_yards = ((receiver.x - qb_pos.x) * self.dirf()).max(1.0);
-                // Lead the receiver based on how long the ball is in the air.
-                let arm = self.attrs(qb).arm_strength();
-                let speed = 17.0 + arm * 0.5;
-                let dur = (air_yards / speed).clamp(0.3, 2.4);
-                let lead = self.players[t].vel * dur * 0.75;
+                let plan = self.throw_plan(qb, t, power, aim);
                 let accuracy = self.attrs(qb).accuracy_factor();
                 let pressure = self.qb_pressure();
-                let sigma = 0.22 + air_yards * 0.026 + (1.0 - accuracy) * 1.5
-                    + (2.5 - pressure).max(0.0) * 0.35;
+                // A soft throw hangs and drifts; a rope arrives flat and can run
+                // past the man. Either way the ball goes where the arm sent it.
+                let sigma = 0.20
+                    + plan.air_yards * 0.024
+                    + (1.0 - accuracy) * 1.4
+                    + (2.5 - pressure).max(0.0) * 0.30
+                    + (1.0 - power) * 0.9;
                 let err = Vec2::new(self.rng.gauss() * sigma, self.rng.gauss() * sigma * 0.85);
-                (
-                    receiver + lead + err,
-                    air_yards,
-                    Some(t),
-                )
+                (plan.landing + err, plan.air_yards, Some(t))
             }
             None => {
                 // Throw it away: outside the hashes and past the line of scrimmage.
@@ -898,8 +958,10 @@ impl<'a> PlaySim<'a> {
             }
         };
 
-        let dur = (air / (17.0 + self.attrs(qb).arm_strength() * 0.5)).clamp(0.35, 2.4);
-        let peak = 0.7 + air * 0.18;
+        let arm = self.attrs(qb).arm_strength();
+        let speed = 15.0 + 14.0 * power + arm * 0.30;
+        let dur = (air / speed).clamp(0.30, 2.6);
+        let peak = 0.6 + air * 0.16 + (1.0 - power) * 0.9;
         self.ball.flight = Some(Flight {
             from: qb_pos,
             to: Vec2::new(to.x, clamp(to.y, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH)),
@@ -913,6 +975,7 @@ impl<'a> PlaySim<'a> {
         self.ball.holder = None;
         self.ball.pos = qb_pos;
         self.ball.z = 1.5;
+        self.carrier = None;
         self.intended = receiver;
         self.phase = Phase::BallInAir;
         self.events.push(SimEvent {
@@ -1577,6 +1640,11 @@ impl<'a> PlaySim<'a> {
     fn resolve_catch(&mut self, flight: &Flight) {
         let landing = flight.to;
         let target = flight.target;
+        // A ball that came down nowhere near the man it was meant for is an
+        // overthrow, not a fifty-fifty: there is nothing there for him to catch.
+        let stray = target
+            .map(|t| self.players[t].pos.dist(landing) > CATCH_RADIUS * 1.8)
+            .unwrap_or(false);
         self.catch_spot = landing.x;
         self.ball.pos = landing;
         self.ball.z = 1.0;
@@ -1632,7 +1700,7 @@ impl<'a> PlaySim<'a> {
         }
 
         // Catch or incompletion.
-        if let Some(t) = target {
+        if let Some(t) = target.filter(|_| !stray) {
             let separation = contest.map(|(_, d)| d).unwrap_or(6.0);
             let catch_factor = self.attrs(t).catch_factor();
             let contesting = (separation < 1.4) as i32 as f32;
@@ -1670,6 +1738,11 @@ impl<'a> PlaySim<'a> {
             (
                 PlayOutcome::ThrowAway,
                 format!("{} throws it away.", self.name_of(flight.thrower)),
+            )
+        } else if stray {
+            (
+                PlayOutcome::PassIncomplete,
+                "Overthrown. Nobody was close to it.".to_string(),
             )
         } else {
             (

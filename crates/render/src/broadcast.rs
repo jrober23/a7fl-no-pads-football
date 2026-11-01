@@ -314,6 +314,24 @@ impl Broadcast {
     /// Render the live simulation an interactive client is driving. No overlay:
     /// the terminal client draws its own text HUD underneath the picture.
     pub fn live_frame(&mut self, sim: &PlaySim, mode: CameraMode) -> Frame {
+        let (frame, _camera) = self.live_scene(sim, mode);
+        frame
+    }
+
+    /// The live picture plus the passing overlay, projected through the same
+    /// camera the scene used so the badges land on the players' heads.
+    pub fn live_frame_ui(
+        &mut self,
+        sim: &PlaySim,
+        mode: CameraMode,
+        ui: &crate::passing::PassUi,
+    ) -> Frame {
+        let (mut frame, camera) = self.live_scene(sim, mode);
+        ui.draw(&mut frame, &camera, &self.scene.projector);
+        frame
+    }
+
+    fn live_scene(&mut self, sim: &PlaySim, mode: CameraMode) -> (Frame, Camera) {
         let off = sim.setup.offense_team;
         let def = sim.setup.defense_team;
         let mut players = Vec::with_capacity(sim.players.len());
@@ -343,7 +361,7 @@ impl Broadcast {
             let ball = players::ball_mesh(Vec3::new(ball_pos.x, ball_pos.y, ball_z.max(0.2)));
             self.scene.draw_mesh(&mut frame, &ball, &camera);
         }
-        frame
+        (frame, camera)
     }
 
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {

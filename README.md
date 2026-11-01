@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.3.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.4.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -46,37 +46,55 @@ reports its stick's vertical axis the other way round. With no controller attach
 keyboard drives it, so the game is always playable.
 
 ```
-           the field, in ANSI blocks
+           the field, with a button over every receiver
 
  NEW 14 - 7 PAT   2ND 6:41   1ST & 10   BALL ON OWN 34
- DAGGER  ·  TRIPS RIGHT  ·  PAT shows COVER 2 ZONE
- TARGET  WR  Frankie Kelsey     4.2 yds  OPEN
- NEW ball   [STICK] MOVE   [B]/[X] TARGET   [A]/[RT] THROW   [START] QUIT
+ SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2
+ A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9
+ NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] QUIT
 ```
 
 Controls:
 
 | Input | On the call sheet | During the play |
 | --- | --- | --- |
-| Left stick | — | Move the quarterback (past the line of scrimmage he becomes a runner) |
-| A / South | Snap the ball | Throw to the locked-on receiver |
-| B / East | Next play | Next receiver |
-| X / West | Previous play | Previous receiver |
-| Y / North | Ask the coach | — |
-| RT / ZR | — | Throw |
+| Left stick | — | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
+| A / South | Snap the ball | Hold to wind up, release to throw to A |
+| B / East | Next play | Hold to wind up, release to throw to B |
+| X / West | Previous play | Throw to X |
+| Y / North | Ask the coach | Throw to Y |
 | Start | Quit | Quit |
 
 | Keyboard | On the call sheet | During the play |
 | --- | --- | --- |
-| Arrows or WASD | — | Move the quarterback |
-| Space or Enter | Snap the ball | Throw |
-| X / Z | Next / previous play | Next / previous receiver |
-| C | Ask the coach | — |
-| Left Shift | — | Throw |
+| Arrows or WASD | — | Move the quarterback; aim the pass |
+| Space or Enter | Snap the ball | Hold to wind up, release to throw to A |
+| X | Next play | Throw to B |
+| Z | Previous play | Throw to X |
+| C | Ask the coach | Throw to Y |
 | Esc | Quit | Quit |
 
-Fourth downs, conversions and throw-offs get their own prompt screens, drawn with
-the same bitmap font as the broadcast overlay. In terminal mode the picture is
+### Passing
+
+Every eligible receiver gets a button over his head the moment the ball is snapped,
+colour-coded by how much room he has: green open, yellow tight, red covered. Hold
+his button and the pass meter fills; the longer you hold, the harder the ball is
+thrown. The stick bends the throw off him while the meter fills — that is how you
+lead a receiver into grass or put it on his back shoulder — and a guide runs out
+across the turf to a marker showing exactly where the ball will come down. Let go
+and he throws it.
+
+Power is range, not effort. A tap drops the ball in front of the man; a full meter
+carries it over his head. There is a notch on the meter at the weight that would
+just reach him, so an underthrow is something you can see coming rather than
+something the game does to you. The badge colours are live, the guide is drawn
+from the same function that flies the ball, and an overthrown pass is incomplete —
+there is no fifty-fifty for a receiver to win on a ball that lands ten yards from
+him.
+
+Fourth downs get their own prompt (go for it, or throw it off), drawn with the same
+bitmap font as the broadcast overlay. Conversions are called and played like any
+other snap; throw-offs still resolve on their own. In terminal mode the picture is
 sized from `COLUMNS` and `LINES`, so it adapts to whatever terminal you run it in.
 
 Controller support comes from `gilrs` and is a default-on Cargo feature. On Linux
