@@ -6,10 +6,19 @@ package in the spirit of the ESPN NFL 2K5 presentation — but played under A7FL
 rules, with players in A7FL kit (sleeveless jersey, shorts, bare arms and legs,
 no helmets, no pads).
 
-Everything is pure Rust with no GPU, no windowing system and no audio backend, so
+Everything is pure Rust with no GPU and no audio backend, so
 it builds and runs headless (a cloud VM, a container, a Raspberry Pi) as well as on
 a desktop. The only external crates are `image` and `gif`, both for writing the
 rendered frames.
+
+## Download (Windows)
+
+Grab `a7fl-v0.2.0-windows-x86_64.zip` from the
+[releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
+it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
+looks for a controller for three seconds, then falls back to the keyboard. Windows
+10 or 11, no runtime or installer needed. The build is unsigned, so SmartScreen may
+ask you to confirm first (More info → Run anyway).
 
 ## Running it
 
