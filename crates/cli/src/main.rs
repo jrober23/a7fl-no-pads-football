@@ -13,6 +13,7 @@ use std::io::{self, BufRead, Write};
 use a7fl_core::ai;
 use a7fl_core::game::{GamePhase, GameState, PlayRecord};
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
+use a7fl_core::sim::PlaySim;
 use a7fl_core::team::{league_teams, Team};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::capture::{write_gif, write_png};
@@ -535,37 +536,71 @@ fn cmd_arcade(args: &[String]) {
         };
         let teams = [probe.teams[0].clone(), probe.teams[1].clone()];
         let frames = 20;
-        let time_it = |w: usize, h: usize, label: &str| {
-            let mut shot = Broadcast::new(w, h, teams.clone());
-            let start = std::time::Instant::now();
-            for i in 0..frames {
-                let t = 0.2 + i as f32 * 0.12;
-                let _ = shot.frame_at_clean(&probe, &record, t, CameraMode::Broadcast);
+
+        // Stills path: re-simulate the play up to each moment, which is what
+        // `film` does.
+        let mut broadcast = Broadcast::new(view::CANVAS_W, view::CANVAS_H, teams.clone());
+        let start = std::time::Instant::now();
+        for i in 0..frames {
+            let t = 0.2 + i as f32 * 0.12;
+            let _ = broadcast.frame_at_clean(&probe, &record, t, CameraMode::Broadcast);
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+        println!(
+            "replay still {}x{}: {ms:.1} ms ({:.1} fps ceiling)",
+            view::CANVAS_W,
+            view::CANVAS_H,
+            1000.0 / ms
+        );
+
+        // Live path: drawn from the sim the client is already stepping, mid-play,
+        // so this is the honest per-frame cost of the interactive picture.
+        let mut sim = match &record {
+            PlayRecord::Scrimmage(r) => PlaySim::new(
+                &teams[r.setup.offense_team],
+                &teams[r.setup.defense_team],
+                &r.play,
+                &r.defense,
+                &r.setup,
+            ),
+            _ => {
+                println!("no scrimmage snap to benchmark");
+                return;
             }
-            let ms = start.elapsed().as_secs_f64() * 1000.0 / frames as f64;
-            println!("{label} {w}x{h}: {ms:.1} ms ({:.1} fps ceiling)", 1000.0 / ms);
-            shot
         };
-        // Both paths the client can take: the full canvas the stills use, and the
-        // half-size field live play draws on.
-        let mut broadcast = time_it(view::CANVAS_W, view::CANVAS_H, "canvas");
-        let mut live = time_it(arcade::LIVE_W, arcade::LIVE_H, "live  ");
+        let dt = 1.0 / 60.0;
+        let mut elapsed = 0.0;
+        while elapsed < 1.5 && sim.result.is_none() {
+            sim.step(dt);
+            elapsed += dt;
+        }
+        let mut live = Broadcast::new(view::CANVAS_W, view::CANVAS_H, teams.clone());
+        let start = std::time::Instant::now();
+        for _ in 0..frames {
+            let _ = live.live_frame(&sim, CameraMode::Broadcast);
+        }
+        let ms = start.elapsed().as_secs_f64() * 1000.0 / frames as f64;
+        println!(
+            "live frame {}x{}: {ms:.1} ms ({:.1} fps ceiling)",
+            view::CANVAS_W,
+            view::CANVAS_H,
+            1000.0 / ms
+        );
+
         let last = broadcast.frame_at_clean(&probe, &record, 1.4, CameraMode::Broadcast);
         let path = "out/08_arcade_view.png";
         if write_png(path, &last).is_ok() {
             println!("wrote {path}");
         }
-        // What the interactive client actually puts on screen: a half-size field
-        // scaled up to the canvas, with the text bar drawn over it at full size.
-        let frame = live.frame_at_clean(&probe, &record, 1.4, CameraMode::Broadcast);
+        // What the interactive client actually puts on screen, HUD and all.
         let lines = vec![
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "TARGET WR  Frankie Kelsey     4.2 yds  OPEN".to_string(),
             "NEW ball   MOVE  TARGET  THROW  [START] QUIT".to_string(),
         ];
-        let composed = view::compose_live(&frame, &lines);
-        let path = "out/09_live_scaled.png";
-        if write_png(path, &composed).is_ok() {
+        let framed = view::with_hud(live.live_frame(&sim, CameraMode::Broadcast), &lines);
+        let path = "out/09_live_frame.png";
+        if write_png(path, &framed).is_ok() {
             println!("wrote {path}");
         }
         return;

@@ -19,16 +19,13 @@ use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::terminal;
 
 use crate::pad::{self, Input, Pad};
-use crate::view::View;
+use crate::view::{View, CANVAS_H, CANVAS_W};
 
-/// The live field is drawn at half the canvas and scaled up to it. A 640x360
-/// frame costs about 40 ms, which caps the client at 16 fps and makes the
-/// controls feel laggy; the half-size field costs a fraction of that.
-pub const LIVE_W: usize = 320;
-pub const LIVE_H: usize = 180;
-/// Picture refresh for live play: 50 fps on the half-size field, which leaves
-/// headroom on a slower CPU because the render is 9 ms rather than 25 ms.
-const FRAME: Duration = Duration::from_millis(20);
+/// Picture refresh for live play. The field is drawn at the full canvas size, so
+/// what you see is the renderer's real detail rather than a scaled-up quarter
+/// image; when a frame costs more than this the loop renders as fast as it can
+/// instead of sleeping on the clock.
+const FRAME: Duration = Duration::from_millis(16);
 const STEP: f32 = 1.0 / 60.0;
 /// How long a result stays on screen before it moves on by itself.
 const RESULT_HOLD: Duration = Duration::from_millis(2600);
@@ -52,7 +49,7 @@ impl Arcade {
         let book = playbook();
         let defbook = defensive_playbook();
         let teams = [game.teams[0].clone(), game.teams[1].clone()];
-        let broadcast = Broadcast::new(LIVE_W, LIVE_H, teams);
+        let broadcast = Broadcast::new(CANVAS_W, CANVAS_H, teams);
         Arcade {
             game,
             pad,
@@ -509,7 +506,7 @@ fn drive(
                 "{off_abbr} ball   MOVE  TARGET  THROW  [START] QUIT"
             ));
 
-            if !view.show_scaled(&mut frame, &lines) {
+            if !view.show(&mut frame, &lines) {
                 return false;
             }
         }

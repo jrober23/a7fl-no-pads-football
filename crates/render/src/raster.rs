@@ -5,6 +5,26 @@ use a7fl_core::math::{clamp, Rgb};
 
 use crate::font;
 
+/// Fixed-point linear blend of two 0..255 samples with `t` in 0..256.
+#[inline]
+fn blend8(a: u32, b: u32, t: u32) -> u32 {
+    (a * (256 - t) + b * t + 128) >> 8
+}
+
+/// `v * k + off`, clamped into a byte: the constant shade and fog of a triangle
+/// folded into two operations per channel.
+#[inline]
+fn tint(v: u8, k: f32, off: f32) -> u8 {
+    let x = v as f32 * k + off;
+    if x <= 0.0 {
+        0
+    } else if x >= 255.0 {
+        255
+    } else {
+        x as u8
+    }
+}
+
 #[derive(Clone)]
 pub struct Frame {
     pub w: usize,
@@ -188,36 +208,61 @@ impl Frame {
         }
         let inv_area = 1.0 / area;
 
+        // Shade and fog are constant over a triangle, so fold them into one
+        // multiply and one offset per channel instead of clamping and lerping
+        // every channel of every pixel.
+        let fog_t = clamp(fog_amount, 0.0, 1.0);
+        let k = shade * (1.0 - fog_t);
+        let fog_r = fog.r as f32 * fog_t;
+        let fog_g = fog.g as f32 * fog_t;
+        let fog_b = fog.b as f32 * fog_t;
+
+        // Texture coordinates are interpolated as `u/z`, so premultiply once.
+        let ku0 = u0 * iz0;
+        let ku1 = u1 * iz1;
+        let ku2 = u2 * iz2;
+        let kv0 = v0 * iz0;
+        let kv1 = v1 * iz1;
+        let kv2 = v2 * iz2;
+
+        // The edge functions are affine, so evaluate them once per scanline and
+        // step along the row instead of re-deriving them for every pixel.
+        let dw0_dx = (y1 - y2) * inv_area;
+        let dw0_dy = (x2 - x1) * inv_area;
+        let dw1_dx = (y2 - y0) * inv_area;
+        let dw1_dy = (x0 - x2) * inv_area;
+        let (sx, sy) = (min_x as f32 + 0.5, min_y as f32 + 0.5);
+        let mut row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv_area;
+        let mut row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv_area;
+
         for py in min_y..=max_y {
-            let fy = py as f32 + 0.5;
+            let mut w0 = row0;
+            let mut w1 = row1;
+            let row = py as usize * self.w;
             for px in min_x..=max_x {
-                let fx = px as f32 + 0.5;
-                let w0 = ((x1 - fx) * (y2 - fy) - (x2 - fx) * (y1 - fy)) * inv_area;
-                let w1 = ((x2 - fx) * (y0 - fy) - (x0 - fx) * (y2 - fy)) * inv_area;
                 let w2 = 1.0 - w0 - w1;
-                if w0 < -0.0005 || w1 < -0.0005 || w2 < -0.0005 {
-                    continue;
+                if w0 >= -0.0005 && w1 >= -0.0005 && w2 >= -0.0005 {
+                    let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
+                    let idx = row + px as usize;
+                    // 1/z grows as fragments get closer, so nearer fragments win.
+                    if iz > 1e-6 && iz > self.depth[idx] {
+                        let inv_z = 1.0 / iz;
+                        let u = (w0 * ku0 + w1 * ku1 + w2 * ku2) * inv_z;
+                        let vtex = (w0 * kv0 + w1 * kv1 + w2 * kv2) * inv_z;
+                        self.depth[idx] = iz;
+                        let c = tex.sample(u, vtex);
+                        self.color[idx] = Rgb::new(
+                            tint(c.r, k, fog_r),
+                            tint(c.g, k, fog_g),
+                            tint(c.b, k, fog_b),
+                        );
+                    }
                 }
-                let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
-                if iz <= 1e-6 {
-                    continue;
-                }
-                let idx = py as usize * self.w + px as usize;
-                // 1/z grows as fragments get closer, so nearer fragments win.
-                if iz <= self.depth[idx] {
-                    continue;
-                }
-                let z = 1.0 / iz;
-                let u = (w0 * u0 * iz0 + w1 * u1 * iz1 + w2 * u2 * iz2) / iz;
-                let vtex = (w0 * v0 * iz0 + w1 * v1 * iz1 + w2 * v2 * iz2) / iz;
-                self.depth[idx] = iz;
-                let mut c = tex.sample(u, vtex);
-                c = c.scale(shade);
-                if fog_amount > 0.0 {
-                    c = c.lerp(fog, fog_amount);
-                }
-                self.color[idx] = c;
+                w0 += dw0_dx;
+                w1 += dw1_dx;
             }
+            row0 += dw0_dy;
+            row1 += dw1_dy;
         }
     }
 
@@ -285,27 +330,32 @@ impl Frame {
         }
         let inv_area = 1.0 / area;
         let c = color.scale(shade).lerp(fog, fog_amount);
+        let dw0_dx = (y1 - y2) * inv_area;
+        let dw0_dy = (x2 - x1) * inv_area;
+        let dw1_dx = (y2 - y0) * inv_area;
+        let dw1_dy = (x0 - x2) * inv_area;
+        let (sx, sy) = (min_x as f32 + 0.5, min_y as f32 + 0.5);
+        let mut row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv_area;
+        let mut row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv_area;
         for py in min_y..=max_y {
-            let fy = py as f32 + 0.5;
+            let mut w0 = row0;
+            let mut w1 = row1;
+            let row = py as usize * self.w;
             for px in min_x..=max_x {
-                let fx = px as f32 + 0.5;
-                let w0 = ((x1 - fx) * (y2 - fy) - (x2 - fx) * (y1 - fy)) * inv_area;
-                let w1 = ((x2 - fx) * (y0 - fy) - (x0 - fx) * (y2 - fy)) * inv_area;
                 let w2 = 1.0 - w0 - w1;
-                if w0 < 0.0 || w1 < 0.0 || w2 < 0.0 {
-                    continue;
+                if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                    let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
+                    let idx = row + px as usize;
+                    if iz > 1e-6 && iz > self.depth[idx] {
+                        self.depth[idx] = iz;
+                        self.color[idx] = c;
+                    }
                 }
-                let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
-                if iz <= 1e-6 {
-                    continue;
-                }
-                let idx = py as usize * self.w + px as usize;
-                if iz <= self.depth[idx] {
-                    continue;
-                }
-                self.depth[idx] = iz;
-                self.color[idx] = c;
+                w0 += dw0_dx;
+                w1 += dw1_dx;
             }
+            row0 += dw0_dy;
+            row1 += dw1_dy;
         }
     }
 
@@ -380,19 +430,36 @@ impl Texture {
         self.px[yy as usize * self.w + xx as usize]
     }
 
-    /// `u`, `v` are normalised 0..1.
+    /// `u`, `v` are normalised 0..1. Bilinear in fixed point: the ground pass
+    /// calls this once per pixel, so it stays off the clamped-float path.
     #[inline]
     pub fn sample(&self, u: f32, v: f32) -> Rgb {
-        let fx = clamp(u, 0.0, 0.999_9) * (self.w as f32 - 1.0);
-        let fy = clamp(v, 0.0, 0.999_9) * (self.h as f32 - 1.0);
-        let x0 = fx.floor() as i32;
-        let y0 = fy.floor() as i32;
-        let tx = fx - x0 as f32;
-        let ty = fy - y0 as f32;
-        let c00 = self.get(x0, y0);
-        let c10 = self.get(x0 + 1, y0);
-        let c01 = self.get(x0, y0 + 1);
-        let c11 = self.get(x0 + 1, y0 + 1);
-        c00.lerp(c10, tx).lerp(c01.lerp(c11, tx), ty)
+        let w = self.w;
+        let h = self.h;
+        let fx = clamp(u, 0.0, 0.999_9) * (w as f32 - 1.0);
+        let fy = clamp(v, 0.0, 0.999_9) * (h as f32 - 1.0);
+        let x0 = fx as usize;
+        let y0 = fy as usize;
+        let x1 = (x0 + 1).min(w - 1);
+        let y1 = (y0 + 1).min(h - 1);
+        let tx = ((fx - x0 as f32) * 256.0) as u32;
+        let ty = ((fy - y0 as f32) * 256.0) as u32;
+        let row0 = y0 * w;
+        let row1 = y1 * w;
+        let p00 = self.px[row0 + x0];
+        let p10 = self.px[row0 + x1];
+        let p01 = self.px[row1 + x0];
+        let p11 = self.px[row1 + x1];
+        let top_r = blend8(p00.r as u32, p10.r as u32, tx);
+        let top_g = blend8(p00.g as u32, p10.g as u32, tx);
+        let top_b = blend8(p00.b as u32, p10.b as u32, tx);
+        let bot_r = blend8(p01.r as u32, p11.r as u32, tx);
+        let bot_g = blend8(p01.g as u32, p11.g as u32, tx);
+        let bot_b = blend8(p01.b as u32, p11.b as u32, tx);
+        Rgb::new(
+            blend8(top_r, bot_r, ty) as u8,
+            blend8(top_g, bot_g, ty) as u8,
+            blend8(top_b, bot_b, ty) as u8,
+        )
     }
 }
