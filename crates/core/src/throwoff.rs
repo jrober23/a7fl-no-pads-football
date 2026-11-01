@@ -705,7 +705,11 @@ impl<'a> ThrowOffSim<'a> {
             self.players[b.returner].vel = Vec2::ZERO;
             self.players[b.gunner].wrap = p;
             let spot = self.players[b.returner].pos;
-            self.players[b.gunner].pos = self.players[b.gunner].pos.lerp(spot, (dt * 7.0).min(1.0));
+            // Arm's length, not the same spot: two bodies in the same place is one
+            // body on screen.
+            let away = (spot - self.players[b.gunner].pos).normalize_or_zero();
+            self.players[b.gunner].pos =
+                self.players[b.gunner].pos.lerp(spot - away * 0.44, (dt * 7.0).min(1.0));
             self.ball = spot;
             self.ball_z = 1.0;
             if p < 1.0 {
@@ -813,6 +817,12 @@ impl<'a> ThrowOffSim<'a> {
                         pos.x >= FIELD_LENGTH
                     };
                     let yards = (pos.x - self.setup.spot()).abs();
+                    // He is driven away from the hit, not back through the man who
+                    // made it.
+                    let away = pos - self.players[g].pos;
+                    if away.length() > 0.05 {
+                        self.players[returner].heading = away.y.atan2(away.x);
+                    }
                     self.tackle = Some(TackleBeat {
                         returner,
                         gunner: g,

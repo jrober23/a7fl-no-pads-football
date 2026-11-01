@@ -1814,6 +1814,20 @@ impl<'a> PlaySim<'a> {
         self.players[carrier].vel = Vec2::ZERO;
         self.players[carrier].tackled = 0.0;
         self.players[tackler].wrap = 0.0;
+        // He goes down away from the hit, not through it. A man hit square in the
+        // chest turns off the contact; the figure falls along its own facing, so
+        // the facing is what has to be turned. Hit from behind or the side, he
+        // keeps running into the fall, which is also what it looks like.
+        let away = self.players[carrier].pos - self.players[tackler].pos;
+        if away.length() > 0.05 {
+            let facing = Vec2::new(
+                self.players[carrier].heading.cos(),
+                self.players[carrier].heading.sin(),
+            );
+            if facing.dot(away.normalize_or_zero()) > 0.3 {
+                self.players[carrier].heading = away.y.atan2(away.x);
+            }
+        }
         self.wrap = Some(Wrap {
             carrier,
             tackler,
@@ -1845,10 +1859,15 @@ impl<'a> PlaySim<'a> {
         self.players[w.carrier].vel = Vec2::ZERO;
         self.players[w.tackler].wrap = p;
         let spot = self.players[w.carrier].pos;
+        // He closes to arm's length and stays there. Driving him to the carrier's
+        // exact spot put two bodies inside each other, which renders as one man
+        // made of both of them.
+        let away = (spot - self.players[w.tackler].pos).normalize_or_zero();
+        let contact = spot - away * 0.44;
         let d = &mut self.players[w.tackler];
-        d.pos = d.pos.lerp(spot, (dt * 7.0).min(1.0));
-        if w.t > 0.06 {
-            d.heading = (spot.y - d.pos.y).atan2(spot.x - d.pos.x);
+        d.pos = d.pos.lerp(contact, (dt * 7.0).min(1.0));
+        if away.length() > 0.01 {
+            d.heading = away.y.atan2(away.x);
         }
         if p < 1.0 {
             self.wrap = Some(w);
