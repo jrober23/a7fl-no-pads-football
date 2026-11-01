@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.13.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.14.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -359,9 +359,22 @@ Players are built at runtime from their attributes and appearance (skin tone,
 hair, beard, build) so the seven on the field match the roster. The body is a
 skeleton of lofted, rounded cross-sections rather than a stack of boxes: a chest
 that tapers into a waist over a seat, quadriceps that swell above the knee, calves
-that fill a sock, deltoids that overhang the ribcage — and the jersey carries its
-number, painted onto the cloth front and back, so the man wearing 23 is the man
-wearing 23.
+that fill a sock, deltoids that overhang the ribcage.
+
+The figure is built to a sixth-generation console look rather than to a low-poly
+budget: eighteen sides around the torso and nine around a limb, six bands from
+waist to shoulder so the pectorals sit over the ribs, cloth broken into soft folds
+by the shading instead of reading as one smooth tube, baggy shorts with trim at the
+hem, two stripes on each sock, a cleat built as a sole, an upper and a toe box, and
+a face with a brow, eyes, a nose and a mouth under the hair.
+
+**The number is on the shirt.** Every patch of paint is laid against the same torso
+profile the cloth was lofted from, at the depth of the surface under that patch, so
+the digits wrap around the chest, lean with it when he runs and sit proud of it by a
+couple of centimetres. Painted on one flat plane — which is what a jersey with a
+number floating beside the man looks like — they detach the moment the figure leans
+at all. The lit pixels of each row are merged into a single bar, so a digit reads as
+a numeral instead of a grid of loose squares.
 
 The figure animates the hits too. A tackle is a pose, not a state flag: the defender
 reaches out and around the man with his chest over his toes, and the carrier tips
@@ -369,9 +382,11 @@ over the top of it, hips first, until he is flat on the turf. A finished contrac
 not needed to see who hit whom.
 
 Each figure is built at one of three detail levels chosen by its distance from the
-lens, so a man on the far hash is not paying for eyes, a bicep and forty digit
-patches that would each be a pixel and a half wide. Full detail costs about seven
-hundred triangles; fourteen figures a frame is not something to spend freely.
+lens, so a man on the far hash is not paying for eyes, a bicep and a fistful of
+patches of paint that would each be a pixel and a half wide. Full detail costs
+about two thousand triangles, up from seven hundred; fourteen figures a frame is
+not something to spend freely, and this is the one place in the renderer where the
+polygons were worth it.
 
 `film` renders six stills and a 44-frame GIF: a throw-off, a pre-snap look, a pass
 in flight from the broadcast camera, a scoring play, a turnover, the final stats
