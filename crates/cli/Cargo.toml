@@ -1,0 +1,23 @@
+[package]
+name = "a7fl_cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command line game client for A7FL No Pads Football"
+
+[[bin]]
+name = "a7fl"
+path = "src/main.rs"
+
+[dependencies]
+a7fl_core = { path = "../core" }
+a7fl_render = { path = "../render" }
+gilrs = { version = "0.11", optional = true }
+minifb = "0.29.0"
+
+[features]
+# Gamepad support. On by default so `cargo run -- arcade` just works; build with
+# --no-default-features where the platform has no controller stack (gilrs needs
+# libudev on Linux).
+default = ["gamepad"]
+gamepad = ["dep:gilrs"]
