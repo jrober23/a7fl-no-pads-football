@@ -10,7 +10,7 @@ use a7fl_core::math::{clamp, Rgb, Vec2, Vec3};
 use a7fl_core::playbook::OffRole;
 use a7fl_core::sim::{PlaySim, Side};
 use a7fl_core::team::{Team, Uniform};
-use a7fl_core::throwoff::{ThrowOffSetup, ThrowOffSim, ThrowRole};
+use a7fl_core::throwoff::{ThrowOffSim, ThrowRole};
 
 use crate::fieldtex;
 use crate::hud::{self, Banner, INK};
@@ -22,6 +22,9 @@ use crate::scene::{Camera, Mesh, SceneRenderer};
 pub enum CameraMode {
     /// High sideline camera, the workhorse broadcast shot.
     Broadcast,
+    /// Behind the offense, looking downfield at the defense and panning with the
+    /// ball: the classic game view.
+    Classic,
     /// Behind the quarterback for the pre-snap look.
     BehindQb,
     /// Overhead.
@@ -224,13 +227,13 @@ impl Broadcast {
         game: &GameState,
         record: &ThrowOffRecord,
         t: f32,
-        mode: CameraMode,
+        _mode: CameraMode,
         overlay: bool,
     ) -> Frame {
         let throwing = record.setup.throwing_team;
         let receiving = record.setup.receiving_team;
 
-        let (players, ball) = {
+        let (players, ball, camera) = {
             let mut sim = ThrowOffSim::new(&record.setup, &self.teams[throwing], &self.teams[receiving]);
             let dt = 1.0 / 60.0;
             let mut elapsed = 0.0;
@@ -238,9 +241,10 @@ impl Broadcast {
                 sim.step(dt);
                 elapsed += dt;
             }
-            Broadcast::throw_off_players(&sim)
+            let (players, ball) = Broadcast::throw_off_players(&sim);
+            (players, ball, throw_off_camera(&sim))
         };
-        let (mut frame, _camera) = self.paint_throw_off(&players, ball, &record.setup, ball.0, mode);
+        let mut frame = self.paint_throw_off(&players, ball, camera);
 
         if overlay {
             let banner = if record.result.touchdown {
@@ -311,11 +315,8 @@ impl Broadcast {
         &mut self,
         players: &[RenderPlayer],
         ball: (a7fl_core::math::Vec2, f32),
-        setup: &ThrowOffSetup,
-        focus: a7fl_core::math::Vec2,
-        mode: CameraMode,
-    ) -> (Frame, Camera) {
-        let camera = self.camera_for(mode, focus, setup.receive_direction, setup.spot(), 0.0);
+        camera: Camera,
+    ) -> Frame {
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
@@ -324,20 +325,15 @@ impl Broadcast {
             let mesh = players::ball_mesh(Vec3::new(ball.0.x, ball.0.y, ball.1));
             self.scene.draw_mesh(&mut frame, &mesh, &camera);
         }
-        (frame, camera)
+        frame
     }
 
     /// A throw-off as it is being played, with the client's meter and landing
     /// marker drawn through the same camera as the field.
-    pub fn throw_off_frame_live(
-        &mut self,
-        sim: &ThrowOffSim,
-        focus: a7fl_core::math::Vec2,
-        mode: CameraMode,
-        ui: &crate::passing::PassUi,
-    ) -> Frame {
+    pub fn throw_off_frame_live(&mut self, sim: &ThrowOffSim, ui: &crate::passing::PassUi) -> Frame {
         let (players, ball) = Broadcast::throw_off_players(sim);
-        let (mut frame, camera) = self.paint_throw_off(&players, ball, &sim.setup, focus, mode);
+        let camera = throw_off_camera(sim);
+        let mut frame = self.paint_throw_off(&players, ball, camera.clone());
         ui.draw(&mut frame, &camera, &self.scene.projector);
         frame
     }
@@ -525,6 +521,11 @@ impl Broadcast {
                 Vec3::new(action.x + d * 4.0, action.y * 0.65, 0.8),
                 30f32,
             ),
+            CameraMode::Classic => (
+                Vec3::new(los - d * 13.0, ball_y * 0.45, 10.5),
+                Vec3::new(action.x + d * 7.0, action.y * 0.75, 0.9),
+                42f32,
+            ),
             CameraMode::BehindQb => (
                 Vec3::new(los - d * 15.0, ball_y + 0.8, 8.4),
                 Vec3::new(los + d * 13.0, ball_y, 1.3),
@@ -613,6 +614,37 @@ fn build_stands(teams: &[Team; 2]) -> Mesh {
         }
     }
     mesh
+}
+
+/// The throw-off shot. It opens from the throwing team's end looking downfield at
+/// the man waiting for the ball, then turns upfield once he has it — the way he is
+/// about to run — and rides with him.
+fn throw_off_camera(sim: &ThrowOffSim) -> Camera {
+    let throw_dir = sim.setup.throwing_direction() as f32;
+    let recv_dir = sim.setup.receive_direction as f32;
+    let spot = sim.setup.spot();
+    let ball = sim.ball_position().0;
+    let returner = sim.returner_position().unwrap_or(ball);
+    let landing = sim.landing_spot().unwrap_or(returner);
+
+    // Downfield: from behind the thrower, on the man under the ball.
+    let from_a = Vec3::new(spot - throw_dir * 12.0, 0.0, 15.5);
+    let to_a = Vec3::new(landing.x + throw_dir * 6.0, landing.y * 0.6, 0.6);
+    // Upfield: behind the returner, looking the way he is running.
+    let from_b = Vec3::new(returner.x - recv_dir * 12.0, returner.y * 0.45, 10.5);
+    let to_b = Vec3::new(returner.x + recv_dir * 16.0, returner.y * 0.25, 0.9);
+
+    let turn = sim
+        .catch_time()
+        .map(|t| ((sim.t - t) / 0.55).clamp(0.0, 1.0))
+        .unwrap_or(0.0);
+    let blend = turn * turn * (3.0 - 2.0 * turn);
+    let pos = from_a + (from_b - from_a) * blend;
+    let look = to_a + (to_b - to_a) * blend;
+    let mut cam = Camera::new(pos, 0.0, 0.0);
+    cam.fov = (33.0 + 9.0 * blend).to_radians();
+    cam.look_at(look);
+    cam
 }
 
 #[cfg(test)]

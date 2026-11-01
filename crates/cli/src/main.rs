@@ -672,9 +672,9 @@ fn cmd_arcade(args: &[String]) {
             seed: 7,
             ..a7fl_core::throwoff::ThrowOffSetup::normal()
         };
-        let sim = a7fl_core::throwoff::ThrowOffSim::new(&setup, &throw_home, &throw_away);
-        let plan = sim.throw_off_plan(0.62, 5.0);
-        let hand = sim.players[0].pos;
+        let off = a7fl_core::throwoff::ThrowOffSim::new(&setup, &throw_home, &throw_away);
+        let plan = off.throw_off_plan(0.62, 5.0);
+        let hand = off.players[0].pos;
         let ui = PassUi {
             badges: Vec::new(),
             guide: Some(Guide {
@@ -693,17 +693,22 @@ fn cmd_arcade(args: &[String]) {
             "NEW THROW-OFF FROM THE 35 - HOLD A TO WIND UP, LET GO TO THROW".to_string(),
             "COVER IT   NEW BALL   MOVE WITH STICK   [START] QUIT".to_string(),
         ];
-        // Frame the returner against the spot the ball is going, the way live
-        // play does: the landing zone is the play.
-        let focus = match sim.returner_position() {
-            Some(returner) => (returner + plan.landing) * 0.5,
-            None => plan.landing,
-        };
-        let framed = view::with_hud(
-            live.throw_off_frame_live(&sim, focus, CameraMode::Broadcast, &ui),
-            &lines,
-        );
+        let framed = view::with_hud(live.throw_off_frame_live(&off, &ui), &lines);
         let path = "out/11_throw_off.png";
+        if write_png(path, &framed).is_ok() {
+            println!("wrote {path}");
+        }
+
+        // The classic game view: behind the offense, facing the defense.
+        let lines = vec![
+            "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
+            "SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2".to_string(),
+            "A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9".to_string(),
+            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] CLASSIC   [START] QUIT"
+                .to_string(),
+        ];
+        let framed = view::with_hud(live.live_frame(&sim, CameraMode::Classic), &lines);
+        let path = "out/12_classic.png";
         if write_png(path, &framed).is_ok() {
             println!("wrote {path}");
         }

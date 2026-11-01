@@ -180,6 +180,9 @@ pub struct ThrowOffSim<'a> {
     pub human_dir: Vec2,
     /// A human is throwing this one, so the AI must not launch it for him.
     pub human_thrower: bool,
+    /// Sim time the returner took the ball in, so a client can turn its camera
+    /// upfield the way a broadcast does.
+    catch_t: Option<f32>,
 }
 
 impl<'a> ThrowOffSim<'a> {
@@ -255,6 +258,7 @@ impl<'a> ThrowOffSim<'a> {
             human: None,
             human_dir: Vec2::ZERO,
             human_thrower: false,
+            catch_t: None,
         }
     }
 
@@ -589,6 +593,7 @@ impl<'a> ThrowOffSim<'a> {
 
         self.returner_has_ball = true;
         self.phase = ThrowPhase::Return;
+        self.catch_t = Some(self.t);
         self.ball = self.players[returner].pos;
         self.ball_z = 1.0;
         self.events.push(format!("{} brings it out", self.name(returner)));
@@ -765,6 +770,11 @@ impl<'a> ThrowOffSim<'a> {
     /// Where the ball in the air is going to come down.
     pub fn landing_spot(&self) -> Option<Vec2> {
         self.flight.map(|f| f.to)
+    }
+
+    /// When the returner took the ball in, if he has.
+    pub fn catch_time(&self) -> Option<f32> {
+        self.catch_t
     }
 }
 

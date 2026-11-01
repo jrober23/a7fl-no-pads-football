@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.5.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.6.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -63,6 +63,7 @@ Controls:
 | B / East | Next play | Hold to wind up, release to throw to B |
 | X / West | Previous play | Throw to X |
 | Y / North | Ask the coach | Throw to Y |
+| RT / ZR | — | Change camera |
 | Start | Quit | Quit |
 
 | Keyboard | On the call sheet | During the play |
@@ -72,7 +73,23 @@ Controls:
 | X | Next play | Throw to B |
 | Z | Previous play | Throw to X |
 | C | Ask the coach | Throw to Y |
+| Left Shift | — | Change camera |
 | Esc | Quit | Quit |
+
+### Cameras
+
+RT (Left Shift on the keyboard) cycles the shot while the ball is live:
+
+* **Broadcast** — the high sideline camera the broadcast package uses, panning with
+  the ball.
+* **Classic** — behind your own offense, looking downfield at the defense, so the men
+  you are throwing at are ahead of you rather than beside you.
+* **Sky** — overhead, for seeing the whole thing at once.
+
+Throw-offs have their own shot, because no fixed camera can hold both ends of a
+sixty-yard, three-and-a-half-second throw. It opens from the throwing team's end
+looking downfield at the man waiting under the ball, and once he catches it the camera
+turns upfield — the way he is about to run — and rides the return with him.
 
 ### Passing
 

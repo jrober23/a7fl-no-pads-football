@@ -44,6 +44,21 @@ const PASS_LABELS: [&str; 4] = ["A", "B", "X", "Y"];
 /// zone the returner has to work in.
 const THROW_OFF_AIM_YARDS: f32 = 13.0;
 
+/// The views the player can switch between while the ball is live.
+const CAMS: [CameraMode; 3] = [
+    CameraMode::Broadcast,
+    CameraMode::Classic,
+    CameraMode::SkyCam,
+];
+
+fn cam_name(mode: CameraMode) -> &'static str {
+    match mode {
+        CameraMode::Classic => "CLASSIC",
+        CameraMode::SkyCam => "SKY",
+        _ => "BROADCAST",
+    }
+}
+
 pub struct Arcade {
     game: GameState,
     pad: Option<Pad>,
@@ -55,6 +70,8 @@ pub struct Arcade {
     /// The team the player is running. He is always the offense, so this is
     /// whichever side of a throw-off he is on.
     my_team: Option<usize>,
+    /// Which of `CAMS` the picture is coming from.
+    cam: usize,
     quit: bool,
     /// Penalty insurance: some pads report the stick's Y the other way round.
     flip_y: bool,
@@ -75,6 +92,7 @@ impl Arcade {
             defbook,
             pick: 0,
             my_team: None,
+            cam: 0,
             quit: false,
             flip_y: false,
         }
@@ -388,23 +406,7 @@ impl Arcade {
                     short,
                     needed,
                 };
-                // Frame the returner against the spot the ball is going rather
-                // than the thrower: the landing zone is the play, and no shot is
-                // wide enough to hold both ends of a sixty-yard throw.
-                let focus = if sim.phase == ThrowPhase::Presnap {
-                    let returner = sim.returner_position().unwrap_or(sim.ball);
-                    let aim = sim
-                        .throw_off_plan((hold / CHARGE_TIME).clamp(0.0, 1.0), aim_y)
-                        .landing;
-                    (returner + aim) * 0.5
-                } else {
-                    sim.landing_spot()
-                        .map(|l| sim.ball.lerp(l, 0.5))
-                        .unwrap_or(sim.ball)
-                };
-                let mut frame = self
-                    .broadcast
-                    .throw_off_frame_live(sim, focus, CameraMode::Broadcast, &ui);
+                let mut frame = self.broadcast.throw_off_frame_live(sim, &ui);
                 let lines = vec![
                     header.to_string(),
                     throw_off_line(self, sim, my_team),
@@ -451,6 +453,7 @@ impl Arcade {
         let view = &mut self.view;
         let pad = &mut self.pad;
         let quit = &mut self.quit;
+        let cam = &mut self.cam;
         let flip_y = self.flip_y;
 
         let record = game.snap_with(play, def, |sim| {
@@ -460,6 +463,7 @@ impl Arcade {
                 view,
                 pad.as_mut(),
                 flip_y,
+                cam,
                 &header,
                 &play_line,
                 &off_abbr,
@@ -614,6 +618,7 @@ fn drive(
     view: &mut View,
     mut pad: Option<&mut Pad>,
     flip_y: bool,
+    cam: &mut usize,
     header: &str,
     play_line: &str,
     off_abbr: &str,
@@ -637,6 +642,12 @@ fn drive(
         if input.pressed.start {
             return false;
         }
+        // The trigger is free during a snap now that the face buttons pass, so it
+        // cycles the camera.
+        if input.pressed.throw {
+            *cam = (*cam + 1) % CAMS.len();
+        }
+        let view_mode = CAMS[*cam % CAMS.len()];
 
         let targets = sim.eligible_targets();
         // The arcade camera looks across the field, so screen-right is world +x
@@ -751,7 +762,7 @@ fn drive(
                 needed,
             };
 
-            let mut frame = broadcast.live_frame_ui(sim, CameraMode::Broadcast, &ui);
+            let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
             let mut lines = vec![header.to_string(), play_line.to_string()];
 
             // Who is open, on the buttons the badges are showing.
@@ -770,7 +781,8 @@ fn drive(
             }
             lines.push(row);
             lines.push(format!(
-                "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] QUIT"
+                "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] QUIT",
+                cam_name(view_mode)
             ));
 
             if !view.show(&mut frame, &lines) {
