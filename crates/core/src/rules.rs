@@ -32,6 +32,9 @@ pub const TIME_BETWEEN_SNAPS: f32 = 22.0;
 /// travel 40 yards in the air.
 pub const THROW_OFF_SPOT_YARD_LINE: f32 = 35.0;
 pub const THROW_OFF_MIN_AIR_YARDS: f32 = 40.0;
+/// The far goal line is 65 yards away from the 35. A throw-off tops out twenty
+/// yards short of it, so the return has somewhere to go: 45 air yards.
+pub const THROW_OFF_MAX_AIR_YARDS: f32 = 45.0;
 pub const THROW_OFF_TOUCHBACK_TO: f32 = 20.0;
 pub const SAFETY_THROW_OFF_YARD_LINE: f32 = 25.0;
 /// Kicking team sends 3 players, receiving team sends 1 returner.

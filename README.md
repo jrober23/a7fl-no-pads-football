@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.11.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.11.1-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -111,7 +111,7 @@ leans a quarter of the way toward where the ball is going, so the pan starts on 
 release rather than at the catch.
 
 Throw-offs have their own shot, because no fixed camera can hold both ends of a
-sixty-yard, three-and-a-half-second throw. It used to sit fifteen and a half yards up,
+forty-five-yard, three-and-a-half-second throw. It used to sit fifteen and a half yards up,
 planted behind the thrower and aimed at the spot the ball was going to land: for the
 whole flight you watched a dot travel toward a dot, and the men doing anything about it
 were the small end of the picture. It sits at a runner's height now and goes with the
@@ -127,9 +127,11 @@ START (Esc on the keyboard) pauses the game:
   of a drive rather than only between plays.
 * **QUIT GAME** — closes the game.
 
-START used to close the game on the spot, which meant the camera setting — the one
-thing a player does want to change mid-drive — was unreachable once the ball was
-snapped.
+It works on the call sheet and on the fourth-down choice as well, and START no longer
+closes the game anywhere: **QUIT GAME** is the only way out. It used to close on the
+spot, which meant the camera setting — the one thing a player does want to change
+mid-drive — was unreachable once the ball was snapped, and a stray press on the call
+sheet ended the whole game.
 
 ### Passing
 
@@ -192,9 +194,14 @@ Throwing it off works like a pass. Hold the throw button and the meter fills; wh
 it fills a guide runs out to a marker showing where the ball will come down, and the
 stick steers that marker across the field. You can pick the spot before you start
 charging. The notch on the meter is the 40-yard rule, and a throw short of it is a
-Run Back, so the first thing you learn is that a soft throw is a penalty. Thrown
-hard it threatens the end zone, and a ball that sails through the back of it is a
-touchback.
+Run Back, so the first thing you learn is that a soft throw is a penalty. Past the
+notch it goes where you aim it, and full power comes down on the receiving team's
+20 — twenty yards short of the end zone, with eighty in front of the return.
+
+It used to top out at seventy-four air yards, which put every hard throw into the
+end zone for a touchback and turned the play into nothing but a ball in the air.
+A touchback is still a rule: it just takes a fourth-down free throw from the
+other side of midfield to get near an end zone now.
 
 Back to receive, the ball is live and you are the returner: get under it, catch it,
 run it back. Nobody teleports you underneath a throw-off any more — if you are not

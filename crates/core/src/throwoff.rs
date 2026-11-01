@@ -19,8 +19,8 @@
 use crate::field::{self, FIELD_HALF_WIDTH, FIELD_LENGTH};
 use crate::math::{approach_angle, clamp, lerp, Rng, Vec2};
 use crate::rules::{
-    SAFETY_THROW_OFF_YARD_LINE, THROW_OFF_MIN_AIR_YARDS, THROW_OFF_SPOT_YARD_LINE,
-    THROW_OFF_TOUCHBACK_TO,
+    SAFETY_THROW_OFF_YARD_LINE, THROW_OFF_MAX_AIR_YARDS, THROW_OFF_MIN_AIR_YARDS,
+    THROW_OFF_SPOT_YARD_LINE, THROW_OFF_TOUCHBACK_TO,
 };
 use crate::team::Team;
 
@@ -139,15 +139,22 @@ pub struct ThrowOffPlan {
     pub out_of_bounds: bool,
 }
 
-/// Air yards a throw-off carries at a given weight on the meter. Half a meter is
-/// short of the 40 the rule asks for, which is the whole reason to look at it.
+/// The lightest throw the meter can put up: six yards short of the 40 the rule
+/// asks for, so a lazy throw is a Run Back rather than a free 30-yarder.
+const THROW_OFF_LIGHT_AIR: f32 = THROW_OFF_MIN_AIR_YARDS - 6.0;
+
+/// Air yards a throw-off carries at a given weight on the meter. It tops out on
+/// the receiving team's 20 — 45 yards from the 35 — instead of sailing into the
+/// end zone, which used to make full power a guaranteed touchback and a picture
+/// of nothing but a ball in the air.
 pub fn throw_off_air(power: f32) -> f32 {
-    28.0 + power.clamp(0.0, 1.0) * 46.0
+    THROW_OFF_LIGHT_AIR
+        + power.clamp(0.0, 1.0) * (THROW_OFF_MAX_AIR_YARDS - THROW_OFF_LIGHT_AIR)
 }
 
 /// The meter reading that would just carry a throw `air` yards.
 pub fn power_for_air(air: f32) -> f32 {
-    ((air - 28.0) / 46.0).clamp(0.0, 1.0)
+    ((air - THROW_OFF_LIGHT_AIR) / (THROW_OFF_MAX_AIR_YARDS - THROW_OFF_LIGHT_AIR)).clamp(0.0, 1.0)
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -394,13 +401,14 @@ impl<'a> ThrowOffSim<'a> {
     }
 
     fn launch(&mut self) {
+        // No throw can reach the end zone any more, so the AI's "bomb" is the top
+        // of the meter — fielded on the 20 — rather than a ball into the seats.
         let air = if self.setup.free_throw {
-            self.rng.range(24.0, 46.0)
-        } else if self.rng.chance(0.20) {
-            // A bomb: deep enough to threaten the end zone and force a touchback.
-            self.rng.range(58.0, 74.0)
+            self.rng.range(30.0, THROW_OFF_MAX_AIR_YARDS)
+        } else if self.rng.chance(0.25) {
+            self.rng.range(43.5, THROW_OFF_MAX_AIR_YARDS)
         } else {
-            self.rng.range(THROW_OFF_MIN_AIR_YARDS + 0.5, THROW_OFF_MIN_AIR_YARDS + 10.0)
+            self.rng.range(THROW_OFF_MIN_AIR_YARDS + 0.5, 44.0)
         };
         let aim = self.rng.range(-13.0, 13.0);
         let plan = self.throw_off_plan(power_for_air(air), aim);
@@ -830,27 +838,48 @@ mod tests {
         assert!(seen.len() >= 2, "throw-offs should be varied: {seen:?}");
     }
 
+    /// A throw-off can no longer be thrown through the back of the end zone: full
+    /// power comes down on the 20 with eighty yards of field in front of it.
     #[test]
-    fn a_touchback_puts_the_ball_on_the_20() {
+    fn full_power_lands_twenty_yards_short_of_the_end_zone() {
         let (a, b) = teams();
-        let mut saw_touchback = false;
-        for seed in 0..400u64 {
-            let setup = ThrowOffSetup {
-                throwing_team: 0,
-                receiving_team: 1,
-                from_own_yards: 35.0,
-                receive_direction: -1,
-                seed,
-                free_throw: false,
-            };
-            let r = simulate_throw_off(&setup, &a, &b);
-            if r.touchback {
-                saw_touchback = true;
-                // Receiving team attacks -x, so its own 20 is x = 80.
-                assert!((r.start_spot - 80.0).abs() < 1e-2, "spot {}", r.start_spot);
-            }
-        }
-        assert!(saw_touchback, "expected at least one touchback in 400 throw-offs");
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let sim = ThrowOffSim::new(&setup, &a, &b);
+        let plan = sim.throw_off_plan(1.0, 0.0);
+        assert!(!plan.through_endzone, "full power still clears the end zone: {plan:?}");
+        assert!(!plan.too_short, "full power should be a legal throw: {plan:?}");
+        // Thrown from the 35 toward the far end zone, so it comes down on the 20.
+        let yards_to_goal = if setup.receive_direction > 0 {
+            plan.landing.x
+        } else {
+            FIELD_LENGTH - plan.landing.x
+        };
+        assert!(
+            (yards_to_goal - 20.0).abs() < 0.5,
+            "full power landed {yards_to_goal:.1} yards from the end zone"
+        );
+        // And the lightest throw is still short of the rulebook's forty.
+        assert!(sim.throw_off_plan(0.0, 0.0).too_short);
+    }
+
+    /// Touchbacks survive as a rule, but only a fourth-down free throw from the
+    /// opponent's side of the field can reach an end zone any more: a throw-off
+    /// from the 35 tops out on the 20.
+    #[test]
+    fn a_throw_off_caught_in_the_end_zone_is_a_touchback() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup {
+            from_own_yards: 56.0,
+            receive_direction: -1,
+            free_throw: true,
+            ..ThrowOffSetup::normal()
+        };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        sim.launch_with(1.0, 0.0);
+        let r = sim.run_to_completion();
+        assert!(r.touchback, "expected a touchback, got {:?}", r.outcome);
+        // Receiving team attacks -x, so its own 20 is x = 80.
+        assert!((r.start_spot - 80.0).abs() < 1e-2, "spot {}", r.start_spot);
     }
 
     #[test]

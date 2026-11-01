@@ -232,8 +232,14 @@ impl Arcade {
             }
             let input = self.wait(Duration::from_millis(16));
             if input.pressed.start {
-                self.quit = true;
-                return false;
+                // The call sheet is where a player spends most of the game, so this
+                // is the door to the camera setting and to quitting, not an instant
+                // exit the way it used to be.
+                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                    self.quit = true;
+                    return false;
+                }
+                continue;
             }
             if input.pressed.y {
                 // "Ask the coach": let the AI call it.
@@ -264,7 +270,7 @@ impl Arcade {
                 playsheet::page_of(self.pick) + 1,
                 pages
             ),
-            "  DPAD / STICK: HIGHLIGHT   [A] SNAP   [Y] ASK COACH   [START] QUIT".to_string(),
+            "  DPAD / STICK: HIGHLIGHT   [A] SNAP   [Y] ASK COACH   [START] PAUSE".to_string(),
         ];
         if let Some(last) = self.game.recent_plays(1).pop() {
             lines.push(format!("  Last: {last}"));
@@ -291,10 +297,17 @@ impl Arcade {
                 return two;
             }
             let input = self.wait(Duration::from_millis(16));
+            if input.pressed.start {
+                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                    self.quit = true;
+                    return two;
+                }
+                continue;
+            }
             if input.pressed.b {
                 two = !two;
             }
-            if input.pressed.a || input.pressed.start {
+            if input.pressed.a {
                 return two;
             }
         }
@@ -319,10 +332,17 @@ impl Arcade {
                 return false;
             }
             let input = self.wait(Duration::from_millis(16));
+            if input.pressed.start {
+                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                    self.quit = true;
+                    return false;
+                }
+                continue;
+            }
             if input.pressed.b {
                 throw_off = !throw_off;
             }
-            if input.pressed.a || input.pressed.start {
+            if input.pressed.a {
                 return throw_off;
             }
         }
