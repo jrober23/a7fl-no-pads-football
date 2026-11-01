@@ -1,6 +1,7 @@
 //! The interactive path: a human steering the quarterback through a snap.
 
-use a7fl_core::game::{Action, GameState, PlayRecord};
+use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord};
+use a7fl_core::throwoff::simulate_throw_off;
 use a7fl_core::math::Vec2;
 use a7fl_core::playbook::{defensive_playbook, playbook};
 use a7fl_core::sim::{PlaySim, QbControl, SnapSetup, SNAP_DELAY};
@@ -289,4 +290,37 @@ fn a_conversion_is_a_snap_you_can_call_and_play() {
         PlayRecord::Scrimmage(r) => assert!(r.is_try, "the snap was not booked as a try"),
         _ => panic!("a try should book a scrimmage record"),
     }
+}
+
+#[test]
+fn a_throw_off_set_up_by_hand_is_booked_when_it_is_played() {
+    let teams = league_teams();
+    let mut game = GameState::new(teams[0].clone(), teams[1].clone(), 44);
+    let (receiving, from_own) = match &game.phase {
+        GamePhase::ThrowOff { receiving, from_own } => (*receiving, *from_own),
+        other => panic!("the game should open with a throw-off, not {other:?}"),
+    };
+
+    // Set it up, play it out separately, then hand the result back.
+    let setup = game.throw_off_setup(receiving, from_own, false);
+    let before = game.total_plays();
+    let result = simulate_throw_off(
+        &setup,
+        &game.teams[setup.throwing_team],
+        &game.teams[setup.receiving_team],
+    );
+    let rec = game.finish_throw_off(setup, result);
+
+    assert_eq!(game.total_plays(), before + 1, "the throw-off was not booked");
+    match rec {
+        PlayRecord::ThrowOff(r) => {
+            assert!(!r.result.description.is_empty());
+            assert!(r.result.start_spot >= 0.0 && r.result.start_spot <= 100.0);
+        }
+        other => panic!("a throw-off should book a throw-off record, got {other:?}"),
+    }
+    assert!(
+        !matches!(game.phase, GamePhase::ThrowOff { .. }) || game.clock >= 0.0,
+        "the game should have moved on from the throw-off"
+    );
 }

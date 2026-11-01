@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.4.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.5.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -94,8 +94,33 @@ him.
 
 Fourth downs get their own prompt (go for it, or throw it off), drawn with the same
 bitmap font as the broadcast overlay. Conversions are called and played like any
-other snap; throw-offs still resolve on their own. In terminal mode the picture is
-sized from `COLUMNS` and `LINES`, so it adapts to whatever terminal you run it in.
+other snap. In terminal mode the picture is sized from `COLUMNS` and `LINES`, so it
+adapts to whatever terminal you run it in.
+
+### Throw-offs
+
+The A7FL has no kickoffs: the ball is thrown from your own 35 and has to travel 40
+yards in the air. It is yours to throw whenever your team is the one throwing it
+off — which is right after you score — and yours to return whenever the other lot
+throw it.
+
+Throwing it off works like a pass. Hold the throw button and the meter fills; while
+it fills a guide runs out to a marker showing where the ball will come down, and the
+stick steers that marker across the field. You can pick the spot before you start
+charging. The notch on the meter is the 40-yard rule, and a throw short of it is a
+Run Back, so the first thing you learn is that a soft throw is a penalty. Thrown
+hard it threatens the end zone, and a ball that sails through the back of it is a
+touchback.
+
+Back to receive, the ball is live and you are the returner: get under it, catch it,
+run it back. Nobody teleports you underneath a throw-off any more — if you are not
+where it comes down, it lands untouched and dies there. Once you have it the three
+gunners are chasing you, so a return is a run rather than a dice roll. Throwing it
+off, you become the gunner nearest the ball and can go down and make the tackle
+yourself.
+
+The return is also where the tackling work starts: the three-on-one geometry the
+throw-off has always had is now something you can drive from either side of it.
 
 Controller support comes from `gilrs` and is a default-on Cargo feature. On Linux
 the crate needs the udev headers (`sudo apt install libudev-dev`); build with

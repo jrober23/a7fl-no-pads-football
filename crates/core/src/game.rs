@@ -790,21 +790,27 @@ impl GameState {
     // Throw-offs
     // ------------------------------------------------------------------
 
-    pub fn run_throw_off(&mut self, receiving: usize, from_own: f32, free_throw: bool) -> PlayRecord {
+    /// Set up the throw-off that is about to be played, without running it, so a
+    /// human can throw it off himself or return it.
+    pub fn throw_off_setup(&mut self, receiving: usize, from_own: f32, free_throw: bool) -> ThrowOffSetup {
         let throwing = 1 - receiving;
         let seed = self.next_seed();
-        let setup = ThrowOffSetup {
+        ThrowOffSetup {
             throwing_team: throwing,
             receiving_team: receiving,
             from_own_yards: from_own,
             receive_direction: self.direction_for(receiving),
             seed,
             free_throw,
-        };
+        }
+    }
+
+    /// Book a throw-off that has been played out, and move the game on from it.
+    pub fn finish_throw_off(&mut self, setup: ThrowOffSetup, result: ThrowOffResult) -> PlayRecord {
+        let free_throw = setup.free_throw;
         let score_before = self.score;
         let quarter = self.quarter;
         let clock = self.clock;
-        let result = simulate_throw_off(&setup, &self.teams[throwing], &self.teams[receiving]);
         self.apply_throw_off(&result, free_throw);
         let record = ThrowOffRecord {
             quarter,
@@ -820,6 +826,24 @@ impl GameState {
         self.last_record = Some(rec.clone());
         self.play_clock = PLAY_CLOCK_SECONDS;
         rec
+    }
+
+    pub fn run_throw_off(&mut self, receiving: usize, from_own: f32, free_throw: bool) -> PlayRecord {
+        let setup = self.throw_off_setup(receiving, from_own, free_throw);
+        let throwing = setup.throwing_team;
+        let receiver = setup.receiving_team;
+        let result = simulate_throw_off(&setup, &self.teams[throwing], &self.teams[receiver]);
+        self.finish_throw_off(setup, result)
+    }
+
+    /// The fourth-down throw-off (the A7FL replacement for a punt), set up but
+    /// not run.
+    pub fn fourth_down_throw_off_setup(&mut self) -> Option<ThrowOffSetup> {
+        if self.phase != GamePhase::Scrimmage || self.down != 4 {
+            return None;
+        }
+        let from_own = self.own_yards_at_spot();
+        Some(self.throw_off_setup(self.defense(), from_own, true))
     }
 
     fn apply_throw_off(&mut self, r: &ThrowOffResult, _free_throw: bool) {

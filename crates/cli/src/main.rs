@@ -663,6 +663,50 @@ fn cmd_arcade(args: &[String]) {
         if write_png(path, &framed).is_ok() {
             println!("wrote {path}");
         }
+
+        // A throw-off being thrown off: meter, and the marker that says where it
+        // comes down.
+        let throw_home = live.teams[0].clone();
+        let throw_away = live.teams[1].clone();
+        let setup = a7fl_core::throwoff::ThrowOffSetup {
+            seed: 7,
+            ..a7fl_core::throwoff::ThrowOffSetup::normal()
+        };
+        let sim = a7fl_core::throwoff::ThrowOffSim::new(&setup, &throw_home, &throw_away);
+        let plan = sim.throw_off_plan(0.62, 5.0);
+        let hand = sim.players[0].pos;
+        let ui = PassUi {
+            badges: Vec::new(),
+            guide: Some(Guide {
+                from: Vec3::new(hand.x, hand.y, 1.8),
+                receiver: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+                landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+            }),
+            power: Some(0.62),
+            short: plan.too_short,
+            needed: Some(a7fl_core::throwoff::power_for_air(
+                a7fl_core::rules::THROW_OFF_MIN_AIR_YARDS,
+            )),
+        };
+        let lines = vec![
+            "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
+            "NEW THROW-OFF FROM THE 35 - HOLD A TO WIND UP, LET GO TO THROW".to_string(),
+            "COVER IT   NEW BALL   MOVE WITH STICK   [START] QUIT".to_string(),
+        ];
+        // Frame the returner against the spot the ball is going, the way live
+        // play does: the landing zone is the play.
+        let focus = match sim.returner_position() {
+            Some(returner) => (returner + plan.landing) * 0.5,
+            None => plan.landing,
+        };
+        let framed = view::with_hud(
+            live.throw_off_frame_live(&sim, focus, CameraMode::Broadcast, &ui),
+            &lines,
+        );
+        let path = "out/11_throw_off.png";
+        if write_png(path, &framed).is_ok() {
+            println!("wrote {path}");
+        }
         return;
     }
 

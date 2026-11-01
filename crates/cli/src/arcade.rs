@@ -11,10 +11,12 @@ use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use a7fl_core::ai;
-use a7fl_core::game::{Action, GameState};
+use a7fl_core::game::{Action, GamePhase, GameState};
 use a7fl_core::math::{Rng, Vec2, Vec3};
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
+use a7fl_core::rules::THROW_OFF_MIN_AIR_YARDS;
 use a7fl_core::sim::{PlaySim, QbControl};
+use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
 use a7fl_render::terminal;
@@ -38,6 +40,9 @@ const MIN_POWER: f32 = 0.18;
 const MAX_LEAD_YARDS: f32 = 7.5;
 /// The four passing buttons, in the order the badges are drawn.
 const PASS_LABELS: [&str; 4] = ["A", "B", "X", "Y"];
+/// How far across the field a throw-off can be aimed: the width of the landing
+/// zone the returner has to work in.
+const THROW_OFF_AIM_YARDS: f32 = 13.0;
 
 pub struct Arcade {
     game: GameState,
@@ -47,6 +52,9 @@ pub struct Arcade {
     book: Vec<Play>,
     defbook: Vec<DefCall>,
     pick: usize,
+    /// The team the player is running. He is always the offense, so this is
+    /// whichever side of a throw-off he is on.
+    my_team: Option<usize>,
     quit: bool,
     /// Penalty insurance: some pads report the stick's Y the other way round.
     flip_y: bool,
@@ -66,6 +74,7 @@ impl Arcade {
             book,
             defbook,
             pick: 0,
+            my_team: None,
             quit: false,
             flip_y: false,
         }
@@ -95,9 +104,9 @@ impl Arcade {
             match self.game.action() {
                 Action::GameOver => break,
                 Action::ThrowOff => {
-                    let Some(record) = self.game.simulate_next() else { break };
-                    let text = record.description().to_string();
-                    self.show_result(&text, None);
+                    if !self.play_throw_off(false) {
+                        break;
+                    }
                 }
                 Action::ChooseConversion => {
                     // Pick the try, then go back round: a conversion is a snap
@@ -107,9 +116,8 @@ impl Arcade {
                 }
                 Action::CallPlay { fourth_down } => {
                     if fourth_down && self.ask_throw_off() {
-                        if let Some(record) = self.game.fourth_down_throw_off() {
-                            let text = record.description().to_string();
-                            self.show_result(&text, None);
+                        if !self.play_throw_off(true) {
+                            break;
                         }
                         continue;
                     }
@@ -251,10 +259,179 @@ impl Arcade {
     }
 
     // ------------------------------------------------------------------
+    // Throw-offs
+    // ------------------------------------------------------------------
+
+    /// Play a throw-off: throw it off if it is yours to throw, or get under it
+    /// and bring it back if it is not. Returns false when the player quit.
+    fn play_throw_off(&mut self, free_throw: bool) -> bool {
+        let Some(setup) = self.throw_off_to_play(free_throw) else {
+            return true;
+        };
+        // The player runs the offense, so a throw-off is his to throw exactly
+        // when his team is the one throwing it: after he scores, he throws it
+        // off; after the other lot score, he receives it.
+        let my_team = self.my_team.unwrap_or(setup.receiving_team);
+        self.my_team = Some(my_team);
+        let header = self.header();
+
+        // The sim borrows the two teams, so hand it its own copies and leave the
+        // rest of the struct free to draw the picture.
+        let throwing = self.game.teams[setup.throwing_team].clone();
+        let receiving = self.game.teams[setup.receiving_team].clone();
+        let mut sim = ThrowOffSim::new(&setup, &throwing, &receiving);
+        sim.human_thrower = setup.throwing_team == my_team;
+
+        let finished = self.drive_throw_off(&mut sim, my_team, &header);
+        if !finished {
+            return false;
+        }
+        if let Some(result) = sim.result.clone() {
+            let rec = self.game.finish_throw_off(setup, result);
+            let text = rec.description().to_string();
+            self.show_result(&text, None);
+        }
+        true
+    }
+
+    /// The throw-off the game is waiting on, set up but not run.
+    fn throw_off_to_play(&mut self, free_throw: bool) -> Option<ThrowOffSetup> {
+        if free_throw {
+            return self.game.fourth_down_throw_off_setup();
+        }
+        match &self.game.phase {
+            GamePhase::ThrowOff { receiving, from_own } => {
+                Some(self.game.throw_off_setup(*receiving, *from_own, false))
+            }
+            _ => None,
+        }
+    }
+
+    /// The live throw-off. Returns false when the player has quit.
+    fn drive_throw_off(&mut self, sim: &mut ThrowOffSim, my_team: usize, header: &str) -> bool {
+        let mut acc = 0.0f64;
+        let mut last = Instant::now();
+        let mut drew = Instant::now() - FRAME;
+        // The meter, filled while the throw button is held.
+        let mut hold = 0.0f32;
+        let mut charging = false;
+        // Where across the field the throw is aimed, in yards.
+        let mut aim_y = 0.0f32;
+
+        loop {
+            let now = Instant::now();
+            let frame_dt = now.duration_since(last).as_secs_f64();
+            acc += frame_dt;
+            last = now;
+
+            let input = pad::mix(self.pad.as_mut(), self.view.poll());
+            if input.pressed.start {
+                self.quit = true;
+                return false;
+            }
+            // The same screen mapping as a scrimmage snap: screen-up is world -y.
+            let vertical = if self.flip_y { input.stick.y } else { -input.stick.y };
+            let stick = Vec2::new(input.stick.x, vertical);
+
+            if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
+                // Hold to wind the arm up, let go to throw it off. The aim can be
+                // picked before the charge starts, which is what the guide is for.
+                let holding = input.held.a || input.held.throw;
+                if holding {
+                    charging = true;
+                    hold = (hold + frame_dt as f32).min(CHARGE_TIME);
+                } else if charging {
+                    let power = (hold / CHARGE_TIME).clamp(MIN_POWER, 1.0);
+                    sim.launch_with(power, aim_y);
+                    charging = false;
+                    hold = 0.0;
+                }
+                if stick.y.abs() > 0.30 {
+                    aim_y = stick.y.clamp(-1.0, 1.0) * THROW_OFF_AIM_YARDS;
+                }
+            }
+
+            // Whoever is yours: the returner while you are receiving, otherwise
+            // the man on your team nearest the ball once it is in the air.
+            let mine = human_man(sim, my_team);
+            sim.set_human(mine, stick);
+
+            while acc >= STEP as f64 && sim.result.is_none() {
+                sim.step(STEP);
+                acc -= STEP as f64;
+            }
+
+            if now.duration_since(drew) >= FRAME || sim.result.is_some() {
+                drew = now;
+                let mut guide = None;
+                let mut short = false;
+                let mut needed = None;
+                let mut power = None;
+                if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
+                    let p = (hold / CHARGE_TIME).clamp(0.0, 1.0);
+                    let plan = sim.throw_off_plan(p, aim_y);
+                    short = plan.too_short;
+                    // The notch is the 40-yard rule: under it is a Run Back.
+                    needed = Some(power_for_air(THROW_OFF_MIN_AIR_YARDS));
+                    power = Some(p);
+                    let hand = sim.players[0].pos;
+                    guide = Some(Guide {
+                        from: Vec3::new(hand.x, hand.y, 1.8),
+                        receiver: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+                        landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+                    });
+                }
+                let ui = PassUi {
+                    badges: Vec::new(),
+                    guide,
+                    power,
+                    short,
+                    needed,
+                };
+                // Frame the returner against the spot the ball is going rather
+                // than the thrower: the landing zone is the play, and no shot is
+                // wide enough to hold both ends of a sixty-yard throw.
+                let focus = if sim.phase == ThrowPhase::Presnap {
+                    let returner = sim.returner_position().unwrap_or(sim.ball);
+                    let aim = sim
+                        .throw_off_plan((hold / CHARGE_TIME).clamp(0.0, 1.0), aim_y)
+                        .landing;
+                    (returner + aim) * 0.5
+                } else {
+                    sim.landing_spot()
+                        .map(|l| sim.ball.lerp(l, 0.5))
+                        .unwrap_or(sim.ball)
+                };
+                let mut frame = self
+                    .broadcast
+                    .throw_off_frame_live(sim, focus, CameraMode::Broadcast, &ui);
+                let lines = vec![
+                    header.to_string(),
+                    throw_off_line(self, sim, my_team),
+                    throw_off_controls(self, sim, my_team),
+                ];
+                if !self.view.show(&mut frame, &lines) {
+                    self.quit = true;
+                    return false;
+                }
+            }
+
+            if sim.result.is_some() {
+                // Let the last picture sit so the catch or the return reads.
+                std::thread::sleep(Duration::from_millis(260));
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    // ------------------------------------------------------------------
     // The snap itself
     // ------------------------------------------------------------------
 
     fn run_snap(&mut self) {
+        // Playing an offensive snap is what tells us whose team this is.
+        self.my_team = Some(self.game.possession);
         let play = self.book[self.pick].clone();
         let def = self.cpu_defense();
         let header = self.header();
@@ -608,4 +785,68 @@ fn drive(
         }
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+/// Which man on your team you are driving during a throw-off: the returner while
+/// you are receiving, and otherwise the man nearest the ball once it is in the
+/// air — which is how you get downfield to make the tackle.
+fn human_man(sim: &ThrowOffSim, my_team: usize) -> Option<usize> {
+    let returner = sim.players.iter().position(|p| p.role == ThrowRole::Returner)?;
+    if sim.players[returner].team == my_team {
+        return Some(returner);
+    }
+    if sim.phase == ThrowPhase::Presnap {
+        return None;
+    }
+    sim.players
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| p.team == my_team && !p.down)
+        .min_by(|a, b| {
+            a.1.pos
+                .dist(sim.ball)
+                .partial_cmp(&b.1.pos.dist(sim.ball))
+                .unwrap()
+        })
+        .map(|(i, _)| i)
+}
+
+fn throw_off_line(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> String {
+    let abbr = |t: usize| arcade.game.teams[t].abbr.clone();
+    match sim.phase {
+        ThrowPhase::Presnap => {
+            if sim.human_thrower {
+                format!(
+                    "  {} THROW-OFF FROM THE {} - HOLD A TO WIND UP, LET GO TO THROW",
+                    abbr(sim.setup.throwing_team),
+                    sim.setup.from_own_yards as i32
+                )
+            } else {
+                format!(
+                    "  {} THROW-OFF FROM THE {} - GET UNDER IT",
+                    abbr(sim.setup.throwing_team),
+                    sim.setup.from_own_yards as i32
+                )
+            }
+        }
+        ThrowPhase::Flight => "  THE BALL IS IN THE AIR".to_string(),
+        ThrowPhase::Return => format!(
+            "  RETURN - {} BALL IN HAND",
+            abbr(sim.setup.receiving_team)
+        ),
+        ThrowPhase::Dead => format!("  THROW-OFF OVER - {} BALL", abbr(my_team)),
+    }
+}
+
+fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> String {
+    let job = if sim.setup.throwing_team == my_team {
+        "COVER IT"
+    } else {
+        "RETURN IT"
+    };
+    format!(
+        "{:<9} {} BALL   MOVE WITH STICK   [START] QUIT",
+        job,
+        arcade.game.teams[sim.setup.receiving_team].abbr
+    )
 }

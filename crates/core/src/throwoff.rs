@@ -123,6 +123,33 @@ pub struct ThrowPlayer {
     pub heading: f32,
 }
 
+/// Where a throw-off at a given weight and aim comes down, worked out before it
+/// is thrown so that the marker on the field is drawn from the same arithmetic
+/// that flies the ball.
+#[derive(Clone, Copy, Debug)]
+pub struct ThrowOffPlan {
+    /// Yards travelled in the air.
+    pub air: f32,
+    pub landing: Vec2,
+    /// Clears the back of the receiving team's end zone: touchback.
+    pub through_endzone: bool,
+    /// Short of the 40 yards the rulebook asks for.
+    pub too_short: bool,
+    /// Lands off the sideline (only legal on a fourth-down throw).
+    pub out_of_bounds: bool,
+}
+
+/// Air yards a throw-off carries at a given weight on the meter. Half a meter is
+/// short of the 40 the rule asks for, which is the whole reason to look at it.
+pub fn throw_off_air(power: f32) -> f32 {
+    28.0 + power.clamp(0.0, 1.0) * 46.0
+}
+
+/// The meter reading that would just carry a throw `air` yards.
+pub fn power_for_air(air: f32) -> f32 {
+    ((air - 28.0) / 46.0).clamp(0.0, 1.0)
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Flight {
     from: Vec2,
@@ -148,6 +175,11 @@ pub struct ThrowOffSim<'a> {
     snap_delay: f32,
     returner_has_ball: bool,
     safety_risk: bool,
+    /// The man the human is steering, and which way he is pushing him.
+    pub human: Option<usize>,
+    pub human_dir: Vec2,
+    /// A human is throwing this one, so the AI must not launch it for him.
+    pub human_thrower: bool,
 }
 
 impl<'a> ThrowOffSim<'a> {
@@ -220,7 +252,16 @@ impl<'a> ThrowOffSim<'a> {
             snap_delay: 0.9,
             returner_has_ball: false,
             safety_risk: false,
+            human: None,
+            human_dir: Vec2::ZERO,
+            human_thrower: false,
         }
+    }
+
+    /// Hand a man to the human to steer, or take him back.
+    pub fn set_human(&mut self, index: Option<usize>, dir: Vec2) {
+        self.human = index;
+        self.human_dir = dir.clamp_len(1.0);
     }
 
     fn returner(&self) -> usize {
@@ -301,7 +342,7 @@ impl<'a> ThrowOffSim<'a> {
         self.t += dt;
         match self.phase {
             ThrowPhase::Presnap => {
-                if self.t >= self.snap_delay {
+                if !self.human_thrower && self.t >= self.snap_delay {
                     self.launch();
                 }
             }
@@ -312,12 +353,43 @@ impl<'a> ThrowOffSim<'a> {
         self.result.as_ref()
     }
 
-    fn launch(&mut self) {
-        self.phase = ThrowPhase::Flight;
+    /// Where a throw-off at this weight and lateral aim would come down.
+    pub fn throw_off_plan(&self, power: f32, aim_y: f32) -> ThrowOffPlan {
         let dir = self.setup.receive_direction;
         let throw_dir = -dir;
         let spot = self.setup.spot();
-        // How far downfield the throw travels in the air.
+        let air = throw_off_air(power);
+        // A throw-off that is not a fourth-down throw has to stay in bounds, so
+        // it gets pulled back inside the sideline rather than sailing out.
+        let out_of_bounds = self.setup.free_throw && aim_y.abs() > FIELD_HALF_WIDTH - 1.2;
+        let landing_y = if out_of_bounds { aim_y } else { clamp(aim_y, -13.0, 13.0) };
+        let landing_x = spot + throw_dir as f32 * air;
+        // The receiving team's own end zone is the one behind it, opposite to its
+        // return direction. A throw that clears the back of it is a touchback.
+        let through_endzone = if dir > 0 {
+            landing_x < -field::ENDZONE_DEPTH
+        } else {
+            landing_x > FIELD_LENGTH + field::ENDZONE_DEPTH
+        };
+        ThrowOffPlan {
+            air,
+            landing: Vec2::new(landing_x, landing_y),
+            through_endzone,
+            too_short: !self.setup.free_throw && air < THROW_OFF_MIN_AIR_YARDS,
+            out_of_bounds,
+        }
+    }
+
+    /// Throw it off at a weight and aim picked by a human.
+    pub fn launch_with(&mut self, power: f32, aim_y: f32) {
+        if self.phase != ThrowPhase::Presnap {
+            return;
+        }
+        let plan = self.throw_off_plan(power, aim_y);
+        self.release(plan);
+    }
+
+    fn launch(&mut self) {
         let air = if self.setup.free_throw {
             self.rng.range(24.0, 46.0)
         } else if self.rng.chance(0.20) {
@@ -326,26 +398,17 @@ impl<'a> ThrowOffSim<'a> {
         } else {
             self.rng.range(THROW_OFF_MIN_AIR_YARDS + 0.5, THROW_OFF_MIN_AIR_YARDS + 10.0)
         };
-        // The ball is thrown toward the receiving team's own end zone; the return
-        // then comes back the other way.
-        let landing_x = spot + throw_dir as f32 * air;
-        let mut landing_y = self.rng.range(-13.0, 13.0);
-        let mut out_of_bounds = false;
-        if landing_y.abs() > FIELD_HALF_WIDTH - 1.2 {
-            if self.setup.free_throw {
-                out_of_bounds = true;
-            } else {
-                landing_y = clamp(landing_y, -13.0, 13.0);
-            }
-        }
-        // The receiving team's own end zone is the one behind it, opposite to its
-        // return direction. A throw that clears the back of it is a touchback.
-        let through_endzone = if dir > 0 {
-            landing_x < -field::ENDZONE_DEPTH
-        } else {
-            landing_x > FIELD_LENGTH + field::ENDZONE_DEPTH
-        };
-        if through_endzone {
+        let aim = self.rng.range(-13.0, 13.0);
+        let plan = self.throw_off_plan(power_for_air(air), aim);
+        self.release(plan);
+    }
+
+    /// Send the ball on its way. Everything the throw can do to the game — a
+    /// touchback, a short throw, a ball off the sideline — is settled here from
+    /// the plan, so the marker the client draws and the flight cannot disagree.
+    fn release(&mut self, plan: ThrowOffPlan) {
+        self.phase = ThrowPhase::Flight;
+        if plan.through_endzone {
             let desc = "The throw-off sails through the back of the end zone. Touchback.".to_string();
             self.finish(
                 ThrowOffOutcome::Touchback,
@@ -357,7 +420,7 @@ impl<'a> ThrowOffSim<'a> {
             );
             return;
         }
-        if out_of_bounds {
+        if plan.out_of_bounds {
             self.finish(
                 ThrowOffOutcome::OutOfBounds,
                 self.setup.receiving_team,
@@ -368,13 +431,7 @@ impl<'a> ThrowOffSim<'a> {
             );
             return;
         }
-        let too_short = if !self.setup.free_throw {
-            let travelled = (self.setup.spot() - landing_x).abs();
-            travelled < THROW_OFF_MIN_AIR_YARDS
-        } else {
-            false
-        };
-        if too_short {
+        if plan.too_short {
             self.finish(
                 ThrowOffOutcome::RunBack,
                 self.setup.receiving_team,
@@ -386,21 +443,21 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
-        let landing = Vec2::new(landing_x, landing_y);
+        let landing = plan.landing;
         // A 45-yard throw is a high lob: roughly three and a half seconds of hang
-        // time, which is what lets the three gunners get downfield.
-        let duration = (air / 13.0).clamp(1.8, 4.4);
+        // time, which is what lets the three gunners get downfield. The returner
+        // is not teleported under it any more; he has to get there.
+        let duration = (plan.air / 13.0).clamp(1.8, 4.4);
         self.flight = Some(Flight {
             from: Vec2::new(self.players[0].pos.x, 1.2),
             to: landing,
             t: 0.0,
             duration,
-            peak: 3.0 + air * 0.22,
+            peak: 3.0 + plan.air * 0.22,
         });
-        let returner = self.returner();
-        self.players[returner].pos = landing;
         self.events.push(format!("Throw-off from the {}", self.setup.from_own_yards as i32));
         self.ball = self.players[0].pos;
+        self.ball_z = 1.2;
     }
 
     fn run_back_spot(&self) -> f32 {
@@ -410,14 +467,25 @@ impl<'a> ThrowOffSim<'a> {
     fn update_flight(&mut self, dt: f32) {
         // Gunners can only start running once the ball is thrown.
         let landing = self.flight.map(|f| f.to).unwrap_or(self.ball);
+        let human = self.human;
+        let push = self.human_dir;
         for i in 1..4 {
             let speed = self.speed(i);
-            self.steer(i, landing, speed, dt);
+            let target = if human == Some(i) {
+                self.players[i].pos + push * 4.0
+            } else {
+                landing
+            };
+            self.steer(i, target, speed, dt);
         }
         let returner = self.returner();
-        let target = landing;
-        let speed = self.speed(returner) * 0.9;
-        self.steer(returner, target, speed, dt);
+        let speed = self.speed(returner);
+        let target = if human == Some(returner) {
+            self.players[returner].pos + push * 4.0
+        } else {
+            landing
+        };
+        self.steer(returner, target, speed * if human == Some(returner) { 1.0 } else { 0.9 }, dt);
 
         let Some(mut flight) = self.flight else { return };
         flight.t += dt;
@@ -458,9 +526,29 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
-        // Fair catch when the gunners are closing.
+        // Nobody got under it: the ball lands where it lands and is dead there.
+        let gap = self.players[returner].pos.dist(landing);
+        if gap > 2.4 {
+            self.ball = landing;
+            self.ball_z = 0.3;
+            self.finish(
+                ThrowOffOutcome::Downed,
+                self.setup.receiving_team,
+                landing.x,
+                0,
+                None,
+                format!("The throw-off lands untouched, {:.0} yards from the returner.", gap),
+            );
+            return;
+        }
+
+        // Fair catch when the gunners are closing. A human returner calls his own
+        // by simply not being where the ball comes down.
         let awareness = self.attrs(returner).awareness_factor();
-        if nearest_gunner < 5.0 && self.rng.chance(0.35 + awareness * 0.4) {
+        if self.human != Some(returner)
+            && nearest_gunner < 5.0
+            && self.rng.chance(0.35 + awareness * 0.4)
+        {
             let spot = landing.x;
             self.finish(
                 ThrowOffOutcome::FairCatch,
@@ -511,16 +599,24 @@ impl<'a> ThrowOffSim<'a> {
         let returner = self.returner();
         let goal = field::opponent_goal_side(dir);
         let target = Vec2::new(goal, self.players[returner].pos.y * 0.6);
+        let human = self.human;
+        let push = self.human_dir;
         let speed = self.speed(returner);
+        let target = if human == Some(returner) {
+            self.players[returner].pos + push * 4.0
+        } else {
+            target
+        };
         self.steer(returner, target, speed, dt);
         let pos = self.players[returner].pos;
         self.ball = pos;
         self.ball_z = 1.0;
 
-        // Gunners chase.
+        // Gunners chase, unless one of them is the man the human is driving.
         for g in 1..4 {
             let speed = self.speed(g);
-            self.steer(g, pos, speed, dt);
+            let target = if human == Some(g) { self.players[g].pos + push * 4.0 } else { pos };
+            self.steer(g, target, speed, dt);
         }
 
         // Touchdown.
@@ -656,6 +752,20 @@ impl<'a> ThrowOffSim<'a> {
     pub fn ball_position(&self) -> (Vec2, f32) {
         (self.ball, self.ball_z)
     }
+
+    /// Where the returner is standing, so a client can frame both ends of the
+    /// field before the ball is thrown.
+    pub fn returner_position(&self) -> Option<Vec2> {
+        self.players
+            .iter()
+            .find(|p| p.role == ThrowRole::Returner)
+            .map(|p| p.pos)
+    }
+
+    /// Where the ball in the air is going to come down.
+    pub fn landing_spot(&self) -> Option<Vec2> {
+        self.flight.map(|f| f.to)
+    }
 }
 
 pub fn simulate_throw_off(
@@ -731,5 +841,46 @@ mod tests {
             }
         }
         assert!(saw_touchback, "expected at least one touchback in 400 throw-offs");
+    }
+
+    #[test]
+    fn the_plan_and_the_flight_agree() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let plan = sim.throw_off_plan(0.7, 6.0);
+        sim.launch_with(0.7, 6.0);
+        let flight = sim.flight.expect("a legal throw should fly");
+        assert!((flight.to.x - plan.landing.x).abs() < 1e-3);
+        assert!((flight.to.y - plan.landing.y).abs() < 1e-3);
+        assert_eq!(sim.phase, ThrowPhase::Flight);
+    }
+
+    #[test]
+    fn a_weak_throw_off_does_not_make_forty_yards() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup::normal();
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let plan = sim.throw_off_plan(0.1, 0.0);
+        assert!(plan.too_short, "a 0.1 throw should be short: {:?}", plan);
+        sim.launch_with(0.1, 0.0);
+        let r = sim.result.expect("a short throw ends the play");
+        assert_eq!(r.outcome, ThrowOffOutcome::RunBack);
+    }
+
+    #[test]
+    fn a_human_thrower_can_choose_where_it_comes_down() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup::normal();
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        sim.human_thrower = true;
+        // With a human on the lever the AI must not launch it for him.
+        for _ in 0..120 {
+            sim.step(1.0 / 60.0);
+        }
+        assert_eq!(sim.phase, ThrowPhase::Presnap, "the AI threw it off for the player");
+        sim.launch_with(0.8, -9.0);
+        let flight = sim.flight.expect("the throw should be in the air");
+        assert!((flight.to.y + 9.0).abs() < 1e-3, "landed at y={}", flight.to.y);
     }
 }

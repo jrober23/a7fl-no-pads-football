@@ -10,7 +10,7 @@ use a7fl_core::math::{clamp, Rgb, Vec2, Vec3};
 use a7fl_core::playbook::OffRole;
 use a7fl_core::sim::{PlaySim, Side};
 use a7fl_core::team::{Team, Uniform};
-use a7fl_core::throwoff::{ThrowOffSim, ThrowRole};
+use a7fl_core::throwoff::{ThrowOffSetup, ThrowOffSim, ThrowRole};
 
 use crate::fieldtex;
 use crate::hud::{self, Banner, INK};
@@ -230,7 +230,7 @@ impl Broadcast {
         let throwing = record.setup.throwing_team;
         let receiving = record.setup.receiving_team;
 
-        let (players, flying_ball, action, spot) = {
+        let (players, ball) = {
             let mut sim = ThrowOffSim::new(&record.setup, &self.teams[throwing], &self.teams[receiving]);
             let dt = 1.0 / 60.0;
             let mut elapsed = 0.0;
@@ -238,38 +238,9 @@ impl Broadcast {
                 sim.step(dt);
                 elapsed += dt;
             }
-            let ball_pos = sim.ball_position();
-            let players: Vec<RenderPlayer> = sim
-                .players
-                .iter()
-                .map(|p| RenderPlayer {
-                    team: p.team,
-                    roster: p.roster,
-                    pos: p.pos,
-                    heading: p.heading,
-                    run_phase: p.run_phase,
-                    speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
-                    carrying: p.role == ThrowRole::Returner
-                        && ball_pos.0.dist(p.pos) < 0.8
-                        && ball_pos.1 < 1.3,
-                    blocking: false,
-                    down: p.down,
-                    celebrate: 0.0,
-                })
-                .collect();
-            let flying = if ball_pos.1 > 1.3 { Some(ball_pos) } else { None };
-            (players, flying, ball_pos.0, record.setup.spot())
+            Broadcast::throw_off_players(&sim)
         };
-
-        let camera = self.camera_for(mode, action, record.setup.receive_direction, spot, 0.0);
-        self.sync_lens(&camera);
-        let mut frame = Frame::new(self.w, self.h);
-        self.paint_environment(&mut frame, &camera);
-        self.draw_bodies(&mut frame, &camera, &players);
-        if let Some((bp, bz)) = flying_ball {
-            let ball = players::ball_mesh(Vec3::new(bp.x, bp.y, bz));
-            self.scene.draw_mesh(&mut frame, &ball, &camera);
-        }
+        let (mut frame, _camera) = self.paint_throw_off(&players, ball, &record.setup, ball.0, mode);
 
         if overlay {
             let banner = if record.result.touchdown {
@@ -308,6 +279,66 @@ impl Broadcast {
             };
             hud::draw(&mut frame, &hud_state, banner.as_ref(), caption.as_deref());
         }
+        frame
+    }
+
+    /// Where every man is and where the ball is, from a throw-off being played or
+    /// replayed.
+    pub fn throw_off_players(sim: &ThrowOffSim) -> (Vec<RenderPlayer>, (a7fl_core::math::Vec2, f32)) {
+        let ball = sim.ball_position();
+        let players = sim
+            .players
+            .iter()
+            .map(|p| RenderPlayer {
+                team: p.team,
+                roster: p.roster,
+                pos: p.pos,
+                heading: p.heading,
+                run_phase: p.run_phase,
+                speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
+                carrying: p.role == ThrowRole::Returner
+                    && ball.0.dist(p.pos) < 0.8
+                    && ball.1 < 1.3,
+                blocking: false,
+                down: p.down,
+                celebrate: 0.0,
+            })
+            .collect();
+        (players, ball)
+    }
+
+    fn paint_throw_off(
+        &mut self,
+        players: &[RenderPlayer],
+        ball: (a7fl_core::math::Vec2, f32),
+        setup: &ThrowOffSetup,
+        focus: a7fl_core::math::Vec2,
+        mode: CameraMode,
+    ) -> (Frame, Camera) {
+        let camera = self.camera_for(mode, focus, setup.receive_direction, setup.spot(), 0.0);
+        self.sync_lens(&camera);
+        let mut frame = Frame::new(self.w, self.h);
+        self.paint_environment(&mut frame, &camera);
+        self.draw_bodies(&mut frame, &camera, players);
+        if ball.1 > 1.3 {
+            let mesh = players::ball_mesh(Vec3::new(ball.0.x, ball.0.y, ball.1));
+            self.scene.draw_mesh(&mut frame, &mesh, &camera);
+        }
+        (frame, camera)
+    }
+
+    /// A throw-off as it is being played, with the client's meter and landing
+    /// marker drawn through the same camera as the field.
+    pub fn throw_off_frame_live(
+        &mut self,
+        sim: &ThrowOffSim,
+        focus: a7fl_core::math::Vec2,
+        mode: CameraMode,
+        ui: &crate::passing::PassUi,
+    ) -> Frame {
+        let (players, ball) = Broadcast::throw_off_players(sim);
+        let (mut frame, camera) = self.paint_throw_off(&players, ball, &sim.setup, focus, mode);
+        ui.draw(&mut frame, &camera, &self.scene.projector);
         frame
     }
 
