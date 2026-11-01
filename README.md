@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.10.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.11.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -51,7 +51,7 @@ keyboard drives it, so the game is always playable.
  NEW 14 - 7 PAT   2ND 6:41   1ST & 10   BALL ON OWN 34
  SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2
  A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9
- NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] QUIT
+ NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] PAUSE
 ```
 
 Controls:
@@ -64,7 +64,7 @@ Controls:
 | X / West | — | Throw to X; once you are running, dive |
 | Y / North | Ask the coach | Throw to Y; once you are running, slide |
 | RT / ZR | — | Change camera |
-| Start | Quit | Quit |
+| Start | — | Pause: resume, camera, quit |
 
 | Keyboard | On the call sheet | During the play |
 | --- | --- | --- |
@@ -74,7 +74,7 @@ Controls:
 | Z | — | Throw to X; once you are running, dive |
 | C | Ask the coach | Throw to Y; once you are running, slide |
 | Left Shift | — | Change camera |
-| Esc | Quit | Quit |
+| Esc | — | Pause: resume, camera, quit |
 
 ### Calling plays
 
@@ -92,7 +92,9 @@ one you are on, or Y to let the coach call it.
 
 ### Cameras
 
-RT (Left Shift on the keyboard) cycles the shot while the ball is live:
+RT (Left Shift on the keyboard) cycles the shot while the ball is live. On a throw-off
+it is X instead — the trigger is the throw itself there — or pick the shot from the
+pause menu:
 
 * **Broadcast** — the high sideline camera the broadcast package uses, panning with
   the ball.
@@ -109,9 +111,25 @@ leans a quarter of the way toward where the ball is going, so the pan starts on 
 release rather than at the catch.
 
 Throw-offs have their own shot, because no fixed camera can hold both ends of a
-sixty-yard, three-and-a-half-second throw. It opens from the throwing team's end
-looking downfield at the man waiting under the ball, and once he catches it the camera
-turns upfield — the way he is about to run — and rides the return with him.
+sixty-yard, three-and-a-half-second throw. It used to sit fifteen and a half yards up,
+planted behind the thrower and aimed at the spot the ball was going to land: for the
+whole flight you watched a dot travel toward a dot, and the men doing anything about it
+were the small end of the picture. It sits at a runner's height now and goes with the
+ball — downfield with the throw, then swinging behind the returner the moment he takes
+it in, so the return is shot the way a return should be.
+
+### Pausing
+
+START (Esc on the keyboard) pauses the game:
+
+* **RESUME** — back to it.
+* **CAMERA** — cycles the same three shots, so the framing can be changed in the middle
+  of a drive rather than only between plays.
+* **QUIT GAME** — closes the game.
+
+START used to close the game on the spot, which meant the camera setting — the one
+thing a player does want to change mid-drive — was unreachable once the ball was
+snapped.
 
 ### Passing
 

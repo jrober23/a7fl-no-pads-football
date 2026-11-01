@@ -396,8 +396,18 @@ impl Arcade {
 
             let input = pad::mix(self.pad.as_mut(), self.view.poll());
             if input.pressed.start {
-                self.quit = true;
-                return false;
+                // START pauses: the camera setting and quitting both live behind it.
+                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                    self.quit = true;
+                    return false;
+                }
+                last = Instant::now();
+                acc = 0.0;
+                continue;
+            }
+            // X, not the trigger: on a throw-off the trigger is the throw itself.
+            if input.pressed.x {
+                self.cam = (self.cam + 1) % CAMS.len();
             }
             // The same screen mapping as a scrimmage snap: screen-up is world -y.
             let vertical = if self.flip_y { input.stick.y } else { -input.stick.y };
@@ -458,7 +468,8 @@ impl Arcade {
                     short,
                     needed,
                 };
-                let mut frame = self.broadcast.throw_off_frame_live(sim, &ui);
+                let mode = CAMS[self.cam % CAMS.len()];
+                let mut frame = self.broadcast.throw_off_frame_live(sim, mode, &ui);
                 let lines = vec![
                     header.to_string(),
                     throw_off_line(self, sim, my_team),
@@ -664,6 +675,68 @@ impl Arcade {
 /// player steer the quarterback until the play resolves. Returns false when the
 /// player has quit.
 #[allow(clippy::too_many_arguments)]
+/// The pause screen. Returns false when the player chose to quit the game.
+///
+/// START used to close the game on the spot, which put the camera setting — the
+/// one thing a player wants to change in the middle of a drive — out of reach
+/// once the ball was snapped.
+fn pause_menu(
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    cam: &mut usize,
+) -> bool {
+    const ITEMS: usize = 3;
+    let mut nav = Nav::default();
+    let mut pick = 0usize;
+    let mut last = Instant::now();
+    // A button still held from the game must not select the first item.
+    view.reset();
+    let keep = loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.start || input.pressed.b {
+            break true;
+        }
+        match nav.step(input.stick, dt) {
+            Some(Dir::Up) => pick = (pick + ITEMS - 1) % ITEMS,
+            Some(Dir::Down) => pick = (pick + 1) % ITEMS,
+            _ => {}
+        }
+        let mark = |on: bool| if on { ">>" } else { "  " };
+        let lines = vec![
+            String::new(),
+            String::new(),
+            "  PAUSED".to_string(),
+            String::new(),
+            format!("    {} RESUME", mark(pick == 0)),
+            format!(
+                "    {} CAMERA    {:<9}   [A] CHANGE",
+                mark(pick == 1),
+                cam_name(CAMS[*cam % CAMS.len()])
+            ),
+            format!("    {} QUIT GAME", mark(pick == 2)),
+            String::new(),
+            "  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string(),
+        ];
+        if !view.page(&lines) {
+            break false;
+        }
+        if input.pressed.a {
+            match pick {
+                0 => break true,
+                1 => *cam = (*cam + 1) % CAMS.len(),
+                _ => break false,
+            }
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    };
+    // Whatever was pressed in here must not carry into the game.
+    view.reset();
+    keep
+}
+
 fn drive(
     sim: &mut PlaySim,
     broadcast: &mut Broadcast,
@@ -692,7 +765,14 @@ fn drive(
 
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.start {
-            return false;
+            if !pause_menu(view, pad.as_deref_mut(), cam) {
+                return false;
+            }
+            // The whole pause was spent inside the wall clock: do not run the play
+            // forward by it.
+            last = Instant::now();
+            acc = 0.0;
+            continue;
         }
         // The trigger is free during a snap now that the face buttons pass, so it
         // cycles the camera.
@@ -858,7 +938,7 @@ fn drive(
                 lines.push(row);
             }
             lines.push(format!(
-                "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] QUIT",
+                "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] PAUSE",
                 cam_name(view_mode)
             ));
 
@@ -934,8 +1014,9 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> Str
         "RETURN IT"
     };
     format!(
-        "{:<9} {} BALL   MOVE WITH STICK   [START] QUIT",
+        "{:<9} {} BALL   MOVE WITH STICK   [X] {}   [START] PAUSE",
         job,
-        arcade.game.teams[sim.setup.receiving_team].abbr
+        arcade.game.teams[sim.setup.receiving_team].abbr,
+        cam_name(CAMS[arcade.cam % CAMS.len()])
     )
 }

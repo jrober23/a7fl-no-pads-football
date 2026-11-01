@@ -10,7 +10,7 @@ use a7fl_core::math::{clamp, Rgb, Vec2, Vec3};
 use a7fl_core::playbook::OffRole;
 use a7fl_core::sim::{PlaySim, Side};
 use a7fl_core::team::{Team, Uniform};
-use a7fl_core::throwoff::{ThrowOffSim, ThrowRole};
+use a7fl_core::throwoff::{ThrowOffSim, ThrowPhase, ThrowRole};
 
 use crate::fieldtex;
 use crate::hud::{self, Banner, INK};
@@ -281,7 +281,7 @@ impl Broadcast {
         game: &GameState,
         record: &ThrowOffRecord,
         t: f32,
-        _mode: CameraMode,
+        mode: CameraMode,
         overlay: bool,
     ) -> Frame {
         let throwing = record.setup.throwing_team;
@@ -296,7 +296,9 @@ impl Broadcast {
                 elapsed += dt;
             }
             let (players, ball) = Broadcast::throw_off_players(&sim);
-            (players, ball, throw_off_camera(&sim))
+            // A replay has no eased lens: the shot sits on the ball itself.
+            let camera = throw_off_camera(&sim, sim.ball_position().0, mode);
+            (players, ball, camera)
         };
         let mut frame = self.paint_throw_off(&players, ball, camera);
 
@@ -388,9 +390,20 @@ impl Broadcast {
 
     /// A throw-off as it is being played, with the client's meter and landing
     /// marker drawn through the same camera as the field.
-    pub fn throw_off_frame_live(&mut self, sim: &ThrowOffSim, ui: &crate::passing::PassUi) -> Frame {
+    pub fn throw_off_frame_live(
+        &mut self,
+        sim: &ThrowOffSim,
+        mode: CameraMode,
+        ui: &crate::passing::PassUi,
+    ) -> Frame {
         let (players, ball) = Broadcast::throw_off_players(sim);
-        let camera = throw_off_camera(sim);
+        if sim.phase == ThrowPhase::Presnap {
+            // A throw-off gets its own cut rather than a swoop in from wherever the
+            // last play left the lens.
+            self.focus = Focus::default();
+        }
+        let focus = self.focus.track_with(ball.0, FOLLOW_AIR);
+        let camera = throw_off_camera(sim, focus, mode);
         let mut frame = self.paint_throw_off(&players, ball, camera.clone());
         ui.draw(&mut frame, &camera, &self.scene.projector);
         frame
@@ -697,32 +710,40 @@ fn build_stands(teams: &[Team; 2]) -> Mesh {
 /// The throw-off shot. It opens from the throwing team's end looking downfield at
 /// the man waiting for the ball, then turns upfield once he has it — the way he is
 /// about to run — and rides with him.
-fn throw_off_camera(sim: &ThrowOffSim) -> Camera {
-    let throw_dir = sim.setup.throwing_direction() as f32;
-    let recv_dir = sim.setup.receive_direction as f32;
-    let spot = sim.setup.spot();
-    let ball = sim.ball_position().0;
-    let returner = sim.returner_position().unwrap_or(ball);
-    let landing = sim.landing_spot().unwrap_or(returner);
-
-    // Downfield: from behind the thrower, on the man under the ball.
-    let from_a = Vec3::new(spot - throw_dir * 12.0, 0.0, 15.5);
-    let to_a = Vec3::new(landing.x + throw_dir * 6.0, landing.y * 0.6, 0.6);
-    // Upfield: behind the returner, looking the way he is running.
-    let from_b = Vec3::new(returner.x - recv_dir * 12.0, returner.y * 0.45, 10.5);
-    let to_b = Vec3::new(returner.x + recv_dir * 16.0, returner.y * 0.25, 0.9);
-
-    let turn = sim
-        .catch_time()
-        .map(|t| ((sim.t - t) / 0.55).clamp(0.0, 1.0))
-        .unwrap_or(0.0);
-    let blend = turn * turn * (3.0 - 2.0 * turn);
-    let pos = from_a + (from_b - from_a) * blend;
-    let look = to_a + (to_b - to_a) * blend;
+/// The throw-off shot, placed relative to the ball it is following.
+///
+/// The old shot sat fifteen and a half yards up, planted behind the thrower and
+/// aimed at the spot the ball was going to land: for the whole flight you watched
+/// a dot travel toward a dot, and the men doing anything about it were the small
+/// end of the picture. `dir` is the way the camera should point -- downfield with
+/// the throw, and behind the returner once he has it.
+fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode) -> Camera {
+    let (dist, height, lead, fov): (f32, f32, f32, f32) = match mode {
+        // Low and close, behind the ball, like a sideline camera that gave chase.
+        CameraMode::Classic => (7.5, 5.6, 6.0, 36.0),
+        // Overhead: the one view where the whole return is readable.
+        CameraMode::SkyCam => (4.0, 24.0, 3.0, 42.0),
+        // The workhorse: a runner's height, close enough to see hands and feet,
+        // tipped up enough that the men are not pinned to the bottom of the frame.
+        _ => (10.0, 7.0, 6.0, 33.0),
+    };
+    let pos = Vec3::new(focus.x - dir * dist, focus.y * 0.55, height);
+    let look = Vec3::new(focus.x + dir * lead, focus.y * 0.72, 1.0);
     let mut cam = Camera::new(pos, 0.0, 0.0);
-    cam.fov = (33.0 + 9.0 * blend).to_radians();
+    cam.fov = fov.to_radians();
     cam.look_at(look);
     cam
+}
+
+fn throw_off_camera(sim: &ThrowOffSim, focus: Vec2, mode: CameraMode) -> Camera {
+    // Before the catch the shot belongs to the ball going downfield; after it, to
+    // the man running it back, so the lens swings behind whichever is live.
+    let dir = if matches!(sim.phase, ThrowPhase::Return | ThrowPhase::Dead) {
+        sim.setup.receive_direction as f32
+    } else {
+        sim.setup.throwing_direction() as f32
+    };
+    throw_off_lens(dir, focus, mode)
 }
 
 #[cfg(test)]
@@ -782,6 +803,45 @@ mod tests {
 
         assert!(right.0 > centre.0 + 20.0, "world +x should sit screen right");
         assert!(away.1 < centre.1 - 20.0, "world -y should sit screen up");
+    }
+
+    /// A throw-off used to be shot from fifteen and a half yards up, planted behind
+    /// the thrower and aimed at the landing spot: the ball was a dot travelling
+    /// toward a dot, and the return was somebody else's problem. It sits at a
+    /// runner's height now and travels with the ball.
+    #[test]
+    fn the_throw_off_shot_sits_low_and_goes_with_the_ball() {
+        for mode in [CameraMode::Classic, CameraMode::Broadcast, CameraMode::SkyCam] {
+            for (x, y) in [(20.0, 0.0), (60.0, -12.0), (95.0, 9.0)] {
+                let ball = Vec2::new(x, y);
+                let cam = throw_off_lens(1.0, ball, mode);
+                let lens = crate::scene::Projector::new(640, 360, cam.fov);
+                let (sx, sy, _) = lens
+                    .project(cam.view(Vec3::new(x, y, 1.0)))
+                    .unwrap_or_else(|| panic!("{mode:?} lost a throw-off ball at ({x}, {y})"));
+                assert!(
+                    (0.0..640.0).contains(&sx) && (0.0..360.0).contains(&sy),
+                    "{mode:?} put the ball at ({x}, {y}) off the frame: screen ({sx}, {sy})"
+                );
+                if mode != CameraMode::SkyCam {
+                    assert!(
+                        cam.pos.z < 9.0,
+                        "{mode:?} still sits {:.1} yards up on a throw-off",
+                        cam.pos.z
+                    );
+                }
+            }
+        }
+        // And it has to travel: a ball ninety-five yards downfield is shot from
+        // ninety-five yards downfield, not from where the throw-off was taken.
+        let near = throw_off_lens(1.0, Vec2::new(20.0, 0.0), CameraMode::Broadcast);
+        let far = throw_off_lens(1.0, Vec2::new(95.0, 0.0), CameraMode::Broadcast);
+        assert!(
+            (far.pos.x - near.pos.x - 75.0).abs() < 0.01,
+            "the throw-off shot stays put: {:.1} -> {:.1}",
+            near.pos.x,
+            far.pos.x
+        );
     }
 
     /// The ball is the anchor. The classic camera used to be pinned to the line of
