@@ -246,17 +246,43 @@ pub struct Lighting {
     pub ambient: f32,
     pub fog: Rgb,
     pub fog_density: f32,
+    /// Light thrown back up off the turf. A green fill from below keeps the dark
+    /// side of a body from going flat black, which is what makes a two-tone
+    /// figure look like a cartoon instead of a silhouette.
+    pub bounce: Vec3,
+    pub bounce_strength: f32,
+    /// Edge light that wraps the outline of everything: the wet-looking rim a
+    /// Pixar frame has on a shoulder and a helmet and a face.
+    pub rim: f32,
 }
 
 impl Default for Lighting {
     fn default() -> Self {
         Lighting {
             sun: Vec3::new(-0.35, 0.25, 0.9).normalize_or_zero(),
-            ambient: 0.55,
+            ambient: 0.52,
             fog: Rgb::hex(0x8FA6B8),
             fog_density: 0.012,
+            bounce: Vec3::new(0.1, 0.0, -1.0).normalize_or_zero(),
+            bounce_strength: 0.10,
+            rim: 0.16,
         }
     }
+}
+
+fn smoothstep(edge0: f32, edge1: f32, x: f32) -> f32 {
+    let t = clamp((x - edge0) / (edge1 - edge0).max(1e-5), 0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Cel shading: the diffuse term is pushed onto three tones with a narrow blend
+/// at each terminator, so a face is shadow, half tone or light — the broad, soft
+/// steps of a painted figure — instead of the long grey ramp that reads as a
+/// low-poly model. The blends stay a few degrees wide so nothing bands hard.
+fn toon(x: f32) -> f32 {
+    let mid = smoothstep(0.22, 0.40, x);
+    let high = smoothstep(0.58, 0.78, x);
+    (mid * 0.45 + high * 0.55).clamp(0.0, 1.0)
 }
 
 fn clip_near(poly: &[Vec3], near: f32) -> Vec<Vec3> {
@@ -292,22 +318,89 @@ impl SceneRenderer {
     }
 
     pub fn draw_mesh(&self, frame: &mut Frame, mesh: &Mesh, cam: &Camera) {
+        // The stadium is a few thousand small triangles and most frames see a
+        // fraction of them, so anything sitting wholly outside one side of the
+        // lens is dropped before it is lit or projected.
+        let (right, up, fwd) = cam.basis();
+        let half_h = (self.projector.h * 0.5) / self.projector.focal;
+        let half_w = (self.projector.w * 0.5) / self.projector.focal;
+        let near = cam.near;
         for tri in &mesh.tris {
+            let da = tri.a - cam.pos;
+            let db = tri.b - cam.pos;
+            let dc = tri.c - cam.pos;
+            let va = Vec3::new(da.dot(right), da.dot(up), da.dot(fwd));
+            let vb = Vec3::new(db.dot(right), db.dot(up), db.dot(fwd));
+            let vc = Vec3::new(dc.dot(right), dc.dot(up), dc.dot(fwd));
+            if va.z < near && vb.z < near && vc.z < near {
+                continue;
+            }
+            // Wholly outside one side of the frame. Only tested for triangles
+            // that are entirely in front of the lens, where the side planes are
+            // a fair test.
+            if va.z >= near && vb.z >= near && vc.z >= near
+                && ((va.x > half_w * va.z
+                    && vb.x > half_w * vb.z
+                    && vc.x > half_w * vc.z)
+                    || (va.x < -half_w * va.z
+                        && vb.x < -half_w * vb.z
+                        && vc.x < -half_w * vc.z)
+                    || (va.y > half_h * va.z
+                        && vb.y > half_h * vb.z
+                        && vc.y > half_h * vc.z)
+                    || (va.y < -half_h * va.z
+                        && vb.y < -half_h * vb.z
+                        && vc.y < -half_h * vc.z))
+            {
+                continue;
+            }
+            let view = [va, vb, vc];
             let n = (tri.b - tri.a).cross(tri.c - tri.a).normalize_or_zero();
             let ndl = n.dot(self.lighting.sun).abs();
-            let shade = (self.lighting.ambient + ndl * (1.0 - self.lighting.ambient)) * tri.shade;
+            let lit = toon(ndl);
+            // Turf bounce, then the rim: the closer a face is edge-on to the
+            // lens, the more it catches the light behind it.
+            let bounce = n.dot(self.lighting.bounce).abs() * self.lighting.bounce_strength;
+            let centroid = (tri.a + tri.b + tri.c) * (1.0 / 3.0);
+            let to_eye = (cam.pos - centroid).normalize_or_zero();
+            let edge = 1.0 - n.dot(to_eye).abs();
+            let rim = self.lighting.rim * edge * edge * edge;
+            let shade = (self.lighting.ambient + lit * (1.0 - self.lighting.ambient)) * tri.shade
+                + bounce
+                + rim;
 
-            let view = [cam.view(tri.a), cam.view(tri.b), cam.view(tri.c)];
-            let clipped = clip_near(&view, cam.near);
+            // Most triangles are entirely in front of the lens, so the clipper
+            // only runs on the ones that straddle it: no allocation per triangle
+            // in the middle of the picture, which is most of the picture.
+            let mut clipped_storage;
+            let clipped: &[Vec3] = if view[0].z >= cam.near
+                && view[1].z >= cam.near
+                && view[2].z >= cam.near
+            {
+                &view
+            } else {
+                clipped_storage = clip_near(&view, cam.near);
+                &clipped_storage
+            };
             if clipped.len() < 3 {
                 continue;
             }
             // Backface cull using the screen-space winding of the clipped polygon.
-            let projected: Vec<(f32, f32, f32)> = clipped
-                .iter()
-                .filter_map(|v| self.projector.project(*v))
-                .collect();
-            if projected.len() < 3 {
+            let mut projected = [(0.0f32, 0.0f32, 0.0f32); 5];
+            let mut n = 0;
+            let mut lost = false;
+            for v in clipped {
+                match self.projector.project(*v) {
+                    Some(p) => {
+                        if n < projected.len() {
+                            projected[n] = p;
+                            n += 1;
+                        }
+                    }
+                    None => lost = true,
+                }
+            }
+            if lost || n < 3 {
                 continue;
             }
             let (x0, y0, _) = projected[0];
@@ -319,7 +412,7 @@ impl SceneRenderer {
             }
             let depth = (view[0].z + view[1].z + view[2].z) / 3.0;
             let fog = fog_amount(depth, self.lighting.fog_density);
-            for i in 1..projected.len() - 1 {
+            for i in 1..n - 1 {
                 frame.flat_tri(
                     [projected[0], projected[i], projected[i + 1]],
                     tri.color,
@@ -367,32 +460,51 @@ impl SceneRenderer {
                 let p11 = Vec3::new(xb, yb, 0.0);
                 let p01 = Vec3::new(xa, yb, 0.0);
 
-                // Two triangles; clip each against the near plane.
+                // Two triangles; clip each against the near plane. This loop runs
+                // a couple of thousand times a frame, so it takes the allocation
+                // free path for tiles that are wholly in front of the lens.
                 for tri in [
                     [(p00, u0, v0), (p10, u1, v0), (p11, u1, v1)],
                     [(p00, u0, v0), (p11, u1, v1), (p01, u0, v1)],
                 ] {
-                    let mut poly: Vec<(Vec3, f32, f32)> = Vec::new();
-                    for k in 0..3 {
-                        let (p, u, v) = tri[k];
-                        poly.push((cam.view(p), u, v));
-                    }
-                    let clipped = clip_poly_near(&poly, cam.near);
+                    let vs = [
+                        (cam.view(tri[0].0), tri[0].1, tri[0].2),
+                        (cam.view(tri[1].0), tri[1].1, tri[1].2),
+                        (cam.view(tri[2].0), tri[2].1, tri[2].2),
+                    ];
+                    let mut clipped_storage;
+                    let clipped: &[(Vec3, f32, f32)] = if vs[0].0.z >= cam.near
+                        && vs[1].0.z >= cam.near
+                        && vs[2].0.z >= cam.near
+                    {
+                        &vs
+                    } else {
+                        clipped_storage = clip_poly_near(&vs, cam.near);
+                        &clipped_storage
+                    };
                     if clipped.len() < 3 {
                         continue;
                     }
-                    let projected: Vec<(f32, f32, f32, f32, f32)> = clipped
-                        .iter()
-                        .filter_map(|(v, u, vv)| {
-                            self.projector.project(*v).map(|(x, y, iz)| (x, y, iz, *u, *vv))
-                        })
-                        .collect();
-                    if projected.len() < 3 {
+                    let mut projected = [(0.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32); 5];
+                    let mut n = 0;
+                    let mut lost = false;
+                    for (v, u, vv) in clipped {
+                        match self.projector.project(*v) {
+                            Some((x, y, iz)) => {
+                                if n < projected.len() {
+                                    projected[n] = (x, y, iz, *u, *vv);
+                                    n += 1;
+                                }
+                            }
+                            None => lost = true,
+                        }
+                    }
+                    if lost || n < 3 {
                         continue;
                     }
                     let depth = clipped.iter().map(|(v, _, _)| v.z).sum::<f32>() / clipped.len() as f32;
                     let fog = fog_amount(depth, self.lighting.fog_density);
-                    for k in 1..projected.len() - 1 {
+                    for k in 1..n - 1 {
                         frame.textured_tri(
                             [projected[0], projected[k], projected[k + 1]],
                             tex,

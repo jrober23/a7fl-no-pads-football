@@ -17,11 +17,11 @@ pub const TEX_X0: f32 = -15.0;
 pub const TEX_X1: f32 = 115.0;
 pub const TEX_Y0: f32 = -22.0;
 pub const TEX_Y1: f32 = 22.0;
-pub const PX_PER_YARD: f32 = 12.0;
+pub const PX_PER_YARD: f32 = 16.0;
 
-pub const TURF_LIGHT: Rgb = Rgb::hex(0x2F6B37);
-pub const TURF_DARK: Rgb = Rgb::hex(0x295E31);
-pub const PAINT: Rgb = Rgb::hex(0xF3F4EF);
+pub const TURF_LIGHT: Rgb = Rgb::hex(0x3A7C41);
+pub const TURF_DARK: Rgb = Rgb::hex(0x2E6735);
+pub const PAINT: Rgb = Rgb::hex(0xF6F7F2);
 
 fn px(x: f32) -> f32 {
     (x - TEX_X0) * PX_PER_YARD
@@ -59,7 +59,9 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
         TURF_DARK,
     );
 
-    // Mown stripes every five yards, including through the end zones.
+    // Mown stripes every five yards, including through the end zones. The edge
+    // between two passes of the mower is a soft line on real turf, so it is
+    // blended over a yard instead of being a hard seam.
     let mut band = -ENDZONE_DEPTH;
     let mut i = 0;
     while band < FIELD_LENGTH + ENDZONE_DEPTH {
@@ -73,18 +75,32 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
             (turf_y1 - turf_y0) as i32,
             color,
         );
+        // Soft mow edge: a couple of pixels of the neighbouring tone.
+        let feather = tx(0.9);
+        for px_i in 0..feather {
+            let t = px_i as f32 / feather as f32;
+            frame.fill_rect_alpha(
+                (x0 as i32) + px_i,
+                turf_y0 as i32,
+                1,
+                (turf_y1 - turf_y0) as i32,
+                color,
+                1.0 - t,
+            );
+        }
         band += 5.0;
         i += 1;
     }
 
-    // Turf grain: subtle per-pixel variation so the surface isn't flat.
-    let w_i = frame.w as i32;
-    let h_i = frame.h as i32;
+    // Turf grain: a little blade-to-blade variation so the surface isn't flat,
+    // plus faint mower swirls that only show up close.
     for y in (turf_y0 as i32)..(turf_y1 as i32) {
         for x in (turf_x0 as i32)..(turf_x1 as i32) {
-            let n = rng.range(-0.05, 0.05);
+            let n = rng.range(-0.045, 0.045);
+            let swirl = ((x as f32 * 0.35 + y as f32 * 0.9).sin() * 0.012)
+                + ((y as f32 * 0.7).sin() * 0.008);
             let c = frame.get(x, y);
-            frame.put(x, y, c.scale(1.0 + n));
+            frame.put(x, y, c.scale(1.0 + n + swirl));
         }
     }
 
@@ -153,8 +169,14 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
         let x = px(yl as f32) as i32;
         for side in [-1.0f32, 1.0] {
             let y = py(side * HASH_Y) as i32;
-            frame.fill_rect(x, y - 4, 2, 8, PAINT);
+            frame.fill_rect(x, y - 4, 2, 9, PAINT);
         }
+    }
+
+    // Inbound lines, five yards in from each sideline: the coaching boxes.
+    for side in [-1.0f32, 1.0] {
+        let y = py(side * (FIELD_HALF_WIDTH - 5.0)) as i32;
+        frame.fill_rect(turf_x0 as i32, y - 1, (turf_x1 - turf_x0) as i32, 1, PAINT);
     }
 
     // Painted numbers every ten yards, on both sides of the field.

@@ -1,7 +1,10 @@
 //! A7FL player figures: sleeveless jersey, shorts, bare arms and no helmet.
 //!
 //! A figure is a small skeleton — pelvis, two-segment spine, head, and two joints
-//! per limb — posed from a stride cycle and built out of boxes and cylinders.
+//! per limb — posed from a stride cycle and built out of lofted bodies, limbs and
+//! a head. Nothing on it is a box measured off another box: the torso, shorts and
+//! thighs are lofted through rounded cross-sections, so the silhouette has a
+//! chest, a waist, a seat and a pair of calves instead of a stack of crates.
 //!
 //! Two things make it read as a runner rather than a sliding doll:
 //!
@@ -21,6 +24,72 @@ use crate::scene::Mesh;
 
 /// Ankle height above the turf when the foot is planted: sole plus cleat.
 const SOLE: f32 = 0.062;
+
+/// Sides on a limb at full detail. Seven is the cheapest count that still reads
+/// as a round cylinder from the broadcast distance rather than as a prism.
+const LIMB_SIDES: usize = 7;
+
+/// Sides around the torso at full detail. Low-poly bodies show their facets
+/// hardest across the chest and the seat, so these get more than the limbs.
+const BODY_SIDES: usize = 12;
+
+/// How much of the body is worth building at a given distance from the lens.
+///
+/// A figure at full detail is around seven hundred triangles and there are
+/// fourteen of them standing on every frame of a software renderer, so a man on
+/// the far hash is not drawn with eyes and a bicep: at that size they are a
+/// pixel and a half, and the frame can only afford so much. Level 1 is the close
+/// shot, 0 is a figure the size of a match head.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Detail {
+    Full,
+    Mid,
+    Far,
+}
+
+impl Detail {
+    /// Pick a level from the distance between the lens and the man.
+    pub fn for_distance(yards: f32) -> Detail {
+        if yards < 15.0 {
+            Detail::Full
+        } else if yards < 26.0 {
+            Detail::Mid
+        } else {
+            Detail::Far
+        }
+    }
+
+    fn sides(self) -> usize {
+        match self {
+            Detail::Full => LIMB_SIDES,
+            Detail::Mid => 6,
+            Detail::Far => 5,
+        }
+    }
+
+    fn body_sides(self) -> usize {
+        match self {
+            Detail::Full => BODY_SIDES,
+            Detail::Mid => 8,
+            Detail::Far => 6,
+        }
+    }
+
+    /// Eyes, brows, the quadriceps bulge, knee caps, trapezius wedges.
+    fn fine(self) -> bool {
+        !matches!(self, Detail::Far)
+    }
+
+    /// Painted numbers and the seams of the hair.
+    fn paint(self) -> bool {
+        matches!(self, Detail::Full | Detail::Mid)
+    }
+}
+
+/// How square a cross-section is. 2.0 is an ellipse; the torso sits between an
+/// ellipse and a rounded rectangle, which is what a ribcage looks like.
+const TORSO_ROUND: f32 = 2.9;
+const LIMB_ROUND: f32 = 2.0;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Pose {
@@ -120,6 +189,103 @@ fn leg_reach(thigh: f32, knee: f32, thigh_len: f32, shin_len: f32) -> f32 {
     thigh.cos() * thigh_len + (thigh - knee).cos() * shin_len
 }
 
+// ---------------------------------------------------------------------------
+// Rounded bodies
+// ---------------------------------------------------------------------------
+
+/// One cross-section of a body part: where it sits, how deep and how wide it is,
+/// and which way it is turned. Stacking these and skinning between them is what
+/// turns the figure from a pile of boxes into a body.
+#[derive(Clone, Copy, Debug)]
+struct Ring {
+    center: Vec3,
+    /// Half depth, front to back.
+    rx: f32,
+    /// Half width, side to side.
+    ry: f32,
+    yaw: f32,
+}
+
+impl Ring {
+    fn new(center: Vec3, rx: f32, ry: f32, yaw: f32) -> Ring {
+        Ring { center, rx, ry, yaw }
+    }
+}
+
+/// A point on a superellipse: round = 2 is an ellipse, higher is squarer. Bodies
+/// are neither round nor boxy, so the torso sits partway between the two.
+fn superellipse(a: f32, round: f32) -> (f32, f32) {
+    let (s, c) = a.sin_cos();
+    let e = 2.0 / round.max(2.0);
+    (
+        c.signum() * c.abs().powf(e),
+        s.signum() * s.abs().powf(e),
+    )
+}
+
+fn ring_point(ring: &Ring, a: f32, round: f32) -> Vec3 {
+    let (ex, ey) = superellipse(a, round);
+    let (sy, cy) = ring.yaw.sin_cos();
+    let x = ex * ring.rx;
+    let y = ey * ring.ry;
+    Vec3::new(
+        ring.center.x + x * cy - y * sy,
+        ring.center.y + x * sy + y * cy,
+        ring.center.z,
+    )
+}
+
+/// Skin a stack of rings into a surface, with the ends capped so a body is solid
+/// from any camera, overhead included. `color_at(segment, side)` decides the
+/// colour of every face, which is how the jersey patterns are painted: hoops,
+/// side panels and shoulder stripes are the cloth itself, not boxes stuck on it.
+fn loft(
+    mesh: &mut Mesh,
+    rings: &[Ring],
+    sides: usize,
+    round: f32,
+    cap_bottom: bool,
+    cap_top: bool,
+    color_at: impl Fn(usize, usize) -> Rgb,
+) {
+    let grid: Vec<Vec<Vec3>> = rings
+        .iter()
+        .map(|r| {
+            (0..sides)
+                .map(|k| ring_point(r, k as f32 / sides as f32 * std::f32::consts::TAU, round))
+                .collect()
+        })
+        .collect();
+    for i in 0..rings.len() - 1 {
+        for k in 0..sides {
+            let k1 = (k + 1) % sides;
+            mesh.quad_shaded(
+                grid[i][k],
+                grid[i][k1],
+                grid[i + 1][k1],
+                grid[i + 1][k],
+                color_at(i, k),
+                1.0,
+            );
+        }
+    }
+    if cap_bottom {
+        let c = rings[0].center;
+        for k in 0..sides {
+            let k1 = (k + 1) % sides;
+            mesh.tri_shaded(c, grid[0][k1], grid[0][k], color_at(0, k), 0.82);
+        }
+    }
+    if cap_top {
+        let last = rings.len() - 1;
+        let c = rings[last].center;
+        for k in 0..sides {
+            let k1 = (k + 1) % sides;
+            mesh.tri_shaded(c, grid[last][k], grid[last][k1], color_at(last, k), 0.92);
+        }
+    }
+}
+
 fn emit_box(mesh: &mut Mesh, corners: [Vec3; 8], color: Rgb, shade: f32) {
     // Corner index bits: bit0 = x, bit1 = y, bit2 = z, matching `scene::Mesh`.
     let idx = |x: usize, y: usize, z: usize| x + y * 2 + z * 4;
@@ -153,9 +319,7 @@ fn emit_box(mesh: &mut Mesh, corners: [Vec3; 8], color: Rgb, shade: f32) {
 }
 
 /// A box that can lean (pitch, about the lateral axis) and turn (yaw, about up)
-/// at the same time. The old figure could only yaw, so a leaning torso had to be
-/// faked by sliding a box forward, which is what made it look like a stack of
-/// parts rather than a body.
+/// at the same time.
 fn box3(
     mesh: &mut Mesh,
     center: Vec3,
@@ -213,12 +377,12 @@ fn limb(mesh: &mut Mesh, from: Vec3, to: Vec3, r0: f32, r1: f32, sides: usize, c
 
 /// Cleat: heel under the ankle, toe forward, pitched so it rolls through contact.
 fn shoe(mesh: &mut Mesh, ankle: Vec3, pitch: f32, color: Rgb) {
-    let center = ankle + Vec3::new(0.052 * pitch.cos(), 0.0, -0.032);
+    let center = ankle + Vec3::new(0.062 * pitch.cos(), 0.0, -0.038);
     taper3(
         mesh,
         center,
-        Vec3::new(0.100, 0.046, 0.032),
-        Vec3::new(0.090, 0.039, 0.027),
+        Vec3::new(0.125, 0.056, 0.040),
+        Vec3::new(0.112, 0.048, 0.032),
         pitch,
         0.0,
         color,
@@ -274,10 +438,90 @@ fn raise_to_turf(mesh: &mut Mesh) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Jersey numbers
+// ---------------------------------------------------------------------------
+
+/// Digits on a 3x5 grid, one bit per pixel, top row first. Reading the number off
+/// a player is the whole point of the back of a jersey, so the figure wears real
+/// digits instead of a solid rectangle.
+fn digit(c: u8) -> [u8; 5] {
+    match c {
+        b'0' => [0b111, 0b101, 0b101, 0b101, 0b111],
+        b'1' => [0b010, 0b110, 0b010, 0b010, 0b111],
+        b'2' => [0b111, 0b001, 0b111, 0b100, 0b111],
+        b'3' => [0b111, 0b001, 0b111, 0b001, 0b111],
+        b'4' => [0b101, 0b101, 0b111, 0b001, 0b001],
+        b'5' => [0b111, 0b100, 0b111, 0b001, 0b111],
+        b'6' => [0b111, 0b100, 0b111, 0b101, 0b111],
+        b'7' => [0b111, 0b001, 0b010, 0b010, 0b010],
+        b'8' => [0b111, 0b101, 0b111, 0b101, 0b111],
+        b'9' => [0b111, 0b101, 0b111, 0b001, 0b111],
+        _ => [0, 0, 0, 0, 0],
+    }
+}
+
+/// A flat patch of paint just proud of the cloth, facing `face` (+1 front, -1 back).
+/// Numbers are lit as if they were cloth, so they never disappear in shadow.
+fn paint_patch(mesh: &mut Mesh, x: f32, y: f32, z: f32, hy: f32, hz: f32, color: Rgb) {
+    mesh.quad_shaded(
+        Vec3::new(x, y - hy, z - hz),
+        Vec3::new(x, y + hy, z - hz),
+        Vec3::new(x, y + hy, z + hz),
+        Vec3::new(x, y - hy, z + hz),
+        color,
+        1.35,
+    );
+}
+
+/// Paint a jersey number onto one side of the chest. `face` is +1 for the front
+/// and -1 for the back, and the back is mirrored so the digits read correctly to
+/// somebody standing behind him.
+fn paint_number(mesh: &mut Mesh, number: u8, face: f32, x: f32, z: f32, cell: f32, color: Rgb) {
+    let text = format!("{number:02}");
+    let glyphs: Vec<u8> = text.bytes().collect();
+    let pitch = cell * 4.0;
+    let width = pitch * glyphs.len() as f32 - cell;
+    let bite = cell * 0.31;
+    for (gi, ch) in glyphs.iter().enumerate() {
+        let rows = digit(*ch);
+        let start = gi as f32 * pitch - width * 0.5;
+        for (row, bits) in rows.iter().enumerate() {
+            for col in 0..3u8 {
+                if bits & (1 << (2 - col)) == 0 {
+                    continue;
+                }
+                let lateral = start + col as f32 * cell;
+                // Which way a digit advances across the cloth: the camera looks
+                // along the inward normal, and in this projection screen-right
+                // for a face pointing +x is -y. Get this backwards and the number
+                // is mirrored, which is what a jersey reads as a smudge.
+                let y = if face > 0.0 { -lateral } else { lateral };
+                let zz = z + (2.0 - row as f32) * cell * 1.16;
+                paint_patch(mesh, x, y, zz, bite, cell * 0.37, color);
+            }
+        }
+    }
+}
+
 pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_seed: u32) -> Mesh {
+    build_mesh_at(player, uniform, pose, team_skin_seed, Detail::Full)
+}
+
+pub fn build_mesh_at(
+    player: &Player,
+    uniform: &Uniform,
+    pose: &Pose,
+    team_skin_seed: u32,
+    detail: Detail,
+) -> Mesh {
     let mut mesh = Mesh::new();
+    let sides = detail.sides();
+    let body_sides = detail.body_sides();
     let h = player.height_yards().clamp(1.55, 2.05);
-    let shoulder_w = player.shoulder_width().clamp(0.36, 0.62);
+    // Body mass is the difference between a wire frame and a football player.
+    let bulk = player.build.clamp(0.9, 1.1) * 1.04;
+    let shoulder_w = (player.shoulder_width() * 1.06).clamp(0.40, 0.66);
     let skin = player.skin.rgb();
     let jersey = uniform.jersey;
     let accent = uniform.jersey_accent;
@@ -296,8 +540,8 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
     let torso_len = h * 0.33;
     // A small head over broad shoulders is most of what makes a figure read as
     // an athlete rather than a doll.
-    let head_r = h * 0.056;
-    let hip_lateral = shoulder_w * (0.21 + 0.10 * pose.strafe.clamp(0.0, 1.0));
+    let head_r = h * 0.057;
+    let hip_lateral = shoulder_w * (0.22 + 0.08 * pose.strafe.clamp(0.0, 1.0));
 
     // ---------------- legs ----------------
     // Half a cycle between them, so one foot is always cycling toward the ground
@@ -313,16 +557,16 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
             angles[0] *= 0.6;
         }
         legs[i] = angles;
-        reach = reach.max(leg_reach(
-            angles[0],
-            angles[1],
-            thigh_len,
-            shin_len,
-        ));
+        reach = reach.max(leg_reach(angles[0], angles[1], thigh_len, shin_len));
     }
     // The hips hang off the straightest leg, so the planted foot is exactly on
     // the turf and the swinging foot is clear of it.
     let hip_z = SOLE + reach;
+
+    let thigh_r = 0.146 * bulk;
+    let knee_r = 0.086 * bulk;
+    let calf_r = 0.106 * bulk;
+    let ankle_r = 0.054 * bulk;
 
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
         let [thigh, knee, foot] = legs[i];
@@ -333,165 +577,206 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
         let (ss, sc) = shin.sin_cos();
         let ankle = knee_pos + Vec3::new(ss, 0.0, -sc) * shin_len;
 
-        // Thigh: shorts over the top, bare skin below. Heavy at the hip and
-        // tapering into the knee, which is what carries the weight of the figure.
-        let mid = hip.lerp(knee_pos, 0.58);
-        limb(&mut mesh, hip, mid, 0.094, 0.080, 5, shorts);
-        limb(&mut mesh, mid, knee_pos, 0.078, 0.058, 5, skin);
-        // Calf bulges out of the knee, then the sock takes over above the ankle.
-        let calf = knee_pos.lerp(ankle, 0.38);
-        limb(&mut mesh, knee_pos, calf, 0.060, 0.057, 5, skin);
-        limb(&mut mesh, calf, ankle, 0.054, 0.040, 5, socks);
+        // Shorts over the top of the thigh, bare skin below the hem. A quad is
+        // heavy at the hip and tapers into the knee, which is what carries the
+        // weight of the figure.
+        let hem = hip.lerp(knee_pos, 0.68);
+        limb(&mut mesh, hip, hem, thigh_r, thigh_r * 0.90, sides, shorts);
+        // Quadriceps: the leg is at its thickest just above the knee, not at the
+        // hip, so the bare thigh bulges before it narrows into the joint.
+        if detail.fine() {
+            let quad = hem.lerp(knee_pos, 0.45);
+            limb(&mut mesh, hem, quad, thigh_r * 0.88, thigh_r * 0.80, sides, skin);
+            limb(&mut mesh, quad, knee_pos, thigh_r * 0.80, knee_r, sides, skin);
+            // Knee cap, so the joint is a joint and not a kink in a tube.
+            mesh.sphere(
+                knee_pos,
+                Vec3::new(knee_r * 0.98, knee_r * 0.9, knee_r * 0.98),
+                2,
+                6,
+                skin,
+            );
+        } else {
+            limb(&mut mesh, hem, knee_pos, thigh_r * 0.86, knee_r, sides, skin);
+        }
+        // The calf swells out of the knee and the sock takes over above the ankle.
+        let belly = knee_pos.lerp(ankle, 0.34);
+        limb(&mut mesh, knee_pos, belly, knee_r * 0.98, calf_r, sides, skin);
+        limb(&mut mesh, belly, ankle, calf_r * 0.96, ankle_r, sides, socks);
+        // Sock cuff, in team colour at the top of the sock.
+        mesh.cylinder(
+            belly,
+            belly.lerp(ankle, 0.16),
+            calf_r * 1.03,
+            calf_r * 0.99,
+            sides,
+            accent,
+        );
         shoe(&mut mesh, ankle, foot, shoes);
     }
 
-    // ---------------- pelvis ----------------
-    // The pelvis turns into the stride, one hip leading.
-    let hip_yaw = (pose.run_phase.rem_euclid(1.0) * std::f32::consts::TAU).sin()
-        * 0.10
-        * live;
+    // ---------------- seat and shorts ----------------
+    // The pelvis turns into the stride, one hip leading. Lofted so the seat has
+    // depth and the shorts sit on it instead of being a single slab.
+    let hip_yaw = (pose.run_phase.rem_euclid(1.0) * std::f32::consts::TAU).sin() * 0.10 * live;
     let pelvis = Vec3::new(0.0, 0.0, hip_z);
-    taper3(
-        &mut mesh,
-        pelvis + Vec3::new(0.0, 0.0, h * 0.02),
-        Vec3::new(0.125, hip_lateral * 0.95, h * 0.055),
-        Vec3::new(0.135, hip_lateral * 0.98, h * 0.055),
-        0.0,
-        hip_yaw,
-        shorts,
-        1.0,
-    );
-    for side in [-1.0f32, 1.0] {
-        box3(
-            &mut mesh,
-            pelvis + Vec3::new(0.0, side * hip_lateral * 0.98, h * 0.02),
-            Vec3::new(0.118, 0.010, h * 0.048),
-            0.0,
+    let seat = [
+        Ring::new(
+            pelvis + Vec3::new(0.0, 0.0, -h * 0.035),
+            0.104 * bulk,
+            hip_lateral * 0.94,
+            hip_yaw * 0.6,
+        ),
+        Ring::new(
+            pelvis + Vec3::new(0.0, 0.0, h * 0.005),
+            0.122 * bulk,
+            hip_lateral * 1.02,
             hip_yaw,
-            uniform.shorts_accent,
-            1.0,
-        );
-    }
+        ),
+        Ring::new(
+            pelvis + Vec3::new(0.0, 0.0, h * 0.048),
+            0.118 * bulk,
+            hip_lateral * 0.96,
+            hip_yaw * 0.7,
+        ),
+    ];
+    loft(&mut mesh, &seat, body_sides, TORSO_ROUND, true, true, |i, k| {
+        let a = (k as f32 + 0.5) / body_sides as f32 * std::f32::consts::TAU;
+        let lateral = a.sin().abs();
+        // A stripe down each side of the shorts.
+        if lateral > 0.86 && (i == 1 || i == 0) {
+            uniform.shorts_accent
+        } else {
+            shorts
+        }
+    });
 
-    // ---------------- spine and chest ----------------
-    // The whole upper body hangs off the hips and leans as one piece.
+    // ---------------- torso ----------------
+    // The whole upper body hangs off the hips and leans as one piece. Shoulders
+    // counter-rotate against the pelvis, which is what stops a runner looking
+    // like a rigid block with arms attached.
     let lean = live * (0.08 + 0.24 * speed) + if pose.blocking { 0.34 } else { 0.0 };
     let spine_dir = Vec3::new(lean.sin(), 0.0, lean.cos());
     let spine = |f: f32| pelvis + spine_dir * (torso_len * f);
-    // The shoulders counter-rotate against the pelvis, which is what stops a
-    // runner looking like a rigid block with arms attached.
     let chest_yaw = -hip_yaw * 0.7;
 
-    let chest = spine(0.64);
-    let chest_half = Vec3::new(0.142, shoulder_w * 0.54, torso_len * 0.26);
-    // Waist first, then the chest flares up into the shoulders on top of it.
-    taper3(
-        &mut mesh,
-        spine(0.28),
-        Vec3::new(0.118, shoulder_w * 0.35, torso_len * 0.20),
-        Vec3::new(0.128, shoulder_w * 0.41, torso_len * 0.20),
-        lean,
-        hip_yaw,
-        jersey,
-        1.0,
-    );
-    taper3(
-        &mut mesh,
-        chest,
-        Vec3::new(0.140, shoulder_w * 0.43, torso_len * 0.25),
-        Vec3::new(0.132, shoulder_w * 0.54, torso_len * 0.23),
-        lean,
-        chest_yaw,
-        jersey,
-        1.0,
-    );
-
-    // Hem and armhole trim.
-    taper3(
-        &mut mesh,
-        spine(0.28) - spine_dir * torso_len * 0.20 + Vec3::new(0.0, 0.0, 0.004),
-        Vec3::new(0.124, shoulder_w * 0.36, 0.012),
-        Vec3::new(0.124, shoulder_w * 0.36, 0.012),
-        lean,
-        hip_yaw,
-        accent,
-        1.0,
-    );
-
-    match uniform.pattern {
-        JerseyPattern::ShoulderStripe => {
-            for side in [-1.0f32, 1.0] {
-                box3(
-                    &mut mesh,
-                    chest + Vec3::new(0.0, side * (chest_half.y - 0.02), chest_half.z * 0.45),
-                    Vec3::new(chest_half.x + 0.006, 0.028, chest_half.z * 0.40),
-                    lean,
-                    chest_yaw,
-                    accent,
-                    1.0,
-                );
+    // Waist narrow, ribs wide, chest widest, deltoids wider still: the taper is
+    // the whole athletic silhouette.
+    let torso = [
+        Ring::new(spine(0.02), 0.112 * bulk, shoulder_w * 0.35, hip_yaw * 0.8),
+        Ring::new(spine(0.24), 0.108 * bulk, shoulder_w * 0.33, hip_yaw * 0.5),
+        Ring::new(spine(0.50), 0.132 * bulk, shoulder_w * 0.43, hip_yaw * 0.2),
+        Ring::new(spine(0.76), 0.150 * bulk, shoulder_w * 0.52, chest_yaw * 0.6),
+        Ring::new(spine(1.00), 0.128 * bulk, shoulder_w * 0.53, chest_yaw),
+    ];
+    let torso_bands = torso.len() - 1;
+    let cloth = |i: usize, k: usize| -> Rgb {
+        let a = (k as f32 + 0.5) / body_sides as f32 * std::f32::consts::TAU;
+        let lateral = a.sin().abs();
+        match uniform.pattern {
+            JerseyPattern::Solid => jersey,
+            // A yoke across the top of the shoulders and the sleeves.
+            JerseyPattern::ShoulderStripe => {
+                if i == torso_bands - 1 && lateral > 0.45 {
+                    accent
+                } else {
+                    jersey
+                }
+            }
+            JerseyPattern::SidePanel => {
+                if lateral > 0.84 {
+                    accent
+                } else {
+                    jersey
+                }
+            }
+            // A band across the chest, which is the sash reading at this distance.
+            JerseyPattern::Sash => {
+                if i == 2 {
+                    accent
+                } else {
+                    jersey
+                }
+            }
+            JerseyPattern::Hoops => {
+                if i % 2 == 1 {
+                    accent
+                } else {
+                    jersey
+                }
             }
         }
-        JerseyPattern::SidePanel => {
-            for side in [-1.0f32, 1.0] {
-                box3(
-                    &mut mesh,
-                    chest + Vec3::new(0.0, side * chest_half.y, 0.0),
-                    Vec3::new(chest_half.x * 0.9, 0.010, chest_half.z * 0.85),
-                    lean,
-                    chest_yaw,
-                    accent,
-                    1.0,
-                );
-            }
-        }
-        JerseyPattern::Sash => {
-            box3(
-                &mut mesh,
-                chest - spine_dir * torso_len * 0.06,
-                Vec3::new(chest_half.x + 0.008, chest_half.y * 0.85, chest_half.z * 0.18),
-                lean,
-                chest_yaw,
-                accent,
-                1.0,
-            );
-        }
-        JerseyPattern::Hoops => {
-            for i in -1..=1 {
-                box3(
-                    &mut mesh,
-                    chest + spine_dir * (i as f32 * chest_half.z * 0.6),
-                    Vec3::new(chest_half.x + 0.008, chest_half.y + 0.003, chest_half.z * 0.12),
-                    lean,
-                    chest_yaw,
-                    accent,
-                    1.0,
-                );
-            }
-        }
-        JerseyPattern::Solid => {}
-    }
+    };
+    loft(&mut mesh, &torso, body_sides, TORSO_ROUND, true, true, cloth);
 
-    // Number plate front and back.
-    let number_color = uniform.readable_number_color();
-    for (side, scale) in [(-1.0f32, 0.5f32), (1.0, 0.42)] {
-        box3(
+    // Hem of the jersey, on top of the shorts.
+    let hem_lo = Ring::new(spine(0.0), 0.114 * bulk, shoulder_w * 0.355, hip_yaw * 0.9);
+    let hem_hi = Ring::new(
+        spine(0.07) + spine_dir * 0.001,
+        0.116 * bulk,
+        shoulder_w * 0.36,
+        hip_yaw * 0.8,
+    );
+    loft(&mut mesh, &[hem_lo, hem_hi], body_sides, TORSO_ROUND, false, false, |_, _| {
+        accent
+    });
+
+    // Numbers front and back, painted on the cloth. Too far away to read one is
+    // too far away to pay for one.
+    if detail.paint() {
+        let number_color = uniform.readable_number_color();
+        let cell = 0.050 * (h / 1.85);
+        let chest_rx = 0.150 * bulk;
+        let chest_z = spine(0.70).z;
+        paint_number(
             &mut mesh,
-            chest + Vec3::new(side * (chest_half.x + 0.004), 0.0, chest_half.z * 0.1),
-            Vec3::new(0.006, chest_half.y * scale, chest_half.z * scale),
-            lean,
-            chest_yaw,
-            number_color,
+            player.number,
             1.0,
+            chest_rx + 0.006,
+            chest_z,
+            cell,
+            number_color,
+        );
+        paint_number(
+            &mut mesh,
+            player.number,
+            -1.0,
+            -(chest_rx + 0.006),
+            chest_z + torso_len * 0.02,
+            cell * 1.02,
+            number_color,
         );
     }
 
     // ---------------- arms ----------------
-    let shoulder_zone = spine(1.0);
+    let shoulder_zone = spine(0.97);
+    let upper_len = h * 0.15;
+    let fore_len = h * 0.135;
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
-        let shoulder = shoulder_zone + Vec3::new(0.0, side * (shoulder_w * 0.52 - 0.02), -0.03);
-        // Deltoid cap: bare shoulder, no pads in this league.
-        mesh.sphere(shoulder, Vec3::new(0.078, 0.076, 0.070), 3, 6, skin);
+        let shoulder = shoulder_zone + Vec3::new(0.0, side * (shoulder_w * 0.50 - 0.015), -0.025);
+        // Trapezius, sloping from the neck out to the shoulder. Blends bare
+        // skin into the jersey and squares off the shoulders.
+        if detail.fine() {
+            taper3(
+                &mut mesh,
+                shoulder.lerp(shoulder_zone, 0.5) + Vec3::new(0.0, 0.0, 0.004),
+                Vec3::new(0.070, 0.060, 0.024),
+                Vec3::new(0.052, 0.090, 0.020),
+                0.0,
+                chest_yaw,
+                skin,
+                0.98,
+            );
+        }
+        // Deltoid: bare shoulder, no pads in this league. This is the widest
+        // thing on the figure and it is why he reads as a player.
+        mesh.sphere(
+            shoulder,
+            Vec3::new(0.086 * bulk, 0.086 * bulk, 0.080 * bulk),
+            if detail.fine() { 3 } else { 2 },
+            if detail.fine() { 8 } else { 6 },
+            skin,
+        );
 
         // Each arm swings against the leg on the other side of the body. The
         // elbow rides *behind* the ribs and the hand pumps up toward the chest,
@@ -511,8 +796,6 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
             0.25 + 1.20 * run_blend * live
         };
 
-        let upper_len = h * 0.15;
-        let fore_len = h * 0.13;
         let up_dir = Vec3::new(swing.sin(), side * 0.12, -swing.cos()).normalize_or_zero();
         let elbow = shoulder + up_dir * upper_len;
         // A flexed elbow carries the forearm forward and up, not backward.
@@ -521,23 +804,56 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
             Vec3::new(fore_angle.sin(), side * 0.05, -fore_angle.cos()).normalize_or_zero();
         let hand = elbow + fore_dir * fore_len;
 
-        limb(&mut mesh, shoulder, elbow, 0.052, 0.042, 5, skin);
-        limb(&mut mesh, elbow, hand, 0.042, 0.032, 5, skin);
-        // Fist, so the arm ends in something instead of an open tube.
-        box3(
+        // Biceps swell on the upper arm, forearm tapers into the wrist.
+        limb(
             &mut mesh,
-            hand + fore_dir * 0.02,
-            Vec3::new(0.034, 0.030, 0.030),
-            0.0,
-            0.0,
+            shoulder,
+            shoulder.lerp(elbow, 0.45),
+            0.068 * bulk,
+            0.066 * bulk,
+            sides,
             skin,
-            0.95,
+        );
+        limb(
+            &mut mesh,
+            shoulder.lerp(elbow, 0.45),
+            elbow,
+            0.066 * bulk,
+            0.050 * bulk,
+            sides,
+            skin,
+        );
+        limb(
+            &mut mesh,
+            elbow,
+            elbow.lerp(hand, 0.55),
+            0.053 * bulk,
+            0.048 * bulk,
+            sides,
+            skin,
+        );
+        limb(
+            &mut mesh,
+            elbow.lerp(hand, 0.55),
+            hand,
+            0.048 * bulk,
+            0.034 * bulk,
+            sides,
+            skin,
+        );
+        // Hand: a fist big enough to be seen holding something.
+        mesh.sphere(
+            hand + fore_dir * 0.02,
+            Vec3::new(0.044, 0.040, 0.046),
+            2,
+            6,
+            skin,
         );
 
         if ball_arm {
             // Tucked to the ribs, nose up.
             let ball_center = hand + Vec3::new(-0.02, 0.0, 0.02);
-            mesh.sphere(ball_center, Vec3::new(0.055, 0.092, 0.070), 4, 8, Rgb::hex(0x6B3B1E));
+            mesh.sphere(ball_center, Vec3::new(0.058, 0.098, 0.074), 5, 9, Rgb::hex(0x6B3B1E));
             box3(
                 &mut mesh,
                 ball_center + Vec3::new(-0.05, 0.0, 0.0),
@@ -555,25 +871,71 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
     let head_lean = lean * 0.45;
     let head_dir = Vec3::new(head_lean.sin(), 0.0, head_lean.cos());
     let neck_base = shoulder_zone - spine_dir * head_r * 0.4;
-    let head = neck_base + head_dir * (head_r * 2.0);
+    let head = neck_base + head_dir * (head_r * 2.05);
     limb(
         &mut mesh,
         neck_base,
-        neck_base + head_dir * (head_r * 0.9),
-        0.052,
-        0.048,
+        neck_base + head_dir * (head_r * 1.05),
+        0.058 * bulk,
+        0.052 * bulk,
+        sides,
+        skin,
+    );
+    let head_rings = if detail.fine() { 5 } else { 3 };
+    let head_segs = if detail.fine() { 10 } else { 7 };
+    mesh.sphere(
+        head,
+        Vec3::new(head_r, head_r * 0.94, head_r * 1.1),
+        head_rings,
+        head_segs,
+        skin,
+    );
+    // Jaw and chin, which is what gives a head a face rather than an egg.
+    mesh.sphere(
+        head + Vec3::new(head_r * 0.34, 0.0, -head_r * 0.52),
+        Vec3::new(head_r * 0.62, head_r * 0.74, head_r * 0.48),
+        if detail.fine() { 3 } else { 2 },
+        head_segs,
+        skin,
+    );
+    // Nose, so the profile is not a sphere.
+    mesh.sphere(
+        head + Vec3::new(head_r * 0.92, 0.0, -head_r * 0.05),
+        Vec3::new(head_r * 0.20, head_r * 0.16, head_r * 0.18),
+        2,
         5,
         skin,
     );
-    mesh.sphere(head, Vec3::new(head_r, head_r * 0.92, head_r * 1.1), 4, 8, skin);
     for side in [-1.0f32, 1.0] {
         mesh.sphere(
-            Vec3::new(head.x - 0.01, side * head_r * 0.95, head.z),
+            Vec3::new(head.x - 0.01, side * head_r * 0.96, head.z),
             Vec3::new(0.018, 0.020, 0.030),
             2,
             5,
             skin,
         );
+        // Eyes: two dark dots set into the brow. They cost four triangles and
+        // they are the difference between a head and a ball at close range.
+        if detail.fine() {
+            mesh.sphere(
+                head + Vec3::new(head_r * 0.80, side * head_r * 0.34, head_r * 0.24),
+                Vec3::new(0.012, 0.016, 0.014),
+                2,
+                4,
+                Rgb::hex(0x2A2420),
+            );
+            // Brow, so the face has a shadow line above the eyes.
+            taper3(
+                &mut mesh,
+                head + Vec3::new(head_r * 0.72, side * head_r * 0.34, head_r * 0.50),
+                Vec3::new(0.014, head_r * 0.32, 0.008),
+                Vec3::new(0.014, head_r * 0.32, 0.008),
+                0.0,
+                0.0,
+                skin.scale(0.82),
+                1.0,
+            );
+        }
     }
     match player.hair {
         HairStyle::Bald => {}
@@ -582,7 +944,7 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
                 Vec3::new(head.x - 0.005, 0.0, head.z + head_r * 0.42),
                 Vec3::new(head_r, head_r * 0.94, head_r * 0.68),
                 3,
-                8,
+                9,
                 player.hair_color,
             );
         }
@@ -591,7 +953,7 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
                 Vec3::new(head.x - 0.005, 0.0, head.z + head_r * 0.5),
                 Vec3::new(head_r * 1.02, head_r * 0.96, head_r * 0.7),
                 3,
-                8,
+                9,
                 player.hair_color,
             );
         }
@@ -600,10 +962,11 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
                 Vec3::new(head.x - 0.01, 0.0, head.z + head_r * 0.55),
                 Vec3::new(head_r * 1.05, head_r, head_r * 0.78),
                 3,
-                8,
+                9,
                 player.hair_color,
             );
-            for i in 0..7 {
+            let strands = if detail.fine() { 7 } else { 0 };
+            for i in 0..strands {
                 let a = i as f32 / 7.0 * std::f32::consts::TAU;
                 let base = Vec3::new(
                     head.x - head_r * 0.4,
@@ -619,7 +982,7 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
                 Vec3::new(head.x - 0.01, 0.0, head.z + head_r * 0.7),
                 Vec3::new(head_r * 1.18, head_r * 1.1, head_r * 0.9),
                 4,
-                8,
+                9,
                 player.hair_color,
             );
         }
@@ -636,14 +999,12 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
         }
     }
     if player.beard > 0.2 {
-        box3(
-            &mut mesh,
-            Vec3::new(head.x + head_r * 0.62, 0.0, head.z - head_r * 0.45),
-            Vec3::new(head_r * 0.28, head_r * 0.72, head_r * 0.42),
-            0.0,
-            0.0,
+        mesh.sphere(
+            head + Vec3::new(head_r * 0.50, 0.0, -head_r * 0.42),
+            Vec3::new(head_r * 0.42, head_r * 0.74, head_r * 0.50),
+            3,
+            7,
             player.hair_color,
-            1.0,
         );
     }
     // Helmet? Never. The A7FL plays without them.
@@ -697,7 +1058,7 @@ pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_see
 /// Build the ball on its own so it can be drawn in flight.
 pub fn ball_mesh(center: Vec3) -> Mesh {
     let mut mesh = Mesh::new();
-    mesh.sphere(center, Vec3::new(0.1, 0.16, 0.12), 5, 8, Rgb::hex(0x6B3B1E));
+    mesh.sphere(center, Vec3::new(0.1, 0.16, 0.12), 5, 9, Rgb::hex(0x6B3B1E));
     mesh.sphere(
         center + Vec3::new(0.0, 0.0, 0.13),
         Vec3::new(0.02, 0.02, 0.01),
@@ -770,7 +1131,8 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Moves have to happen to the body, not only to a line of text.
+    // The figure has to be a body: shoulders over a waist, a head that
+    // fits the shoulders, and cloth that is round rather than boxy.
     // ---------------------------------------------------------------
 
     fn figure(motion: Option<Kind>, progress: f32) -> Mesh {
@@ -800,6 +1162,110 @@ mod tests {
             }
         }
         b
+    }
+
+    /// Widest lateral reach of the figure inside a height band.
+    fn width_between(mesh: &Mesh, z0: f32, z1: f32) -> f32 {
+        let mut w = 0.0f32;
+        for t in &mesh.tris {
+            for p in [t.a, t.b, t.c] {
+                if p.z >= z0 && p.z <= z1 {
+                    w = w.max(p.y.abs());
+                }
+            }
+        }
+        w
+    }
+
+    /// A torso is not a crate. The chest has to be wider than the waist, the
+    /// shoulders wider than both, and the head narrower than all of it.
+    #[test]
+    fn the_figure_has_shoulders_a_waist_and_a_head_that_fits() {
+        let mesh = figure(None, 0.0);
+        let (_, _, _, _, z_min, z_max) = bounds(&mesh);
+        let h = z_max - z_min;
+        let waist = width_between(&mesh, z_min + h * 0.50, z_min + h * 0.58);
+        let chest = width_between(&mesh, z_min + h * 0.68, z_min + h * 0.76);
+        let shoulders = width_between(&mesh, z_min + h * 0.80, z_min + h * 0.86);
+        let head = width_between(&mesh, z_min + h * 0.93, z_max);
+        assert!(waist > 0.10, "no body at the waist: {waist:.3}");
+        assert!(
+            chest > waist * 0.98,
+            "the chest has to be at least as wide as the waist: {chest:.3} vs {waist:.3}"
+        );
+        assert!(
+            shoulders > waist * 1.15,
+            "shoulders should overhang the waist: {shoulders:.3} vs {waist:.3}"
+        );
+        assert!(
+            head < shoulders * 0.72,
+            "the head is too big for the shoulders: {head:.3} vs {shoulders:.3}"
+        );
+    }
+
+    /// Skin a body through a dozen sides and the silhouette is round: a slice
+    /// across the chest has to hold a spread of depths, not two faces.
+    #[test]
+    fn the_torso_is_round_rather_than_boxy() {
+        let mesh = figure(None, 0.0);
+        let (_, _, _, _, z_min, z_max) = bounds(&mesh);
+        let h = z_max - z_min;
+        let band = (z_min + h * 0.70, z_min + h * 0.74);
+        let mut depths: Vec<f32> = mesh
+            .tris
+            .iter()
+            .flat_map(|t| [t.a, t.b, t.c])
+            .filter(|p| p.z >= band.0 && p.z <= band.1)
+            .map(|p| p.x)
+            .collect();
+        depths.sort_by(f32::total_cmp);
+        depths.dedup_by(|a, b| (*a - *b).abs() < 1e-3);
+        // A crate has two depths across the chest. A lofted body has a front, a
+        // back and a curve of depths between them on each side.
+        assert!(
+            depths.len() >= 6,
+            "the chest only has {} distinct depths: {depths:?}",
+            depths.len()
+        );
+    }
+
+    /// The jersey wears its number. Read the back of a jersey and there should be
+    /// paint where the digits go, in the readable colour, and none where they do
+    /// not.
+    #[test]
+    fn the_jersey_carries_a_number() {
+        let teams = a7fl_core::team::league_teams();
+        let player = &teams[0].roster[0];
+        let uniform = &teams[0].home;
+        let pose = Pose { run_phase: 0.3, speed: 0.7, ..Default::default() };
+        let mesh = build_mesh(player, uniform, &pose, 0);
+        let paint = uniform.readable_number_color();
+        let painted = mesh
+            .tris
+            .iter()
+            .filter(|t| t.color == paint && t.shade > 1.2)
+            .count();
+        let want = format!("{:02}", player.number)
+            .bytes()
+            .map(|c| digit(c).iter().map(|row| row.count_ones()).sum::<u32>())
+            .sum::<u32>() as usize;
+        // Front and back, one patch per lit pixel of the digits.
+        assert!(
+            painted >= want * 2,
+            "the number {:#02} only put {painted} patches on the cloth, wanted {}",
+            player.number,
+            want * 2
+        );
+    }
+
+    /// The figure is rebuilt for every man on every frame, so it cannot grow into
+    /// something a software rasteriser cannot afford.
+    #[test]
+    fn the_figure_stays_within_a_triangle_budget() {
+        let mesh = figure(None, 0.0);
+        let tris = mesh.tris.len();
+        assert!(tris > 400, "the figure is still made of a few boxes: {tris} tris");
+        assert!(tris < 1400, "the figure is too heavy to draw seven times a frame: {tris} tris");
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::fieldtex;
 use crate::hud::{self, Banner, INK};
 use crate::players::{self, Pose};
 use crate::raster::{Frame, Texture};
-use crate::scene::{Camera, Mesh, SceneRenderer};
+use crate::scene::{Camera, Lighting, Mesh, SceneRenderer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CameraMode {
@@ -114,8 +114,9 @@ impl Broadcast {
     pub fn new(w: usize, h: usize, teams: [Team; 2]) -> Self {
         let field = fieldtex::build_field_texture(&teams[0], &teams[1]);
         let uniforms = [teams[0].home, teams[1].away];
-        let scene = SceneRenderer::new(w, h, 46f32.to_radians());
-        let stands = build_stands(&teams);
+        let mut scene = SceneRenderer::new(w, h, 46f32.to_radians());
+        scene.lighting = stadium_lighting();
+        let stands = build_stadium(&teams);
         Broadcast { w, h, field, scene, teams, uniforms, stands, focus: Focus::default() }
     }
 
@@ -495,7 +496,11 @@ impl Broadcast {
                 motion: p.motion,
                 motion_progress: p.motion_progress,
             };
-            let mut mesh = players::build_mesh(roster, uniform, &pose, p.roster as u32);
+            // A man a long way from the lens is built cheaply: at that size the
+            // eyes and the quadriceps are less than a pixel each.
+            let dist = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
+            let detail = players::Detail::for_distance(dist);
+            let mut mesh = players::build_mesh_at(roster, uniform, &pose, p.roster as u32, detail);
             mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
             self.scene.draw_mesh(frame, &mesh, camera);
         }
@@ -546,13 +551,24 @@ impl Broadcast {
     }
 
     fn paint_environment(&mut self, frame: &mut Frame, camera: &Camera) {
-        // Sky gradient: night game under the lights.
-        let top = Rgb::hex(0x0B1520);
-        let bottom = Rgb::hex(0x4C6274);
-        frame.gradient_rect(0, 0, frame.w as i32, frame.h as i32, top, bottom);
+        // Sky gradient: night game under the lights, with the sodium glow of the
+        // city sitting on the horizon behind the far stand.
+        let top = Rgb::hex(0x0A1428);
+        let mid = Rgb::hex(0x20364E);
+        let horizon = Rgb::hex(0x7E8F96);
+        let h = frame.h.max(1) as f32;
+        for row in 0..frame.h as i32 {
+            let t = row as f32 / h;
+            let c = if t < 0.55 {
+                top.lerp(mid, t / 0.55)
+            } else {
+                mid.lerp(horizon, (t - 0.55) / 0.45)
+            };
+            frame.fill_rect(0, row, frame.w as i32, 1, c);
+        }
 
         let (x0, x1, y0, y1) = fieldtex::coverage();
-        self.scene.draw_ground(frame, &self.field, camera, x0, x1, y0, y1, 2.5);
+        self.scene.draw_ground(frame, &self.field, camera, x0, x1, y0, y1, 2.2);
         self.scene.draw_mesh(frame, &self.stands, camera);
     }
 
@@ -644,9 +660,12 @@ impl Broadcast {
         cam
     }
 
-    /// Rebuild the projector for the camera's field of view.
+    /// Rebuild the projector for the camera's field of view. The lights belong to
+    /// the building, not to the lens, so they survive every cut.
     pub fn sync_lens(&mut self, camera: &Camera) {
+        let lighting = self.scene.lighting;
         self.scene = SceneRenderer::new(self.w, self.h, camera.fov);
+        self.scene.lighting = lighting;
     }
 }
 
@@ -655,55 +674,325 @@ pub fn role_label(role: OffRole) -> &'static str {
     role.label()
 }
 
-fn build_stands(teams: &[Team; 2]) -> Mesh {
+/// The lights of a night game: a warm key from above the far stand, a green
+/// bounce off the turf, and enough edge light to draw the silhouette of a man
+/// against the crowd.
+fn stadium_lighting() -> Lighting {
+    Lighting {
+        sun: Vec3::new(-0.30, 0.26, 0.92).normalize_or_zero(),
+        ambient: 0.46,
+        fog: Rgb::hex(0x9DB2C4),
+        fog_density: 0.008,
+        bounce: Vec3::new(0.05, 0.0, -1.0).normalize_or_zero(),
+        bounce_strength: 0.13,
+        rim: 0.20,
+    }
+}
+
+/// Paint lettering onto a flat surface of the stadium: the scoreboard and the
+/// fascia read as a real building rather than a grey slab if they carry a word.
+fn paint_word(
+    mesh: &mut Mesh,
+    text: &str,
+    origin: Vec3,
+    right: Vec3,
+    up: Vec3,
+    cell: f32,
+    color: Rgb,
+) {
+    let mut cursor = 0.0f32;
+    for ch in text.chars() {
+        if ch == ' ' {
+            cursor += 4.0;
+            continue;
+        }
+        let rows = crate::font::glyph(ch);
+        for (row, bits) in rows.iter().enumerate() {
+            for col in 0..5u8 {
+                if bits & (1 << (4 - col)) == 0 {
+                    continue;
+                }
+                let p = origin
+                    + right * ((cursor + col as f32) * cell)
+                    + up * ((6.0 - row as f32) * cell);
+                mesh.quad_shaded(
+                    p,
+                    p + right * (cell * 0.92),
+                    p + right * (cell * 0.92) + up * (cell * 0.92),
+                    p + up * (cell * 0.92),
+                    color,
+                    1.5,
+                );
+            }
+        }
+        cursor += 6.0;
+    }
+}
+
+/// The building around the field: a run-off apron, advertising boards, a bowl of
+/// seating with a crowd in it, a stand behind each end zone, a roof over the far
+/// side, a scoreboard and four banks of lights.
+///
+/// Heights are kept well under the broadcast lens, which sits eight yards above
+/// the top row: the building has to be in the picture without ever getting
+/// between the camera and the ball.
+fn build_stadium(teams: &[Team; 2]) -> Mesh {
     let mut mesh = Mesh::new();
-    // Advertising boards along both sidelines.
-    let mut x = -12.0f32;
+    let mut seed = 0x1F35_1A7Bu32;
+    let mut rand = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed >> 8) as f32 / 16_777_215.0
+    };
+
+    let crowd_colors = [
+        teams[0].primary,
+        teams[1].primary,
+        Rgb::hex(0xD8DDE4),
+        Rgb::hex(0x49566A),
+        Rgb::hex(0x27303C),
+        Rgb::hex(0x8C4B3B),
+    ];
+    let concrete = Rgb::hex(0x3A4450);
+    let wall = Rgb::hex(0x252D38);
+    let steel = Rgb::hex(0x1B222C);
+    let x0 = -14.0f32;
+    let x1 = 114.0f32;
+
+    // Run-off apron: the strip of ground between the paint and the wall.
+    for side in [-1.0f32, 1.0] {
+        mesh.quad(
+            Vec3::new(x0, side * FIELD_HALF_WIDTH, 0.004),
+            Vec3::new(x1, side * FIELD_HALF_WIDTH, 0.004),
+            Vec3::new(x1, side * (FIELD_HALF_WIDTH + 2.6), 0.004),
+            Vec3::new(x0, side * (FIELD_HALF_WIDTH + 2.6), 0.004),
+            Rgb::hex(0x35503C),
+        );
+    }
+
+    // Advertising boards along both sidelines, with a white rail on top.
+    let mut x = x0;
     let mut i = 0;
-    while x < 112.0 {
+    while x < x1 {
         let color = match i % 3 {
             0 => teams[0].primary,
             1 => teams[1].primary,
             _ => Rgb::hex(0xE8EAE2),
         };
         for side in [-1.0f32, 1.0] {
-            let y = side * (FIELD_HALF_WIDTH + 0.9);
+            let y = side * (FIELD_HALF_WIDTH + 0.55);
             mesh.quad(
                 Vec3::new(x, y, 0.0),
                 Vec3::new(x + 5.7, y, 0.0),
-                Vec3::new(x + 5.7, y, 1.15),
-                Vec3::new(x, y, 1.15),
+                Vec3::new(x + 5.7, y, 1.05),
+                Vec3::new(x, y, 1.05),
                 color,
+            );
+            mesh.quad(
+                Vec3::new(x, y, 1.05),
+                Vec3::new(x + 5.7, y, 1.05),
+                Vec3::new(x + 5.7, y, 1.18),
+                Vec3::new(x, y, 1.18),
+                Rgb::hex(0xE8EAE2),
             );
         }
         x += 6.0;
         i += 1;
     }
-    // Bleachers: stepped rows climbing away from the field.
-    for side in [-1.0f32, 1.0] {
-        for row in 0..7 {
-            let y = side * (FIELD_HALF_WIDTH + 3.0 + row as f32 * 1.6);
-            let z = 1.3 + row as f32 * 0.95;
-            let shade = Rgb::hex(0x2A3440).scale(1.0 - row as f32 * 0.05);
+
+    // ------------------------------------------------------------------
+    // The bowl. One tier on each sideline: a concrete riser and a tread per
+    // row, with a crowd standing on the tread. Runs of people are drawn as one
+    // block each so a full house costs a couple of thousand triangles, not tens
+    // of thousands.
+    // ------------------------------------------------------------------
+    let rows = 7;
+    let tread = 1.30f32;
+    let riser = 0.62f32;
+    let mut z = 1.18f32;
+    let mut y_front = FIELD_HALF_WIDTH + 2.2;
+    for row in 0..rows {
+        let z_top = z + riser;
+        let y_back = y_front + tread;
+        let tone = concrete.scale(1.0 - row as f32 * 0.012);
+        for side in [-1.0f32, 1.0] {
+            // Riser, then the tread behind it.
             mesh.quad(
-                Vec3::new(-12.0, y, z - 0.95),
-                Vec3::new(112.0, y, z - 0.95),
-                Vec3::new(112.0, y, z),
-                Vec3::new(-12.0, y, z),
-                shade,
+                Vec3::new(x0, side * y_front, z),
+                Vec3::new(x1, side * y_front, z),
+                Vec3::new(x1, side * y_front, z_top),
+                Vec3::new(x0, side * y_front, z_top),
+                tone,
             );
-            if row % 2 == 0 {
-                let crowd = Rgb::hex(0x3B4656).scale(1.0 + row as f32 * 0.02);
+            mesh.quad(
+                Vec3::new(x0, side * y_front, z_top),
+                Vec3::new(x1, side * y_front, z_top),
+                Vec3::new(x1, side * y_back, z_top),
+                Vec3::new(x0, side * y_back, z_top),
+                tone.scale(0.92),
+            );
+            // The crowd: blocks of people shoulder to shoulder on the tread.
+            let mut px_i = x0;
+            while px_i < x1 {
+                let len = 2.0 + rand() * 1.4;
+                let color = crowd_colors[(rand() * crowd_colors.len() as f32) as usize
+                    % crowd_colors.len()];
+                let height = 0.52 + rand() * 0.16;
+                let y_crowd = (y_front + 0.30 + rand() * 0.25) * side;
                 mesh.quad(
-                    Vec3::new(-12.0, y, z - 1.4),
-                    Vec3::new(112.0, y, z - 1.4),
-                    Vec3::new(112.0, y, z - 0.95),
-                    Vec3::new(-12.0, y, z - 0.95),
-                    crowd,
+                    Vec3::new(px_i, y_crowd, z_top),
+                    Vec3::new(px_i + len, y_crowd, z_top),
+                    Vec3::new(px_i + len, y_crowd, z_top + height),
+                    Vec3::new(px_i, y_crowd, z_top + height),
+                    color.scale(0.85 + rand() * 0.25),
+                );
+                px_i += len + 0.22;
+            }
+        }
+        z = z_top;
+        y_front = y_back;
+    }
+
+    // Back wall and, over the far side only, a roof with a coloured fascia: the
+    // near side stays open so the camera can see over it.
+    for side in [-1.0f32, 1.0] {
+        let y = side * (y_front + 0.3);
+        mesh.quad(
+            Vec3::new(x0, y, 0.0),
+            Vec3::new(x1, y, 0.0),
+            Vec3::new(x1, y, z + 1.1),
+            Vec3::new(x0, y, z + 1.1),
+            wall,
+        );
+    }
+    let y_roof_back = -(y_front + 0.35);
+    let y_roof_front = -(FIELD_HALF_WIDTH + 3.0);
+    mesh.quad(
+        Vec3::new(x0, y_roof_back, z + 1.9),
+        Vec3::new(x1, y_roof_back, z + 1.9),
+        Vec3::new(x1, y_roof_front, z + 2.2),
+        Vec3::new(x0, y_roof_front, z + 2.2),
+        steel,
+    );
+    mesh.quad(
+        Vec3::new(x0, y_roof_front, z + 1.5),
+        Vec3::new(x1, y_roof_front, z + 1.5),
+        Vec3::new(x1, y_roof_front, z + 2.25),
+        Vec3::new(x0, y_roof_front, z + 2.25),
+        teams[0].primary,
+    );
+
+    // ------------------------------------------------------------------
+    // End stands, so the end-zone and overhead shots are not looking at the
+    // back of an empty field.
+    // ------------------------------------------------------------------
+    for end in [0, 1] {
+        let dir = if end == 0 { -1.0f32 } else { 1.0 };
+        let face = if end == 0 { x0 } else { x1 };
+        let mut z = 0.7f32;
+        let mut depth = if end == 0 { 3.0 } else { 3.0 };
+        for row in 0..4 {
+            let z_top = z + 0.50;
+            let x_in = face - dir * depth;
+            let x_out = x_in - dir * 1.1;
+            let tone = concrete.scale(1.0 - row as f32 * 0.02);
+            mesh.quad(
+                Vec3::new(x_in, -26.0, z),
+                Vec3::new(x_in, 26.0, z),
+                Vec3::new(x_in, 26.0, z_top),
+                Vec3::new(x_in, -26.0, z_top),
+                tone,
+            );
+            mesh.quad(
+                Vec3::new(x_in, -26.0, z_top),
+                Vec3::new(x_in, 26.0, z_top),
+                Vec3::new(x_out, 26.0, z_top),
+                Vec3::new(x_out, -26.0, z_top),
+                tone.scale(0.92),
+            );
+            let mut py = -26.0f32;
+            while py < 26.0 {
+                let len = 2.2 + rand() * 1.2;
+                let color = crowd_colors[(rand() * crowd_colors.len() as f32) as usize
+                    % crowd_colors.len()];
+                let height = 0.50 + rand() * 0.14;
+                let xc = x_in - dir * (0.28 + rand() * 0.2);
+                mesh.quad(
+                    Vec3::new(xc, py, z_top),
+                    Vec3::new(xc, py + len, z_top),
+                    Vec3::new(xc, py + len, z_top + height),
+                    Vec3::new(xc, py, z_top + height),
+                    color.scale(0.85 + rand() * 0.25),
+                );
+                py += len + 0.2;
+            }
+            z = z_top;
+            depth += 1.1;
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Scoreboard behind the left end zone, with the league mark on it.
+    // ------------------------------------------------------------------
+    mesh.box_shaded(
+        Vec3::new(-23.5, 0.0, 8.4),
+        Vec3::new(0.45, 9.0, 3.8),
+        0.0,
+        steel,
+        1.0,
+    );
+    // Stand the lettering a quarter of a yard proud of the panel: a face that is
+    // only a hair in front of a board z-fights with it and the words smear.
+    let board_face = -22.78f32;
+    // Centre a word on the board rather than hanging it off one corner.
+    let centred = |text: &str, cell: f32, z: f32, color: Rgb, mesh: &mut Mesh| {
+        let cols = text.chars().count() as f32 * 6.0 - 1.0;
+        let width = cols * cell;
+        paint_word(
+            mesh,
+            text,
+            Vec3::new(board_face, width * 0.5, z),
+            // The face points +x, and in this lens screen-right for that face is
+            // -y: letters run backwards if they are painted the other way.
+            Vec3::new(0.0, -1.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            cell,
+            color,
+        );
+    };
+    centred("A7FL", 0.55, 8.8, Rgb::hex(0xE8EAE2), &mut mesh);
+    centred("NO PADS", 0.26, 6.5, teams[0].accent, &mut mesh);
+
+    // ------------------------------------------------------------------
+    // Four banks of lights, out at the corners of the site.
+    // ------------------------------------------------------------------
+    for (px, py) in [(-18.0f32, -28.0f32), (-18.0, 28.0), (118.0, -28.0), (118.0, 28.0)] {
+        let base = Vec3::new(px, py, 0.0);
+        let top = Vec3::new(px, py, 23.0);
+        mesh.cylinder(base, top, 0.22, 0.16, 6, steel);
+        // Lamp bank facing the middle of the field.
+        let to_field = Vec3::new(50.0 - px, -py, 0.0).normalize_or_zero();
+        let side_dir = Vec3::new(-to_field.y, to_field.x, 0.0);
+        for lr in 0..3 {
+            for lc in 0..4 {
+                let c = top
+                    + Vec3::new(0.0, 0.0, 0.6 + lr as f32 * 0.55)
+                    + side_dir * ((lc as f32 - 1.5) * 0.62);
+                let hw = side_dir * 0.24;
+                let hv = Vec3::new(0.0, 0.0, 0.22);
+                mesh.quad_shaded(
+                    c - hw - hv,
+                    c + hw - hv,
+                    c + hw + hv,
+                    c - hw + hv,
+                    Rgb::hex(0xFFF6D8),
+                    1.9,
                 );
             }
         }
     }
+
     mesh
 }
 

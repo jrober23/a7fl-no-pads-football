@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.11.2-windows-x86_64.zip` from the
+Grab `a7fl-v0.12.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -277,19 +277,42 @@ and manages timeouts and clock.
 ### Presentation
 
 The renderer is a small software 3D pipeline (`a7fl_render`): z-buffered,
-perspective-correct textured triangles, near-plane clipping, directional lighting,
-distance fog, soft ground shadows, a painted turf texture with mow stripes, yard
-numbers, hashes and end-zone paint, a stadium with ad boards and stepped
-bleachers, and five camera setups — high sideline broadcast, behind the
+perspective-correct textured triangles, near-plane clipping, distance fog and soft
+ground shadows, plus five camera setups — high sideline broadcast, behind the
 quarterback, sky cam, low replay and end zone.
+
+The lighting is deliberately cartoon: the diffuse term is quantised onto three
+tones with a narrow blend at each terminator, a green bounce comes back up off the
+turf, and an edge light wraps the silhouette. Broad soft steps read as a painted
+figure at 640x360, where a full grey ramp reads as a low-poly model.
+
+The turf is painted at sixteen pixels per yard — mown stripes with feathered mow
+edges, yard lines and hashes, painted numbers, coaching boxes, end-zone wordmarks
+and the midfield mark — and the ground pass samples it across the whole field.
+
+Around it stands a stadium: a run-off apron, advertising boards, a bowl of seating
+with a crowd in team colours, a stand behind each end zone, a roof over the far
+side, a scoreboard carrying the league mark and four banks of lights, all placed
+under the height of the broadcast lens so the building is in the picture without
+ever getting between the camera and the ball.
 
 The overlay is 2K5-flavoured: a score bug with possession highlight and timeout
 pips, a down-and-distance card with play clock bar, the A7FL badge, a lower-third
 ticker carrying the play-by-play line, big TOUCHDOWN / TURNOVER / SACK / FLAG
 banners, and a full-screen post-game stats panel.
 
-Players are built from primitives at runtime from their attributes and appearance
-(skin tone, hair, beard, build) so the seven on the field match the roster.
+Players are built at runtime from their attributes and appearance (skin tone,
+hair, beard, build) so the seven on the field match the roster. The body is a
+skeleton of lofted, rounded cross-sections rather than a stack of boxes: a chest
+that tapers into a waist over a seat, quadriceps that swell above the knee, calves
+that fill a sock, deltoids that overhang the ribcage — and the jersey carries its
+number, painted onto the cloth front and back, so the man wearing 23 is the man
+wearing 23.
+
+Each figure is built at one of three detail levels chosen by its distance from the
+lens, so a man on the far hash is not paying for eyes, a bicep and forty digit
+patches that would each be a pixel and a half wide. Full detail costs about seven
+hundred triangles; fourteen figures a frame is not something to spend freely.
 
 `film` renders six stills and a 44-frame GIF: a throw-off, a pre-snap look, a pass
 in flight from the broadcast camera, a scoring play, a turnover, the final stats
@@ -330,8 +353,10 @@ simulation can be unit tested (39 tests) without touching the renderer.
 
 - **It is a stylised renderer, not 2K5.** The presentation vocabulary — camera
   work, score bug, ticker, banners, stats panel — is modelled on 2K5, but the
-  geometry, animation and lighting are primitive: no motion capture, no facial
-  animation, no broadcast-quality commentary, and no licensed assets or marks.
+  geometry is hand-built rather than scanned: figures are flat-shaded triangle
+  bodies with painted-on faces, no motion capture, no skinning, no facial
+  animation, no broadcast-quality commentary, and no licensed assets or marks. It
+  is a full-figure, cel-shaded cartoon look, not a photograph of a football game.
 - **No audio, franchise mode, drafting or online play.** `arcade` is one player
   against the CPU; the renderer writes images and ANSI blocks, it does not open a
   window.
