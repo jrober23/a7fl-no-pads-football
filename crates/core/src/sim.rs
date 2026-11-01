@@ -253,6 +253,12 @@ pub struct PlaySim<'a> {
     throw_away: bool,
     pass_caught: bool,
     possession_start: Option<usize>,
+    /// A flag on the field. A live-ball foul does not stop anything: the play runs
+    /// out and the ball is walked off once it is dead, so this rides along until
+    /// the result is built.
+    pub flag: Option<PenaltyCall>,
+    /// Sim time the flag came in, so the picture can pulse it.
+    pub flag_at: f32,
 }
 
 fn roster_of<'t>(team: &'t Team, idx: usize) -> &'t crate::team::Player {
@@ -359,6 +365,8 @@ impl<'a> PlaySim<'a> {
             throw_away: false,
             pass_caught: false,
             possession_start: None,
+            flag: None,
+            flag_at: 0.0,
         };
         sim.ball.pos = sim.players[0].pos;
         sim.build_routes();
@@ -1536,7 +1544,6 @@ impl<'a> PlaySim<'a> {
                     let mut call = PenaltyCall::new(PenaltyKind::Holding, self.players[i].pos.x);
                     call.player = Some(self.roster_index(i));
                     self.penalty(call);
-                    return;
                 }
             }
 
@@ -1545,7 +1552,6 @@ impl<'a> PlaySim<'a> {
                 let mut call = PenaltyCall::new(PenaltyKind::IllegalBlockInTheBack, self.players[i].pos.x);
                 call.player = Some(self.roster_index(i));
                 self.penalty(call);
-                return;
             }
         }
     }
@@ -1649,7 +1655,6 @@ impl<'a> PlaySim<'a> {
                 let mut call = PenaltyCall::new(PenaltyKind::Unsportsmanlike, spot);
                 call.player = Some(tackler_roster);
                 self.penalty(call);
-                return;
             }
             if fumbled {
                 self.fumble(carrier, d);
@@ -1792,7 +1797,6 @@ impl<'a> PlaySim<'a> {
                     let mut call = PenaltyCall::new(PenaltyKind::DefensivePassInterference, landing.x);
                     call.player = Some(self.roster_index(d));
                     self.penalty(call);
-                    return;
                 }
             }
             let _ = t;
@@ -1885,13 +1889,27 @@ impl<'a> PlaySim<'a> {
     // Finishing
     // -----------------------------------------------------------------
 
+    /// A flag on the field.
+    ///
+    /// The play keeps going. A7FL fouls are walked off after the ball is dead, and
+    /// stopping the snap on the whistle turned every hold into a play that never
+    /// happened: the runner had nowhere to go, the pass was never thrown, and the
+    /// yardage screen came up over a frozen picture. The flag stays on the field and
+    /// is attached to whatever the play turns into.
     fn penalty(&mut self, call: PenaltyCall) {
-        let outcome = PlayOutcome::Penalty;
-        let desc = format!("Flag on the play: {}.", call.kind.label().to_lowercase());
-        let spot = self.los;
-        let mut result = self.finish(outcome, spot, desc);
-        result.penalty = Some(call);
-        self.result = Some(result);
+        if self.flag.is_some() {
+            // One flag per play: a second foul is not worth a second walk-off.
+            return;
+        }
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!(
+                "Yellow flag on the field: {}.",
+                call.kind.label().to_lowercase()
+            ),
+        });
+        self.flag = Some(call);
+        self.flag_at = self.t;
     }
 
     fn finish(&mut self, outcome: PlayOutcome, end_spot: f32, description: String) -> PlayResult {
@@ -1917,7 +1935,7 @@ impl<'a> PlaySim<'a> {
             out_of_bounds: false,
             sack: outcome == PlayOutcome::Sack,
             air_yards: 0.0,
-            penalty: None,
+            penalty: self.flag.take(),
             passer: None,
             receiver: None,
             carrier: self.carrier.map(|i| self.roster_index(i)),
@@ -2156,5 +2174,63 @@ mod tests {
             }
         }
         assert!(scores > 0, "nobody ever scored from the 3");
+    }
+
+    #[test]
+    fn a_flag_does_not_stop_the_play_and_rides_on_the_result() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let setup = setup(40.0, 1, 10.0, 11);
+        let mut sim = PlaySim::new(&off, &def_, &book[0], &d[0], &setup);
+        for _ in 0..30 {
+            sim.step(1.0 / 60.0);
+        }
+
+        sim.penalty(PenaltyCall::new(PenaltyKind::Holding, 42.0));
+        assert!(sim.result.is_none(), "the flag killed the play on the spot");
+        assert_eq!(
+            sim.flag.as_ref().map(|c| c.kind),
+            Some(PenaltyKind::Holding),
+            "the flag never went down"
+        );
+
+        // A second flag does not replace the first one.
+        sim.penalty(PenaltyCall::new(PenaltyKind::Clipping, 44.0));
+        assert_eq!(
+            sim.flag.as_ref().map(|c| c.kind),
+            Some(PenaltyKind::Holding)
+        );
+
+        let r = sim.run_to_completion();
+        assert_eq!(
+            r.penalty.as_ref().map(|c| c.kind),
+            Some(PenaltyKind::Holding),
+            "the flag never reached the dead-ball result"
+        );
+        assert_ne!(r.outcome, PlayOutcome::Penalty, "the play was cut short");
+        assert!(sim.flag.is_none(), "the flag stayed down after the play");
+    }
+
+    #[test]
+    fn a_flagged_play_still_moves_the_ball_and_finishes() {
+        // Nothing in the sim may hang waiting for a play that a flag used to end.
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        for seed in 0..40u64 {
+            let play = &book[(seed as usize) % book.len()];
+            let dcall = &d[(seed as usize * 3) % d.len()];
+            let setup = setup(45.0, 2, 6.0, seed);
+            let mut sim = PlaySim::new(&off, &def_, play, dcall, &setup);
+            for _ in 0..20 {
+                sim.step(1.0 / 60.0);
+            }
+            sim.penalty(PenaltyCall::new(PenaltyKind::Holding, 46.0));
+            let r = sim.run_to_completion();
+            assert!(r.penalty.is_some());
+            assert!(r.end_spot.is_finite() && r.elapsed.is_finite());
+            assert!(r.end_spot >= -10.0 && r.end_spot <= 110.0, "spot {}", r.end_spot);
+        }
     }
 }

@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.12.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.12.2-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -172,6 +172,14 @@ the stick — sideways or up and down, whichever way the list runs — with the
 highlighted line in the call sheet's accent, and A takes the answer. Conversions are
 then called and played like any other snap. In terminal mode the picture is sized
 from `COLUMNS` and `LINES`, so it adapts to whatever terminal you run it in.
+
+The flag itself does not stop the play. It goes down where the foul happened — a
+yellow pennant standing on the turf, the call in the corner of the picture and a line
+in the bar — and the snap runs out from there: the run still goes for what it goes
+for, the throw is still thrown and can still be caught or picked. The walk-off comes
+after the whistle, on its own card: what was called, who it was on, the yards, and
+the ball and down it leaves behind. A flag on a play that scored is declined; the
+points stand.
 
 ### Running with it
 

@@ -11,11 +11,11 @@ use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
 use a7fl_core::ai;
-use a7fl_core::game::{Action, GamePhase, GameState};
+use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
 use a7fl_core::math::{Rng, Vec2, Vec3};
 use a7fl_core::moves::Kind;
 use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
-use a7fl_core::rules::THROW_OFF_MIN_AIR_YARDS;
+use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use a7fl_core::sim::{PlaySim, QbControl};
 use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
@@ -723,8 +723,16 @@ impl Arcade {
         });
 
         if let Some(record) = record {
-            let text = record.description().to_string();
-            self.show_result(&text, None);
+            match &record {
+                // A flag gets its own card, read out once the ball is dead.
+                PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
+                    self.penalty_card(r);
+                }
+                _ => {
+                    let text = record.description().to_string();
+                    self.show_result(&text, None);
+                }
+            }
         }
     }
 
@@ -766,6 +774,71 @@ impl Arcade {
             self.game.down_and_distance(),
             a7fl_core::field::ball_on_label(self.game.yards_to_goal())
         )
+    }
+
+    /// The flag, read out after the play: what was called, on whom, how far it
+    /// walked and the down it leaves behind. The picture carried the flag itself
+    /// while the snap ran.
+    fn penalty_card(&mut self, record: &ScrimmageRecord) {
+        let Some(call) = record.result.penalty.clone() else {
+            return;
+        };
+        let team = match call.against {
+            FoulTeam::Offense => record.setup.offense_team,
+            FoulTeam::Defense => record.setup.defense_team,
+        };
+        let side = match call.against {
+            FoulTeam::Offense => "OFFENSE",
+            FoulTeam::Defense => "DEFENSE",
+        };
+        let who = call
+            .player
+            .and_then(|i| self.game.teams[team].roster.get(i))
+            .map(|p| p.last_name().to_string());
+        let from = a7fl_core::field::yards_to_goal(record.setup.los, record.setup.direction);
+        let mut lines = vec![
+            self.header(),
+            String::new(),
+            "  FLAG".to_string(),
+            String::new(),
+            format!(
+                "  {} - {} - {}",
+                call.kind.label().to_uppercase(),
+                self.game.teams[team].abbr,
+                side
+            ),
+        ];
+        if let Some(who) = who {
+            lines.push(format!("  ON {who}"));
+        }
+        lines.push(format!("  {} YARDS WALKED OFF", record.penalty_yards));
+        lines.push(format!(
+            "  BALL MOVED FROM {} TO {}",
+            a7fl_core::field::ball_on_label(from),
+            a7fl_core::field::ball_on_label(self.game.yards_to_goal())
+        ));
+        lines.push(String::new());
+        lines.push(format!("  {}", record.result.description.to_uppercase()));
+        if let Some(sentence) = self.game.commentary.last().cloned() {
+            lines.push(format!("  {sentence}"));
+        }
+        lines.push(String::new());
+        lines.push("  [A] CONTINUE".to_string());
+        if !self.view.page(&lines) {
+            self.quit = true;
+            return;
+        }
+
+        let start = Instant::now();
+        loop {
+            let input = self.wait(Duration::from_millis(24));
+            if input.pressed.a || input.pressed.start {
+                break;
+            }
+            if start.elapsed() >= RESULT_HOLD {
+                break;
+            }
+        }
     }
 
     fn show_result(&mut self, text: &str, points: Option<u32>) {
@@ -1126,6 +1199,18 @@ fn drive(
                 "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] PAUSE",
                 cam_name(view_mode)
             ));
+            // A live-ball foul does not stop anything: the flag is on the ground and
+            // the ball moves when the play is over.
+            if let Some(flag) = &sim.flag {
+                lines.push(format!(
+                    "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
+                    flag.kind.label().to_uppercase(),
+                    match flag.against {
+                        FoulTeam::Offense => "OFFENSE",
+                        FoulTeam::Defense => "DEFENSE",
+                    }
+                ));
+            }
 
             if !view.show(&mut frame, &lines) {
                 return false;

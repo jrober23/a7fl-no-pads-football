@@ -468,11 +468,45 @@ impl Broadcast {
         self.paint_environment(&mut frame, &camera);
         self.paint_lines(&mut frame, &camera, sim.los, sim.setup.direction, sim.setup.to_go);
         self.draw_bodies(&mut frame, &camera, &players);
+        if let Some(flag) = &sim.flag {
+            self.paint_flag(&mut frame, &camera, flag, sim.t - sim.flag_at);
+        }
         if sim.ball.flight.is_some() || sim.ball.holder.is_none() {
             let ball = players::ball_mesh(Vec3::new(ball_pos.x, ball_pos.y, ball_z.max(0.2)));
             self.scene.draw_mesh(&mut frame, &ball, &camera);
         }
         (frame, camera)
+    }
+
+    /// The flag itself, on the turf where the foul happened, plus a caption on the
+    /// picture. A live-ball foul does not stop the play, so all the picture has to do
+    /// is say that one is on the ground and let the snap run.
+    fn paint_flag(
+        &mut self,
+        frame: &mut Frame,
+        camera: &Camera,
+        flag: &a7fl_core::rules::PenaltyCall,
+        since: f32,
+    ) {
+        let pulse = 0.55 + 0.45 * (since * 7.0).sin().abs();
+        let spot = Vec3::new(flag.spot_of_foul, 0.0, 1.0);
+        if let Some((x, y, _)) = self.scene.projector.project(camera.view(spot)) {
+            let (x, y) = (x.round() as i32, y.round() as i32);
+            // A pennant on a stick, standing where the foul happened.
+            frame.line(x, y, x, y - 18, hud::WHITE, 1);
+            for row in 0..9 {
+                let w = 9 - (row / 3) * 2;
+                frame.fill_rect_alpha(x + 1, y - 18 + row, w, 1, hud::YELLOW, pulse);
+            }
+            frame.fill_rect_alpha(x - 8, y - 2, 17, 3, hud::INK, 0.5);
+        }
+
+        let label = format!("FLAG {}", flag.kind.label().to_uppercase());
+        let tw = crate::font::text_width(&label, 2) as i32;
+        let th = crate::font::text_height(2) as i32;
+        let x = frame.w as i32 - tw - 14;
+        frame.fill_rect_alpha(x - 8, 8, tw + 16, th + 8, hud::INK, 0.62);
+        frame.text_shadowed(x, 12, &label, 2, hud::YELLOW, 1);
     }
 
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
@@ -1074,6 +1108,53 @@ mod tests {
         let grass = frame.color.iter().filter(|c| c.g > c.r && c.g > c.b).count();
         let total = frame.w * frame.h;
         assert!(grass > total / 6, "almost no turf in the live frame: {grass}/{total}");
+    }
+
+    /// A foul does not stop the snap any more, so the picture is the only warning
+    /// that one is on the ground: a pennant on the turf and the call in the corner.
+    #[test]
+    fn a_flag_stands_on_the_turf_with_a_caption() {
+        let teams = league_teams();
+        let play = playbook()
+            .into_iter()
+            .find(|p| p.family.is_pass())
+            .expect("a pass play");
+        let def = defensive_playbook()[0].clone();
+        let setup = SnapSetup {
+            los: 45.0,
+            ball_y: 0.0,
+            direction: 1,
+            down: 2,
+            to_go: 7.0,
+            seed: 5,
+            offense_team: 0,
+            defense_team: 1,
+            is_try: false,
+        };
+        let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+        let mut broadcast = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        let clean = broadcast.live_frame(&sim, CameraMode::Broadcast);
+        let amber = |f: &Frame| f.color.iter().filter(|c| **c == hud::YELLOW).count();
+
+        sim.flag = Some(a7fl_core::rules::PenaltyCall::new(
+            a7fl_core::rules::PenaltyKind::Holding,
+            45.0,
+        ));
+        sim.flag_at = sim.t;
+        let flagged = broadcast.live_frame(&sim, CameraMode::Broadcast);
+        assert!(
+            amber(&flagged) > amber(&clean) + 40,
+            "the flag drew {} amber pixels over {} clean",
+            amber(&flagged),
+            amber(&clean)
+        );
+        // The caption is pinned to the top-right corner, clear of the picture's
+        // subject.
+        let caption = (0..40)
+            .flat_map(|y| (380..640).map(move |x| (x, y)))
+            .filter(|(x, y)| flagged.get(*x, *y) == hud::YELLOW)
+            .count();
+        assert!(caption > 20, "no caption on the picture: {caption} amber px");
     }
 
     /// The client turns the stick into world space, so the arcade camera's

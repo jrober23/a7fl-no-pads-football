@@ -577,22 +577,31 @@ impl GameState {
         self.drive.time += between;
 
         if let Some(call) = result.penalty.clone() {
-            let enf = enforce(&call, prev_spot, dir, result.end_spot, prev_down, prev_to_go);
-            self.box_score.add_penalty(offense, enf.yards.round() as u32);
-            record.penalty_yards = enf.yards.round() as u32;
-            self.commentary.push(penalty_sentence(&call, &enf));
-            self.spot = enf.spot;
-            self.down = enf.down;
-            self.to_go = enf.to_go;
-            self.clock_stopped = true;
-            self.box_score.record(offense, &result, false, quarter as usize);
-            if (prev_down == DOWNS && enf.loss_of_down) || self.down > DOWNS {
-                let spot = self.spot;
-                self.end_drive("Turnover on downs");
-                self.start_series(defense, spot);
+            if result.touchdown || result.safety {
+                // The play already put points on the board and a flag does not take
+                // them off again: the foul is noted and declined.
+                self.commentary.push(format!(
+                    "{} on the play, declined - the score stands.",
+                    call.kind.label()
+                ));
+            } else {
+                let enf = enforce(&call, prev_spot, dir, result.end_spot, prev_down, prev_to_go);
+                self.box_score.add_penalty(offense, enf.yards.round() as u32);
+                record.penalty_yards = enf.yards.round() as u32;
+                self.commentary.push(penalty_sentence(&call, &enf));
+                self.spot = enf.spot;
+                self.down = enf.down;
+                self.to_go = enf.to_go;
+                self.clock_stopped = true;
+                self.box_score.record(offense, &result, false, quarter as usize);
+                if (prev_down == DOWNS && enf.loss_of_down) || self.down > DOWNS {
+                    let spot = self.spot;
+                    self.end_drive("Turnover on downs");
+                    self.start_series(defense, spot);
+                }
+                self.advance_clock(result.elapsed, true);
+                return;
             }
-            self.advance_clock(result.elapsed, true);
-            return;
         }
 
         let new_spot = if result.touchdown {
@@ -713,16 +722,23 @@ impl GameState {
         self.box_score.record(offense, &result, false, self.quarter as usize);
 
         if let Some(call) = result.penalty.clone() {
-            // The 1-or-2 decision is locked in even if a penalty is called.
-            let enf = enforce(&call, record.setup.los, self.direction, result.end_spot, 1, self.to_go);
-            self.box_score.add_penalty(offense, enf.yards.round() as u32);
-            self.commentary.push(penalty_sentence(&call, &enf));
-            self.spot = enf.spot;
-            self.down = 1;
-            self.to_go = enf.to_go;
-            self.phase = GamePhase::Conversion { offense, points };
-            self.clock_stopped = true;
-            return;
+            if !result.touchdown {
+                // The 1-or-2 decision is locked in even if a penalty is called.
+                let enf =
+                    enforce(&call, record.setup.los, self.direction, result.end_spot, 1, self.to_go);
+                self.box_score.add_penalty(offense, enf.yards.round() as u32);
+                self.commentary.push(penalty_sentence(&call, &enf));
+                self.spot = enf.spot;
+                self.down = 1;
+                self.to_go = enf.to_go;
+                self.phase = GamePhase::Conversion { offense, points };
+                self.clock_stopped = true;
+                return;
+            }
+            self.commentary.push(format!(
+                "{} on the play, declined - the conversion stands.",
+                call.kind.label()
+            ));
         }
 
         let converted = result.touchdown;
