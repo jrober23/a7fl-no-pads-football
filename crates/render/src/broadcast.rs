@@ -1061,7 +1061,10 @@ fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode) -> Camera {
 fn throw_off_camera(sim: &ThrowOffSim, focus: Vec2, mode: CameraMode) -> Camera {
     // Before the catch the shot belongs to the ball going downfield; after it, to
     // the man running it back, so the lens swings behind whichever is live.
-    let dir = if matches!(sim.phase, ThrowPhase::Return | ThrowPhase::Dead) {
+    let dir = if matches!(
+        sim.phase,
+        ThrowPhase::Loose | ThrowPhase::Return | ThrowPhase::Dead
+    ) {
         sim.setup.receive_direction as f32
     } else {
         sim.setup.throwing_direction() as f32

@@ -585,7 +585,10 @@ impl Arcade {
             // The same screen mapping as a scrimmage snap, pointed the way this
             // shot points: downfield with the throw, then behind the returner once
             // the ball is his.
-            let cam_dir = if matches!(sim.phase, ThrowPhase::Return | ThrowPhase::Dead) {
+            let cam_dir = if matches!(
+                sim.phase,
+                ThrowPhase::Loose | ThrowPhase::Return | ThrowPhase::Dead
+            ) {
                 sim.setup.receive_direction
             } else {
                 sim.setup.throwing_direction()
@@ -1274,6 +1277,7 @@ fn throw_off_line(
             }
         }
         ThrowPhase::Flight => "  THE BALL IS IN THE AIR".to_string(),
+        ThrowPhase::Loose => "  LOOSE BALL - SOMEBODY GET ON IT".to_string(),
         ThrowPhase::Return => format!(
             "  RETURN - {} BALL IN HAND",
             abbr(sim.setup.receiving_team)

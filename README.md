@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.12.2-windows-x86_64.zip` from the
+Grab `a7fl-v0.12.3-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -222,6 +222,14 @@ longer opens in the middle of one. A kickoff card sits in front of the first sna
 the matchup, who is throwing it off and what the pad does, and it waits for A. Back to
 receive, the computer's throw is held a beat longer and the bar counts it in, so the
 ball is never in the air before you have found it.
+
+A throw that breaks the rule is still thrown. Short of the forty, or off the
+sideline, the ball goes up where you aimed it and comes down where it was always
+going to, and only then does the card tell you it was a Run Back — you watch the ball
+leave your hand instead of the picture cutting away from it. A ball nobody catches is
+live: it lies there while the returner and the three gunners get to it, and it is dead
+when somebody falls on it, or down where it lies if nobody does. Only after that does
+the next screen say what the throw-off was worth.
 
 The aim used to run up and down the stick, which in this lens — behind the ball,
 looking downfield — is towards the camera rather than across the field, so the one

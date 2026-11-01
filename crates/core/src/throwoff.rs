@@ -100,6 +100,9 @@ pub struct ThrowOffResult {
 pub enum ThrowPhase {
     Presnap,
     Flight,
+    /// The ball is on the ground with nobody on it: a live ball, played out until
+    /// somebody falls on it.
+    Loose,
     Return,
     Dead,
 }
@@ -142,6 +145,10 @@ pub struct ThrowOffPlan {
 /// The lightest throw the meter can put up: six yards short of the 40 the rule
 /// asks for, so a lazy throw is a Run Back rather than a free 30-yarder.
 const THROW_OFF_LIGHT_AIR: f32 = THROW_OFF_MIN_AIR_YARDS - 6.0;
+
+/// How long a loose ball lies there while everybody converges on it, before the
+/// nearest man is on it and the play is dead.
+const LOOSE_SECONDS: f32 = 1.35;
 
 /// Air yards a throw-off carries at a given weight on the meter. It tops out on
 /// the receiving team's 20 — 45 yards from the 35 — instead of sailing into the
@@ -193,6 +200,11 @@ pub struct ThrowOffSim<'a> {
     /// Sim time the returner took the ball in, so a client can turn its camera
     /// upfield the way a broadcast does.
     catch_t: Option<f32>,
+    /// A rule the throw has already broken, kept back until the ball is dead: the
+    /// throw still flies, so the player sees it leave the hand.
+    violation: Option<(ThrowOffOutcome, String)>,
+    /// Seconds the loose ball has been on the ground.
+    loose_t: f32,
 }
 
 impl<'a> ThrowOffSim<'a> {
@@ -269,6 +281,8 @@ impl<'a> ThrowOffSim<'a> {
             human_dir: Vec2::ZERO,
             human_thrower: false,
             catch_t: None,
+            violation: None,
+            loose_t: 0.0,
         }
     }
 
@@ -361,6 +375,7 @@ impl<'a> ThrowOffSim<'a> {
                 }
             }
             ThrowPhase::Flight => self.update_flight(dt),
+            ThrowPhase::Loose => self.update_loose(dt),
             ThrowPhase::Return => self.update_return(dt),
             ThrowPhase::Dead => {}
         }
@@ -423,39 +438,28 @@ impl<'a> ThrowOffSim<'a> {
     /// the plan, so the marker the client draws and the flight cannot disagree.
     fn release(&mut self, plan: ThrowOffPlan) {
         self.phase = ThrowPhase::Flight;
+        // A throw that breaks a rule is still thrown. Calling it dead on the release
+        // cut the picture away before the ball had left the hand, so the player never
+        // saw the throw he had just made: the walk-off is kept back and read once the
+        // ball is dead.
         if plan.through_endzone {
-            let desc = "The throw-off sails through the back of the end zone. Touchback.".to_string();
-            self.finish(
+            self.violation = Some((
                 ThrowOffOutcome::Touchback,
-                self.setup.receiving_team,
-                self.own_20(),
-                0,
-                None,
-                desc,
-            );
-            return;
-        }
-        if plan.out_of_bounds {
-            self.finish(
+                "The throw-off sails through the back of the end zone. Touchback.".to_string(),
+            ));
+        } else if plan.out_of_bounds {
+            self.violation = Some((
                 ThrowOffOutcome::OutOfBounds,
-                self.setup.receiving_team,
-                self.run_back_spot(),
-                0,
-                None,
                 "The throw-off lands out of bounds. Run Back.".to_string(),
-            );
-            return;
-        }
-        if plan.too_short {
-            self.finish(
+            ));
+        } else if plan.too_short {
+            self.violation = Some((
                 ThrowOffOutcome::RunBack,
-                self.setup.receiving_team,
-                self.run_back_spot(),
-                0,
-                None,
-                "The throw doesn't make 40 yards. Run Back.".to_string(),
-            );
-            return;
+                format!(
+                    "The throw-off travels {:.0} yards in the air, short of the forty the rule asks for. Run Back.",
+                    plan.air
+                ),
+            ));
         }
 
         let landing = plan.landing;
@@ -517,6 +521,20 @@ impl<'a> ThrowOffSim<'a> {
     }
 
     fn resolve_catch(&mut self, landing: Vec2) {
+        // A throw that broke a rule is dead where it comes down, which is the first
+        // moment the play is over.
+        if let Some((outcome, desc)) = self.violation.take() {
+            let spot = match outcome {
+                ThrowOffOutcome::Touchback => self.own_20(),
+                ThrowOffOutcome::RunBack | ThrowOffOutcome::OutOfBounds => self.run_back_spot(),
+                _ => landing.x,
+            };
+            self.ball = landing;
+            self.ball_z = 0.3;
+            self.finish(outcome, self.setup.receiving_team, spot, 0, None, desc);
+            return;
+        }
+
         let dir = self.setup.receive_direction;
         let returner = self.returner();
         let nearest_gunner = (1..4)
@@ -541,19 +559,11 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
-        // Nobody got under it: the ball lands where it lands and is dead there.
+        // Nobody got under it: it is a live ball on the ground, and it stays live
+        // until somebody falls on it.
         let gap = self.players[returner].pos.dist(landing);
         if gap > 2.4 {
-            self.ball = landing;
-            self.ball_z = 0.3;
-            self.finish(
-                ThrowOffOutcome::Downed,
-                self.setup.receiving_team,
-                landing.x,
-                0,
-                None,
-                format!("The throw-off lands untouched, {:.0} yards from the returner.", gap),
-            );
+            self.loose(landing);
             return;
         }
 
@@ -579,26 +589,9 @@ impl<'a> ThrowOffSim<'a> {
         // Catch, muff or strip.
         let catch_p = 0.80 + self.attrs(returner).catch_factor() * 0.18;
         if !self.rng.chance(catch_p) {
-            // Live ball. The throwing team may recover but cannot advance.
-            if self.rng.chance(0.45) {
-                self.finish(
-                    ThrowOffOutcome::RecoveredByK,
-                    self.setup.throwing_team,
-                    landing.x,
-                    0,
-                    None,
-                    "Muffed! The throwing team falls on it.".to_string(),
-                );
-            } else {
-                self.finish(
-                    ThrowOffOutcome::Downed,
-                    self.setup.receiving_team,
-                    landing.x,
-                    0,
-                    None,
-                    "Muffed and recovered by the receiving team.".to_string(),
-                );
-            }
+            // A muff is a live ball: the throwing team may recover it but cannot
+            // advance. It is played out on the ground like any other loose ball.
+            self.loose(landing);
             return;
         }
 
@@ -608,6 +601,65 @@ impl<'a> ThrowOffSim<'a> {
         self.ball = self.players[returner].pos;
         self.ball_z = 1.0;
         self.events.push(format!("{} brings it out", self.name(returner)));
+    }
+
+    /// The ball is down and nobody has it. It is a live ball: the returner and the
+    /// three gunners converge on it, and it is dead when the nearest man gets there.
+    fn loose(&mut self, landing: Vec2) {
+        self.phase = ThrowPhase::Loose;
+        self.ball = landing;
+        self.ball_z = 0.3;
+        self.loose_t = 0.0;
+        self.events.push("Loose ball on the ground!".to_string());
+    }
+
+    fn update_loose(&mut self, dt: f32) {
+        let ball = self.ball;
+        let human = self.human;
+        let push = self.human_dir;
+        for i in 1..self.players.len() {
+            let speed = self.speed(i);
+            let target = if human == Some(i) {
+                self.players[i].pos + push * 4.0
+            } else {
+                ball
+            };
+            self.steer(i, target, speed, dt);
+        }
+        self.loose_t += dt;
+        if self.loose_t < LOOSE_SECONDS {
+            return;
+        }
+
+        // Whoever is closest when the whistle goes is the man on it. A ball nobody
+        // got to is simply down where it lies.
+        let returner = self.returner();
+        let (winner, gap) = (1..self.players.len())
+            .map(|i| (i, self.players[i].pos.dist(ball)))
+            .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or((returner, 99.0));
+        let on_it = gap < 2.0;
+        let throwing_team_has_it = on_it && self.players[winner].team == self.setup.throwing_team;
+        let (outcome, next, desc) = if throwing_team_has_it {
+            (
+                ThrowOffOutcome::RecoveredByK,
+                self.setup.throwing_team,
+                format!("Muffed, and {} falls on it for the throwing team.", self.name(winner)),
+            )
+        } else if on_it {
+            (
+                ThrowOffOutcome::Downed,
+                self.setup.receiving_team,
+                format!("Muffed, and {} falls on it.", self.name(winner)),
+            )
+        } else {
+            (
+                ThrowOffOutcome::Downed,
+                self.setup.receiving_team,
+                "The ball is down where it lies.".to_string(),
+            )
+        };
+        self.finish(outcome, next, ball.x, 0, None, desc);
     }
 
     fn update_return(&mut self, dt: f32) {
@@ -911,8 +963,70 @@ mod tests {
         let plan = sim.throw_off_plan(0.1, 0.0);
         assert!(plan.too_short, "a 0.1 throw should be short: {:?}", plan);
         sim.launch_with(0.1, 0.0);
-        let r = sim.result.expect("a short throw ends the play");
+        // The throw itself is not the end of the play any more: it flies, and the
+        // Run Back is read once the ball is down.
+        assert!(sim.result.is_none(), "the short throw was called on the release");
+        assert_eq!(sim.phase, ThrowPhase::Flight);
+        let r = sim.run_to_completion();
         assert_eq!(r.outcome, ThrowOffOutcome::RunBack);
+        assert!(
+            (r.start_spot - 25.0).abs() < 0.5,
+            "Run Back spot should be the 25, got {}",
+            r.start_spot
+        );
+    }
+
+    /// A short throw still leaves the hand, and the ball is in the air for a good
+    /// couple of seconds before anybody calls it.
+    #[test]
+    fn a_short_throw_off_flies_before_it_is_called() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let plan = sim.throw_off_plan(0.1, 0.0);
+        sim.launch_with(0.1, 0.0);
+        let flight = sim.flight.expect("a short throw still goes up");
+        assert!((flight.to.x - plan.landing.x).abs() < 1e-3);
+        assert!(flight.duration > 1.5, "hang time {}", flight.duration);
+        for _ in 0..30 {
+            sim.step(1.0 / 60.0);
+        }
+        assert!(sim.result.is_none(), "the play was called mid-flight");
+        assert_eq!(sim.phase, ThrowPhase::Flight);
+    }
+
+    /// A ball nobody catches is live on the ground before it is dead, not called the
+    /// instant it lands.
+    #[test]
+    fn a_ball_nobody_catches_is_live_before_it_is_dead() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        // Stand the returner well away from where the ball comes down and hold him
+        // there, so nobody can get under it.
+        sim.players[4].pos = Vec2::new(60.0, 0.0);
+        sim.human = Some(4);
+        sim.human_dir = Vec2::ZERO;
+        sim.launch_with(0.8, 0.0);
+        for _ in 0..600 {
+            if sim.phase == ThrowPhase::Loose || sim.result.is_some() {
+                break;
+            }
+            sim.step(1.0 / 60.0);
+        }
+        assert_eq!(sim.phase, ThrowPhase::Loose, "the ball was never live");
+        assert!(sim.result.is_none(), "the loose ball was dead on arrival");
+        // It lies there for a beat while everybody runs to it.
+        for _ in 0..30 {
+            sim.step(1.0 / 60.0);
+        }
+        assert!(sim.result.is_none(), "the loose ball died in half a second");
+        let r = sim.run_to_completion();
+        assert!(
+            matches!(r.outcome, ThrowOffOutcome::Downed | ThrowOffOutcome::RecoveredByK),
+            "a loose ball ends up downed, not {:?}",
+            r.outcome
+        );
     }
 
     #[test]
