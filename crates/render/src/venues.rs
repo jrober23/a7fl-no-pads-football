@@ -104,7 +104,7 @@ impl Venue {
     /// One sentence for the picker, so a ground can be chosen without seeing it.
     pub fn blurb(&self) -> &'static str {
         match self.kind() {
-            Kind::Practice => "The field the game is learned on: open sky, a crowd in the bowl.",
+            Kind::Practice => "A ground in the suburbs: rooflines and streetlights past the far end, and a crowd in the bowl.",
             Kind::ClosedPractice => "The same field with the roof down and nobody in the seats.",
             Kind::Home(k) => cities().get(k).map(|c| c.blurb).unwrap_or("A home ground."),
             Kind::Underwater => "A clear dome overhead, the sea beyond it, and the fish swimming past.",
@@ -123,7 +123,7 @@ impl Venue {
     /// distant scenery fades into the weather of its own ground.
     pub fn sky(&self) -> [Rgb; 3] {
         match self.kind() {
-            Kind::Practice => [Rgb::hex(0x0A1428), Rgb::hex(0x20364E), Rgb::hex(0x7E8F96)],
+            Kind::Practice => [Rgb::hex(0x0A1428), Rgb::hex(0x243044), Rgb::hex(0xA08D74)],
             Kind::ClosedPractice => [Rgb::hex(0x0B0F15), Rgb::hex(0x1A222D), Rgb::hex(0x3C4654)],
             Kind::Home(k) => cities()
                 .get(k)
@@ -412,17 +412,281 @@ pub fn scenery(venue: Venue, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn 
     }
 }
 
-fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
-    // A treeline and the practice shed: the field the game shipped with, with a
-    // little more of a site around it than the bowl alone.
-    for side in [-1.0f32, 1.0] {
-        let mut x = -18.0;
-        while x < 118.0 {
-            let y = side * (34.0 + rand() * 6.0);
-            pine(mesh, Vec3::new(x, y, 0.0), 5.0 + rand() * 4.0, rand);
-            x += 9.0 + rand() * 6.0;
+/// A two-storey house: siding, a pitched roof with a gable at either end, a
+/// chimney, lit windows on the face turned toward the field, and a porch light
+/// by the door. `face` points from the house at the field, along one axis.
+fn house(
+    mesh: &mut Mesh,
+    at: Vec3,
+    half: Vec3,
+    face: Vec3,
+    wall: Rgb,
+    roof: Rgb,
+    rand: &mut dyn FnMut() -> f32,
+) {
+    mesh.box_shaded(at, half, 0.0, wall, 1.0);
+    // A foundation course, so the house sits on its lawn rather than in it.
+    mesh.box_shaded(
+        Vec3::new(at.x, at.y, 0.3),
+        Vec3::new(half.x * 1.02, half.y * 1.02, 0.3),
+        0.0,
+        wall.scale(0.78),
+        1.0,
+    );
+    // The ridge runs across the face, so the gable ends show from the field.
+    let along_x = face.y.abs() > 0.5;
+    let face_sign = if along_x { face.y } else { face.x };
+    let long = if along_x { half.x } else { half.y };
+    let short = if along_x { half.y } else { half.x };
+    let p = |a: f32, b: f32, z: f32| {
+        if along_x {
+            Vec3::new(at.x + a, at.y + b, z)
+        } else {
+            Vec3::new(at.x + b, at.y + a, z)
+        }
+    };
+    let eave = at.z + half.z;
+    let ridge = eave + short * 0.72;
+    let out = short * 1.14;
+    let over = long * 1.06;
+    // Both pitches wound the same way, so neither disappears when the face
+    // turned the other way.
+    mesh.quad_shaded(
+        p(-over, out, eave),
+        p(over, out, eave),
+        p(over, 0.0, ridge),
+        p(-over, 0.0, ridge),
+        roof,
+        1.0,
+    );
+    mesh.quad_shaded(
+        p(over, -out, eave),
+        p(-over, -out, eave),
+        p(-over, 0.0, ridge),
+        p(over, 0.0, ridge),
+        roof.scale(0.92),
+        1.0,
+    );
+    for a in [-long, long] {
+        mesh.tri(p(a, -short, eave), p(a, short, eave), p(a, 0.0, ridge), wall.scale(0.94));
+    }
+    if rand() < 0.6 {
+        let a = long * 0.45 * if rand() < 0.5 { -1.0 } else { 1.0 };
+        let bottom = eave - 0.8;
+        let top = ridge + 0.4;
+        mesh.box_shaded(
+            p(a, short * 0.3, (bottom + top) * 0.5),
+            Vec3::new(0.45, 0.45, (top - bottom) * 0.5),
+            0.0,
+            Rgb::hex(0x5E4034),
+            1.0,
+        );
+    }
+    // Lit windows on the face turned toward the field: two floors, three bays.
+    // They carry the house at night, so they are generous and warm.
+    let w_off = face_sign * (short + 0.06);
+    for floor in 0..2 {
+        for col in 0..3 {
+            let a = -long * 0.58 + (col as f32 + 0.5) * (long * 1.16 / 3.0);
+            let z0 = at.z + half.z * (0.3 + floor as f32 * 0.9);
+            let lit = rand() < 0.66;
+            let color = if lit { Rgb::hex(0xFCDE9E) } else { Rgb::hex(0x1A2230) };
+            mesh.quad_shaded(
+                p(a - 0.58, w_off, z0),
+                p(a + 0.58, w_off, z0),
+                p(a + 0.58, w_off, z0 + 0.95),
+                p(a - 0.58, w_off, z0 + 0.95),
+                color,
+                1.0,
+            );
         }
     }
+    // The porch light, and the door under it.
+    if rand() < 0.7 {
+        let a = long * 0.16;
+        let door_z = at.z - half.z * 0.45;
+        mesh.quad_shaded(
+            p(a - 0.55, w_off, door_z),
+            p(a + 0.55, w_off, door_z),
+            p(a + 0.55, w_off, door_z + 1.9),
+            p(a - 0.55, w_off, door_z + 1.9),
+            Rgb::hex(0x2A2420),
+            1.0,
+        );
+        mesh.quad_shaded(
+            p(a + 0.7, w_off, door_z + 1.7),
+            p(a + 1.1, w_off, door_z + 1.7),
+            p(a + 1.1, w_off, door_z + 2.1),
+            p(a + 0.7, w_off, door_z + 2.1),
+            Rgb::hex(0xFFE9B8),
+            1.0,
+        );
+    }
+}
+
+/// A streetlight /// A streetlight: a pole, an arm over the kerb, and a warm lamp on the end.
+fn streetlight(mesh: &mut Mesh, at: Vec3, arm: Vec3) {
+    let top = at + Vec3::new(0.0, 0.0, 8.0);
+    mesh.cylinder(at, top, 0.18, 0.13, 6, Rgb::hex(0x2A313A));
+    let head = top + arm;
+    mesh.cylinder(top, head, 0.12, 0.1, 5, Rgb::hex(0x2A313A));
+    mesh.box_shaded(head, Vec3::new(0.55, 0.32, 0.16), 0.0, Rgb::hex(0xF6DEA2), 1.0);
+}
+
+fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
+    // The ground sits in the suburbs: a street behind each sideline and behind
+    // each end, houses beyond them with the lights on, streetlights on the kerb,
+    // and the city away off past the rooftops. All of it is outside the boards.
+    let walls = [
+        Rgb::hex(0x8C867C),
+        Rgb::hex(0x7A7E82),
+        Rgb::hex(0x93806A),
+        Rgb::hex(0x6E7278),
+        Rgb::hex(0x8A7A66),
+        Rgb::hex(0x6E5A4A),
+    ];
+    let roofs = [
+        Rgb::hex(0x6E5C4C),
+        Rgb::hex(0x5A6068),
+        Rgb::hex(0x75604C),
+        Rgb::hex(0x4A525A),
+    ];
+    let pick = |rand: &mut dyn FnMut() -> f32, n: usize| (rand() * n as f32) as usize % n;
+
+    // The two side streets, and the houses along them. Everything on the +y side
+    // sits outside the broadcast lens, which stands at y = 32.
+    for side in [-1.0f32, 1.0] {
+        mesh.quad_shaded(
+            Vec3::new(-56.0, side * 38.0, 0.006),
+            Vec3::new(166.0, side * 38.0, 0.006),
+            Vec3::new(166.0, side * 45.0, 0.006),
+            Vec3::new(-56.0, side * 45.0, 0.006),
+            Rgb::hex(0x24282E),
+            1.0,
+        );
+        let mut x = -48.0;
+        while x < 158.0 {
+            let w = 4.0 + rand() * 2.4;
+            let d = 3.2 + rand() * 1.4;
+            let h = 2.9 + rand() * 0.7;
+            let at = Vec3::new(x + w, side * (51.0 + rand() * 9.0), h);
+            let wall = walls[pick(rand, walls.len())];
+            let roof = roofs[pick(rand, roofs.len())];
+            house(mesh, at, Vec3::new(w, d, h), Vec3::new(0.0, -side, 0.0), wall, roof, rand);
+            x += w * 2.0 + 4.0 + rand() * 4.0;
+        }
+        let mut lx = -44.0;
+        while lx < 158.0 {
+            streetlight(mesh, Vec3::new(lx, side * 37.5, 0.0), Vec3::new(0.0, -side * 1.8, 0.0));
+            lx += 21.0;
+        }
+        // Back-yard pines behind the houses, for the skyline over the roofs.
+        let mut tx = -44.0;
+        while tx < 156.0 {
+            pine(
+                mesh,
+                Vec3::new(tx + rand() * 5.0, side * (62.0 + rand() * 12.0), 0.0),
+                6.0 + rand() * 4.0,
+                rand,
+            );
+            tx += 11.0 + rand() * 9.0;
+        }
+    }
+
+    // The two end streets: houses looking back down the field, a second row
+    // behind the first, and the rooftops of the neighbourhood past both. The
+    // left row keeps the middle clear for the scoreboard.
+    for (face, line) in [(1.0f32, -26.0f32), (-1.0, 126.0)] {
+        mesh.quad_shaded(
+            Vec3::new(line + face * 2.0, -54.0, 0.006),
+            Vec3::new(line + face * 9.0, -54.0, 0.006),
+            Vec3::new(line + face * 9.0, 62.0, 0.006),
+            Vec3::new(line + face * 2.0, 62.0, 0.006),
+            Rgb::hex(0x24282E),
+            1.0,
+        );
+        for row in 0..2 {
+            let back = row as f32 * 16.0;
+            let mut y = -46.0;
+            while y < 54.0 {
+                let w = 3.8 + rand() * 2.2;
+                let d = 3.0 + rand() * 1.4;
+                let h = 2.4 + rand() * 0.5;
+                if line < 0.0 && row == 0 && y < 14.0 && y + w * 2.0 > -14.0 {
+                    // In front of the scoreboard, which gets the lot to itself.
+                    y += 8.0;
+                    continue;
+                }
+                let at = Vec3::new(
+                    line - face * (d + 2.0 + rand() * 6.0 + back),
+                    y + w,
+                    h,
+                );
+                let wall = walls[pick(rand, walls.len())];
+                let roof = roofs[pick(rand, roofs.len())];
+                house(mesh, at, Vec3::new(d, w, h), Vec3::new(face, 0.0, 0.0), wall, roof, rand);
+                y += w * 2.0 + 5.0 + rand() * 5.0;
+            }
+        }
+        for i in 0..6 {
+            streetlight(
+                mesh,
+                Vec3::new(line + face, -40.0 + i as f32 * 16.0, 0.0),
+                Vec3::new(face * 1.8, 0.0, 0.0),
+            );
+        }
+        // A treeline past the end houses, so the streets end in trees.
+        for i in 0..9 {
+            pine(
+                mesh,
+                Vec3::new(
+                    line - face * (28.0 + rand() * 16.0),
+                    -48.0 + i as f32 * 12.0 + rand() * 4.0,
+                    0.0,
+                ),
+                6.0 + rand() * 4.0,
+                rand,
+            );
+        }
+        // And the neighbourhood beyond the trees: a few low rooftops with a
+        // window or two lit, so the street has a town behind it rather than a
+        // void — far enough off to be a horizon, not a wall of buildings.
+        for i in 0..4 {
+            let w = 8.0 + rand() * 8.0;
+            let d = 5.0 + rand() * 4.0;
+            let h = 4.5 + rand() * 4.0;
+            let x = line - face * (96.0 + rand() * 34.0);
+            let y = -62.0 + i as f32 * 32.0 + rand() * 10.0;
+            mesh.box_shaded(
+                Vec3::new(x, y, h * 0.5),
+                Vec3::new(d, w, h * 0.5),
+                0.0,
+                Rgb::hex(0x3E444C),
+                1.0,
+            );
+            let xf = x + face * (d + 0.05);
+            let floors = (h / 3.0) as usize;
+            for f in 0..floors {
+                for c in 0..3 {
+                    if rand() < 0.5 {
+                        continue;
+                    }
+                    let z = 1.6 + f as f32 * 3.0;
+                    let yy = y - w * 0.62 + (c as f32 + 0.5) * w * 0.62;
+                    mesh.quad_shaded(
+                        Vec3::new(xf, yy - 0.6, z),
+                        Vec3::new(xf, yy + 0.6, z),
+                        Vec3::new(xf, yy + 0.6, z + 0.9),
+                        Vec3::new(xf, yy - 0.6, z + 0.9),
+                        Rgb::hex(0xD8BC86),
+                        1.0,
+                    );
+                }
+            }
+        }
+    }
+
+    // The practice shed.    // The practice shed.
     mesh.box_shaded(
         Vec3::new(-26.0, 26.0, 2.4),
         Vec3::new(7.0, 5.0, 2.4),
@@ -430,16 +694,20 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
         Rgb::hex(0x3C4652),
         1.0,
     );
-    // And a line of trees beyond each end line, so the shot down the field has
-    // a horizon rather than the back of the scoreboard. They start behind the
-    // back of the end zone and step away from the field, never onto it: this
-    // line used to walk from ten yards behind the left end zone twenty yards
-    // into the field, and stood a row of pines on the paint.
-    for end in [-1.0f32, 1.0] {
-        for i in 0..9 {
-            let x = if end < 0.0 { -18.0 - i as f32 * 5.0 } else { 118.0 + i as f32 * 5.0 };
-            pine(mesh, Vec3::new(x, -26.0 + i as f32 * 6.5, 0.0), 6.0 + rand() * 3.0, rand);
-        }
+
+    // The city itself, low on the sky past the far rooftops: this is the
+    // suburban part of somewhere, and the somewhere shows at night.
+    for i in 0..6 {
+        let w = 5.0 + rand() * 5.0;
+        let h = 18.0 + rand() * 16.0 + i as f32 * 2.0;
+        tower(
+            mesh,
+            Vec3::new(-30.0 + i as f32 * 28.0 + rand() * 8.0, -150.0 - rand() * 40.0, h * 0.5),
+            Vec3::new(w, 4.0, h * 0.5),
+            1.0,
+            Rgb::hex(0x2A3440),
+            rand,
+        );
     }
 }
 
