@@ -692,6 +692,7 @@ fn cmd_arcade(args: &[String]) {
             });
         }
         let ui = PassUi {
+            focus: None,
             badges,
             guide,
             power: Some(0.62),
@@ -725,6 +726,7 @@ fn cmd_arcade(args: &[String]) {
         let plan = off.throw_off_plan(0.62, 5.0);
         let hand = off.players[0].pos;
         let ui = PassUi {
+            focus: None,
             badges: Vec::new(),
             guide: Some(Guide {
                 from: Vec3::new(hand.x, hand.y, 1.8),

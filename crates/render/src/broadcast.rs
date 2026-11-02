@@ -385,6 +385,39 @@ impl Broadcast {
         (players, ball)
     }
 
+    /// The called play on the field: each eligible man's route as the sim has it
+    /// built, drawn on the turf from where he is standing to where it ends.
+    fn paint_routes(&self, frame: &mut Frame, camera: &Camera, sim: &PlaySim) {
+        const ROUTE: a7fl_core::math::Rgb = a7fl_core::math::Rgb::hex(0xEAF3FF);
+        const END: a7fl_core::math::Rgb = a7fl_core::math::Rgb::hex(0xFFD84A);
+        for i in 0..7 {
+            let p = &sim.players[i];
+            if p.route.is_empty() {
+                continue;
+            }
+            let mut last = p.pos;
+            for &pt in &p.route {
+                let a = Vec3::new(last.x, last.y, 0.04);
+                let b = Vec3::new(pt.x, pt.y, 0.04);
+                if let (Some((x0, y0, _)), Some((x1, y1, _))) = (
+                    self.scene.projector.project(camera.view(a)),
+                    self.scene.projector.project(camera.view(b)),
+                ) {
+                    frame.line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, ROUTE, 1);
+                }
+                last = pt;
+            }
+            // A bar across the end of the route, so its depth can be read.
+            if let Some((x, y, _)) = self
+                .scene
+                .projector
+                .project(camera.view(Vec3::new(last.x, last.y, 0.04)))
+            {
+                frame.fill_rect_alpha(x as i32 - 4, y as i32 - 1, 8, 3, END, 0.9);
+            }
+        }
+    }
+
     /// The ball has no shadow once it is above head height, and a throw-off
     /// sends it forty yards up. A ring on the turf under it is the only way to
     /// read where it is coming down, so it is drawn for every ball in flight --
@@ -497,6 +530,11 @@ impl Broadcast {
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
         self.paint_lines(&mut frame, &camera, sim.los, sim.setup.direction, sim.setup.to_go);
+        // Before the snap the call is drawn on the grass: every route the play
+        // runs, so the throw can be read before the ball goes.
+        if sim.phase == a7fl_core::sim::Phase::PreSnap {
+            self.paint_routes(&mut frame, &camera, sim);
+        }
         self.draw_bodies(&mut frame, &camera, &players);
         if let Some(flag) = &sim.flag {
             self.paint_flag(&mut frame, &camera, flag, sim.t - sim.flag_at);

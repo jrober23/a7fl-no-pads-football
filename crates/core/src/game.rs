@@ -619,17 +619,24 @@ impl GameState {
 
         // Score-keeping first: a touchdown overrides normal down logic.
         if result.touchdown {
-            self.apply_score(offense, 6);
+            // An interception run back is the defense's six points, not the
+            // offense's: the men who scored are the men who were defending.
+            let scoring = if result.outcome == crate::sim::PlayOutcome::Interception {
+                defense
+            } else {
+                offense
+            };
+            self.apply_score(scoring, 6);
             self.drive.points += 6;
             self.drive.yards += result.yards;
             self.commentary.push(format!(
                 "TOUCHDOWN {}! {}",
-                self.teams[offense].abbr, result.description
+                self.teams[scoring].abbr, result.description
             ));
             self.box_score.record(offense, &result, true, quarter as usize);
             self.spot = new_spot;
             self.end_drive("Touchdown");
-            self.after_touchdown(offense);
+            self.after_touchdown(scoring);
             return;
         }
 

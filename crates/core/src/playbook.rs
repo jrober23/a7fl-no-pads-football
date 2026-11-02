@@ -32,6 +32,13 @@ impl OffRole {
         OffRole::WideR,
     ];
 
+    /// The two men on the line. A flip runs the skill players to the other
+    /// side; the guards stay where they are, because the side of the ball they
+    /// are on is not what is being changed.
+    pub fn is_line(self) -> bool {
+        matches!(self, OffRole::Lg | OffRole::Rg)
+    }
+
     pub fn index(self) -> usize {
         match self {
             OffRole::Qb => 0,
@@ -269,7 +276,7 @@ pub struct Play {
 impl Play {
     pub fn alignment(&self, role: OffRole) -> Vec2 {
         let a = self.formation.alignment(role);
-        if self.flip {
+        if self.flip && !role.is_line() {
             Vec2::new(a.x, -a.y)
         } else {
             a
@@ -290,7 +297,16 @@ impl Play {
         out.assignments = self
             .assignments
             .iter()
-            .map(|(role, a)| (*role, mirror_assign(a)))
+            // The men on the line keep the job they were given. Their block is
+            // not on one side of the ball or the other, so a flip that mirrored
+            // it would be moving a guard for no reason.
+            .map(|(role, a)| {
+                if role.is_line() {
+                    (*role, a.clone())
+                } else {
+                    (*role, mirror_assign(a))
+                }
+            })
             .collect();
         out
     }
@@ -1240,7 +1256,12 @@ mod tests {
                 let a = p.alignment(role);
                 let b = f.alignment(role);
                 assert!((a.x - b.x).abs() < 1e-6, "{} {role:?} moved upfield", p.name);
-                assert!((a.y + b.y).abs() < 1e-6, "{} {role:?} did not mirror", p.name);
+                if role.is_line() {
+                    // The men on the line stay on the side they lined up on.
+                    assert!((a.y - b.y).abs() < 1e-6, "{} {role:?} moved on a flip", p.name);
+                } else {
+                    assert!((a.y + b.y).abs() < 1e-6, "{} {role:?} did not mirror", p.name);
+                }
             }
             // Flipping twice is the play that was drawn, not a mirrored copy of a
             // mirrored copy that has quietly drifted.

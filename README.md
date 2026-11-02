@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.2-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.3-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -137,7 +137,10 @@ something you can read rather than a wall of cards. Up and down move between
 formations, A (or right) goes into the plays of the one you are on, the stick moves
 between those plays, and A calls the one you are on. B goes back out to the
 formations. Y flips the call to the other side of the formation, and the cards show
-it flipped, routes and all.
+it flipped, routes and all. Calling it that way does not put anybody down in a new
+place: the men who have to change sides run across the formation to their new spots,
+and the two men on the line stay where they were, because a flip moves the skill
+players and leaves the guards alone.
 
 The sheet always opens in the formation column, so the first push of the stick is a
 formational choice. It used to open wherever the previous call had left the cursor,
@@ -151,6 +154,13 @@ at the defense, and A starts the play: the clock does not run and the formation 
 not drift while you look. X opens the audible, which is the same layered sheet drawn
 over the field — any play in the book, any formation, and Y to flip it to the other
 side. A calls it and the team re-lines up. B leaves the play that was already called.
+
+Before the snap the called play is drawn on the grass: every route in the play,
+from where the man is standing to where it ends, so the throw can be read against the
+defense rather than off a card. You also know which man is yours — a cyan ring sits
+under the player on the pad, with a caret and a name over his head, in every phase of
+every play: the quarterback at the line, the man with the ball, the defender you
+switched to, the returner under a throw-off.
 
 ### Playing defense
 
@@ -174,6 +184,12 @@ not a coverage man: once the ball is away he leaves the picture, and the pad tak
 of the three chasing it. B walks it round them, the way it walks round the seven on a
 scrimmage snap.
 
+An interception does not end the play. The man who took it has the ball and the
+field in front of him, and the men who threw it are the ones chasing: the three
+nearest turn and run him down, and he can be caught, run out of bounds at the
+sideline, or take it all the way back for six. If you made the pick yourself, the pad
+stays with you and you run it back.
+
 A is the wrap-up. Get your man within reach of the carrier and press it and he gets
 the first shot at the tackle, with a step more reach than the coordinator's defenders.
 X is the dive: he throws himself at the carrier from further out, gets his hands out
@@ -183,16 +199,25 @@ the ball in the air X is the bat-down instead: he dives at it and knocks it down
 and Y only work while the ball is up and your man is close enough to touch it, and he
 gets one look per throw.
 
+### The ball in the air
+
+A pass is not over when the flight ends. A ball nobody catches drops the last of the
+way to the turf, and the whistle, the result and the next snap wait for it to land
+instead of cutting in while it is still up at catch height. That is true of a ball
+that was batted down as well, and of a throw that was picked off — except that a pick
+is not dead at all, because the man who has it is running the other way.
+
 ### Cameras
 
 RT (Left Shift on the keyboard) cycles the shot while the ball is live. On a throw-off
 it does the same while you are covering or returning; while you are throwing, the
 trigger is the throw itself, so pick the shot from the pause menu:
 
+* **Classic** — the default, and the first shot the trigger reaches: behind the ball,
+  looking downfield at the defense, so the men you are throwing at are ahead of you
+  rather than beside you.
 * **Broadcast** — the high sideline camera the broadcast package uses, panning with
   the ball.
-* **Classic** — behind the ball, looking downfield at the defense, so the men you are
-  throwing at are ahead of you rather than beside you.
 * **Sky** — overhead, for seeing the whole thing at once.
 
 The stick follows whichever of those is on screen, and they do not agree about which

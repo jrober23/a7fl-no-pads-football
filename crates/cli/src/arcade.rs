@@ -22,7 +22,7 @@ use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use a7fl_core::sim::{DefControl, Phase, PlaySim, QbControl};
 use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
-use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
+use a7fl_render::passing::{Badge, Focus, Guide, PassUi, Tone};
 use a7fl_render::callsheet;
 use a7fl_render::defsheet;
 use a7fl_render::playsheet::Dir;
@@ -65,10 +65,12 @@ const AIM_SWEEP: f32 = 26.0;
 /// it at a human returner. Long enough to see the field and find the ball.
 const WATCH_SNAP_DELAY: f32 = 2.6;
 
-/// The views the player can switch between while the ball is live.
+/// The views the player can switch between while the ball is live, in the order
+/// the trigger walks them. Classic comes first: the shot from behind the ball is
+/// the one you can play from, and it is where the game opens.
 const CAMS: [CameraMode; 3] = [
-    CameraMode::Broadcast,
     CameraMode::Classic,
+    CameraMode::Broadcast,
     CameraMode::SkyCam,
 ];
 
@@ -835,7 +837,19 @@ impl Arcade {
                         landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
                     });
                 }
+                // The pad is on a man here too: the returner, a gunner, or the
+                // thrower while the ball is still his.
+                let focus_index = mine.or_else(|| {
+                    sim.players
+                        .iter()
+                        .position(|p| p.team == my_team && p.role == ThrowRole::Returner)
+                });
+                let focus = focus_index.map(|i| Focus {
+                    at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+                    label: "YOU".to_string(),
+                });
                 let ui = PassUi {
+                    focus,
                     badges: Vec::new(),
                     guide,
                     power,
@@ -1548,7 +1562,14 @@ fn drive(
                     });
                 }
             }
+            // Who the pad is on: the man with the ball, or the quarterback before
+            // there is one.
+            let focus = sim.carrier.or(Some(sim.qb)).map(|i| Focus {
+                at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+                label: "YOU".to_string(),
+            });
             let ui = PassUi {
+                focus,
                 badges,
                 guide,
                 power: charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0)),
@@ -1816,7 +1837,12 @@ fn drive_defense(
 
         if now.duration_since(drew) >= FRAME || sim.result.is_some() {
             drew = now;
+            let focus = sim.human_defender.map(|i| Focus {
+                at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+                label: "YOU".to_string(),
+            });
             let ui = PassUi {
+                focus,
                 badges: Vec::new(),
                 guide: None,
                 power: None,
@@ -1842,10 +1868,19 @@ fn drive_defense(
                     if sim.play.flip { " (FLIPPED)" } else { "" },
                     broadcast.teams[sim.setup.offense_team].abbr
                 ),
-                format!("  YOU: {role} {who}   [B] SWITCH DEFENDER"),
-                "  [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RT] CAMERA   [START] PAUSE"
-                    .to_string(),
+                format!("  YOU: {role} {who}"),
             ];
+            if sim.phase == Phase::Return {
+                // A pick is not a dead ball: the man who took it is a runner now.
+                lines.push(
+                    "  INTERCEPTION - THE BALL IS YOURS   RUN IT BACK   [START] PAUSE".to_string(),
+                );
+            } else {
+                lines.push(
+                    "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RT] CAMERA   [START] PAUSE"
+                        .to_string(),
+                );
+            }
             if let Some(flag) = &sim.flag {
                 lines.push(format!(
                     "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",

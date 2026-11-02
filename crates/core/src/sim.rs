@@ -44,6 +44,16 @@ pub const STALL_SECONDS: f32 = 3.6;
 /// at a jog. Only a physics bug should ever reach it.
 pub const RUN_PLAY_LIMIT: f32 = 40.0;
 pub const FIXED_DT: f32 = 1.0 / 60.0;
+/// How long a ball nobody caught takes to drop the last of the way to the turf.
+/// The flight ends at the catch height, so without this the whistle went while
+/// the ball was still up in the air and the incompletion never landed.
+pub const BALL_FALL_SECONDS: f32 = 0.42;
+/// How long the men who have to change sides take to walk to their new spots on
+/// a flipped call. A flip used to place everybody on the mirrored spot in the
+/// frame the button went down, which read as a teleport rather than a shift.
+pub const FLIP_SHIFT_SECONDS: f32 = 0.65;
+/// How long an interception may be run back before the returner is done.
+pub const RETURN_SECONDS: f32 = 9.0;
 /// Ground covered by one full stride cycle (two steps). Drives the run animation:
 /// about 3.2 yards at speed, which is five or so steps a second flat out.
 pub const STRIDE_YARDS: f32 = 3.2;
@@ -183,6 +193,8 @@ pub enum Phase {
     Dropback,
     Scramble,
     BallInAir,
+    /// The ball was picked off and the man who has it is running the other way.
+    Return,
     Dead,
 }
 
@@ -256,6 +268,21 @@ pub struct Ball {
     pub pos: Vec2,
     pub z: f32,
     pub flight: Option<Flight>,
+}
+
+/// A ball on its way to the ground that nobody is going to catch. The play is
+/// not over until it lands: the result waits here while the ball falls.
+#[derive(Clone, Debug)]
+struct Fall {
+    t: f32,
+    from_z: f32,
+    outcome: PlayOutcome,
+    spot: f32,
+    description: String,
+    receiver: Option<usize>,
+    passer: Option<usize>,
+    air_yards: f32,
+    batted_down: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -381,6 +408,18 @@ pub struct PlaySim<'a> {
     pass_contacted: bool,
     /// What the game clock stopped at, when the ball died before the wrap finished.
     elapsed_override: Option<f32>,
+    /// A ball dropping to the turf with nobody on it. The result is booked when
+    /// it lands, not when the flight that carried it ends.
+    falling: Option<Fall>,
+    /// The man who picked it off and the spot he caught it, while he runs it back.
+    returner: Option<usize>,
+    return_spot: f32,
+    /// The throw that was intercepted: which arm, and how far it had travelled.
+    return_throw: Option<(usize, f32)>,
+    /// Where everybody stood when a flip was called. The men who change sides walk
+    /// across from here rather than being placed on their new spot.
+    shift: Option<Vec<Vec2>>,
+    shift_t: f32,
 }
 
 fn roster_of<'t>(team: &'t Team, idx: usize) -> &'t crate::team::Player {
@@ -504,6 +543,12 @@ impl<'a> PlaySim<'a> {
             wrap: None,
             pass_contacted: false,
             elapsed_override: None,
+            falling: None,
+            returner: None,
+            return_spot: setup.los,
+            return_throw: None,
+            shift: None,
+            shift_t: 0.0,
         };
         sim.ball.pos = sim.players[0].pos;
         sim.build_routes();
@@ -829,9 +874,10 @@ impl<'a> PlaySim<'a> {
             // offset from where the formation was set, not a nudge applied every
             // frame: with the snap waiting on a button the old version walked the
             // whole offense sideways while the player read the defence.
+            self.advance_shift(dt);
             for i in 0..14 {
                 let jitter = Vec2::new(0.0, (self.t * 1.7 + i as f32).sin() * 0.02);
-                let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
+                let base = self.shifted_pos(i);
                 self.players[i].pos = base + jitter;
             }
             if self.awaiting_snap {
@@ -849,6 +895,14 @@ impl<'a> PlaySim<'a> {
         // nothing else on the field moves and the ball is not dead until they are.
         if self.wrap.is_some() {
             self.advance_wrap(dt);
+            return self.result.as_ref();
+        }
+
+        // An interception is not the end of the play: the man who picked it off
+        // has the ball, and the men who threw it are the ones chasing now.
+        if self.phase == Phase::Return {
+            self.update_return(dt);
+            self.update_ball(dt);
             return self.result.as_ref();
         }
 
@@ -877,7 +931,7 @@ impl<'a> PlaySim<'a> {
         } else {
             self.stall = 0.0;
         }
-        if self.result.is_none() {
+        if self.result.is_none() && self.falling.is_none() {
             let running = self.carrier.is_some() && self.face_buttons_are_moves();
             let limit = if running { RUN_PLAY_LIMIT } else { MAX_PLAY_TIME };
             let stalled = running && self.stall > STALL_SECONDS;
@@ -2191,6 +2245,24 @@ impl<'a> PlaySim<'a> {
     // -----------------------------------------------------------------
 
     fn update_ball(&mut self, dt: f32) {
+        // A ball that is on its way down is not a ball in the air any more: it
+        // falls the last of the way, and the result follows it to the turf.
+        if let Some(mut fall) = self.falling.take() {
+            fall.t += dt;
+            let k = (fall.t / BALL_FALL_SECONDS).clamp(0.0, 1.0);
+            self.ball.z = lerp(fall.from_z, 0.12, k * k);
+            if k >= 1.0 {
+                let mut r = self.finish(fall.outcome, fall.spot, fall.description.clone());
+                r.receiver = fall.receiver;
+                r.passer = fall.passer;
+                r.air_yards = fall.air_yards;
+                r.batted_down = fall.batted_down;
+                self.result = Some(r);
+            } else {
+                self.falling = Some(fall);
+            }
+            return;
+        }
         let Some(mut flight) = self.ball.flight.clone() else {
             // Ball in somebody's hands.
             if let Some(h) = self.ball.holder {
@@ -2227,18 +2299,8 @@ impl<'a> PlaySim<'a> {
                     if ctl.intercept {
                         let pick = (0.06 + cov * 0.14 + hands * 0.10) * close;
                         if self.rng.chance(pick) {
-                            let desc =
-                                format!("{} jumps in front and picks it off!", self.name_of(d));
-                            let mut r = self.finish(PlayOutcome::Interception, spot, desc);
-                            r.turnover = true;
-                            r.tackler = Some(self.roster_index(d));
-                            r.air_yards = flight.air_yards;
-                            r.passer = Some(self.roster_index(flight.thrower));
-                            r.receiver = flight.target.map(|t| self.roster_index(t));
-                            r.highlight = true;
-                            self.result = Some(r);
-                            self.ball.flight = None;
                             self.catch_spot = spot;
+                            self.start_return(d, spot, flight.thrower, flight.air_yards);
                             return;
                         }
                     }
@@ -2247,13 +2309,7 @@ impl<'a> PlaySim<'a> {
                         if self.rng.chance(bat) {
                             let desc =
                                 format!("{} gets a hand in and bats it down!", self.name_of(d));
-                            let mut r = self.finish(PlayOutcome::PassIncomplete, self.los, desc);
-                            r.batted_down = true;
-                            r.air_yards = flight.air_yards;
-                            r.passer = Some(self.roster_index(flight.thrower));
-                            r.receiver = flight.target.map(|t| self.roster_index(t));
-                            self.result = Some(r);
-                            self.ball.flight = None;
+                            self.let_fall(PlayOutcome::PassIncomplete, spot, desc, flight.thrower, flight.air_yards, true);
                             self.catch_spot = spot;
                             return;
                         }
@@ -2276,28 +2332,13 @@ impl<'a> PlaySim<'a> {
                 let bat = (0.12 + cov * 0.16 + hands * 0.08) * reached;
                 let spot = self.ball.pos.x;
                 if self.rng.chance(pick) {
-                    let desc = format!("{} jumps the route and picks it off!", self.name_of(d));
-                    let mut r = self.finish(PlayOutcome::Interception, spot, desc);
-                    r.turnover = true;
-                    r.tackler = Some(self.roster_index(d));
-                    r.air_yards = flight.air_yards;
-                    r.passer = Some(self.roster_index(flight.thrower));
-                    r.receiver = flight.target.map(|t| self.roster_index(t));
-                    r.highlight = true;
-                    self.result = Some(r);
-                    self.ball.flight = None;
                     self.catch_spot = spot;
+                    self.start_return(d, spot, flight.thrower, flight.air_yards);
                     return;
                 }
                 if self.rng.chance(bat) {
                     let desc = format!("{} gets a hand in and bats it down!", self.name_of(d));
-                    let mut r = self.finish(PlayOutcome::PassIncomplete, self.los, desc);
-                    r.batted_down = true;
-                    r.air_yards = flight.air_yards;
-                    r.passer = Some(self.roster_index(flight.thrower));
-                    r.receiver = flight.target.map(|t| self.roster_index(t));
-                    self.result = Some(r);
-                    self.ball.flight = None;
+                    self.let_fall(PlayOutcome::PassIncomplete, spot, desc, flight.thrower, flight.air_yards, true);
                     self.catch_spot = spot;
                     return;
                 }
@@ -2358,15 +2399,9 @@ impl<'a> PlaySim<'a> {
                 let pick_chance = (0.035 + cov * 0.11 + catching * 0.06)
                     * if target.is_some() { 1.0 } else { 2.2 };
                 if self.rng.chance(pick_chance) {
-                    let return_yards = self.rng.range(0.0, 9.0);
-                    let end = clamp(landing.x - self.dirf() * return_yards, 0.0, FIELD_LENGTH);
-                    let desc = format!("{} steps in front and picks it off!", self.name_of(d));
-                    let tackler = Some(self.roster_index(d));
-                    let mut r = self.finish(PlayOutcome::Interception, end, desc);
-                    r.turnover = true;
-                    r.tackler = tackler;
-                    r.return_yards = return_yards;
-                    self.result = Some(r);
+                    let thrower = flight.thrower;
+                    let air = flight.air_yards;
+                    self.start_return(d, landing.x, thrower, air);
                     return;
                 }
             }
@@ -2423,14 +2458,7 @@ impl<'a> PlaySim<'a> {
                 "Incomplete. Nobody could come down with it.".to_string(),
             )
         };
-        let receiver = self.intended.map(|i| self.roster_index(i));
-        let passer = Some(self.roster_index(flight.thrower));
-        let air = flight.air_yards;
-        let mut r = self.finish(outcome, self.los, desc);
-        r.receiver = receiver;
-        r.air_yards = air;
-        r.passer = passer;
-        self.result = Some(r);
+        self.let_fall(outcome, self.los, desc, flight.thrower, flight.air_yards, false);
     }
 
     // -----------------------------------------------------------------
@@ -2582,6 +2610,8 @@ impl<'a> PlaySim<'a> {
 
     /// Stop the snap waiting on the button and run it now.
     pub fn request_snap(&mut self) {
+        // The ball cannot go while the formation is still walking into place.
+        self.finish_shift();
         self.awaiting_snap = false;
         if self.phase == Phase::PreSnap {
             self.t = self.t.max(SNAP_DELAY);
@@ -2630,9 +2660,220 @@ impl<'a> PlaySim<'a> {
     }
 
     /// Flip the called play to the other side of the formation.
+    ///
+    /// The formation is rebuilt, but the men are not placed on their new spots:
+    /// they keep the ground they were standing on and walk across to the flipped
+    /// alignment, which is what a flip looks like from the sideline. The two
+    /// guards do not move at all, because a flip does not change their side.
     pub fn flip_play(&mut self) {
+        if self.phase != Phase::PreSnap {
+            return;
+        }
+        let from: Vec<Vec2> = self.players.iter().map(|p| p.pos).collect();
         let flipped = self.play.flipped();
         self.call_play(flipped);
+        // The re-line-up has just placed everybody on his new spot. Put them all
+        // back where they were standing: the walk is what moves them from here.
+        for (i, was) in from.iter().enumerate() {
+            self.players[i].pos = *was;
+            self.players[i].vel = Vec2::ZERO;
+        }
+        self.shift = Some(from);
+        self.shift_t = 0.0;
+    }
+
+    /// Put everybody where the current call lines them up, cutting short any
+    /// shift that is still in progress.
+    pub fn finish_shift(&mut self) {
+        self.shift = None;
+        self.shift_t = FLIP_SHIFT_SECONDS;
+        for i in 0..14 {
+            let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
+            self.players[i].pos = base;
+            self.players[i].vel = Vec2::ZERO;
+        }
+    }
+
+    fn advance_shift(&mut self, dt: f32) {
+        let Some(from) = self.shift.clone() else {
+            return;
+        };
+        self.shift_t += dt;
+        let k = (self.shift_t / FLIP_SHIFT_SECONDS).clamp(0.0, 1.0);
+        let eased = k * k * (3.0 - 2.0 * k);
+        for i in 0..14 {
+            let to = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
+            let start = from.get(i).copied().unwrap_or(to);
+            self.players[i].pos = start.lerp(to, eased);
+            // A man on the move is running: the stride follows his feet.
+            self.players[i].vel = (to - start) / FLIP_SHIFT_SECONDS;
+            if k >= 1.0 {
+                self.players[i].vel = Vec2::ZERO;
+            }
+        }
+        if k >= 1.0 {
+            self.shift = None;
+        }
+    }
+
+    fn shifted_pos(&self, i: usize) -> Vec2 {
+        let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
+        match &self.shift {
+            Some(from) => {
+                let k = (self.shift_t / FLIP_SHIFT_SECONDS).clamp(0.0, 1.0);
+                let eased = k * k * (3.0 - 2.0 * k);
+                from.get(i).copied().unwrap_or(base).lerp(base, eased)
+            }
+            None => base,
+        }
+    }
+
+    /// Book a ball that is coming down with nobody under it. Nothing is decided
+    /// until it lands: the clock, the card and the next snap all wait for the
+    /// ball to hit the turf.
+    fn let_fall(
+        &mut self,
+        outcome: PlayOutcome,
+        spot: f32,
+        description: String,
+        thrower: usize,
+        air_yards: f32,
+        batted_down: bool,
+    ) {
+        self.falling = Some(Fall {
+            t: 0.0,
+            from_z: self.ball.z.max(1.0),
+            outcome,
+            spot,
+            description,
+            receiver: self.intended.map(|i| self.roster_index(i)),
+            passer: Some(self.roster_index(thrower)),
+            air_yards,
+            batted_down,
+        });
+        self.ball.flight = None;
+    }
+
+    /// A defender took the ball away. He has it, and the play is not over: the
+    /// offense becomes the chase, and the defense can run it back for six.
+    fn start_return(&mut self, d: usize, spot: f32, thrower: usize, air_yards: f32) {
+        self.ball.flight = None;
+        self.ball.z = 1.0;
+        self.ball.pos = self.players[d].pos;
+        self.ball.holder = Some(d);
+        self.carrier = Some(d);
+        self.returner = Some(d);
+        self.return_spot = spot;
+        self.return_throw = Some((thrower, air_yards));
+        self.phase = Phase::Return;
+        self.intended = None;
+        self.pass_caught = true;
+        // The pad goes to the man with the ball: an interception a player made
+        // himself should not then be run back by the coordinator.
+        if self.human_defender.is_some() {
+            self.human_defender = Some(d);
+        }
+        let text = format!("{} picks it off and is running the other way!", self.name_of(d));
+        self.events.push(SimEvent { t: self.t, text });
+    }
+
+    fn update_return(&mut self, dt: f32) {
+        let Some(r) = self.returner else { return };
+        let goal = field::opponent_goal_side(-self.dir);
+        // The man with the ball answers the pad if it is on him; otherwise he
+        // runs for the far corner the way a returner does.
+        let human = self.human_defender == Some(r);
+        let stick = if human {
+            self.def_control.map(|c| c.move_dir).unwrap_or(Vec2::ZERO)
+        } else {
+            Vec2::ZERO
+        };
+        if stick.length() > 0.18 {
+            let target = self.players[r].pos + stick.normalize_or_zero() * 4.0;
+            let spd = self.speed_cap(r);
+            self.steer(r, target, spd, dt);
+        } else {
+            let aim = Vec2::new(goal, (self.players[r].pos.y * 0.35).clamp(-9.0, 9.0));
+            let spd = self.speed_cap(r);
+            self.steer(r, aim, spd, dt);
+        }
+
+        // The chase. The three men nearest the ball when it was picked are the
+        // ones with a shot at him; everybody else is behind the play.
+        let mut chasers: Vec<(usize, f32)> = (0..7)
+            .filter(|&i| {
+                !self.players[i].down
+                    && self.players[i].stun <= 0.0
+                    && self.players[i].tackle_cooldown <= 0.0
+            })
+            .map(|i| (i, self.players[i].pos.dist(self.players[r].pos)))
+            .collect();
+        chasers.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        chasers.truncate(3);
+        for (n, (i, _)) in chasers.iter().enumerate() {
+            let lead = 0.22 + 0.12 * n as f32;
+            let aim = self.players[r].pos + self.players[r].vel * lead;
+            let spd = self.speed_cap(*i) * 0.97;
+            self.steer(*i, aim, spd, dt);
+        }
+        for i in 0..14 {
+            if i == r || chasers.iter().any(|(c, _)| *c == i) {
+                continue;
+            }
+            self.players[i].vel *= 0.85;
+        }
+        self.integrate(dt);
+
+        let pos = self.players[r].pos;
+        let spot = clamp(pos.x, 0.0, FIELD_LENGTH);
+        let scored = if self.dir > 0 { pos.x <= 0.0 } else { pos.x >= FIELD_LENGTH };
+        if scored {
+            self.finish_return(goal, true);
+            return;
+        }
+        // Out at the sideline: the return dies where he stepped out.
+        if pos.y.abs() >= FIELD_HALF_WIDTH {
+            self.finish_return(spot, false);
+            return;
+        }
+        // A hit. Any of the men in the chase close enough to wrap him up ends it.
+        let hit = chasers
+            .iter()
+            .find(|(i, _)| self.players[*i].pos.dist(self.players[r].pos) <= TACKLE_RADIUS)
+            .map(|(i, _)| *i);
+        if let Some(i) = hit {
+            self.players[i].tackle_cooldown = 0.8;
+            self.finish_return(spot, false);
+            return;
+        }
+        if self.t > SNAP_DELAY + RETURN_SECONDS {
+            self.finish_return(spot, false);
+        }
+    }
+
+    /// End the return: an interception with whatever he gained, or six points.
+    fn finish_return(&mut self, spot: f32, touchdown: bool) {
+        let Some(r) = self.returner else { return };
+        let ret = ((spot - self.return_spot) * -self.dirf()).max(0.0);
+        let name = self.name_of(r);
+        let desc = if touchdown {
+            format!("{name} takes the interception all the way back!")
+        } else {
+            format!("{name} returns the interception {} yards.", ret.round() as i32)
+        };
+        let outcome = if touchdown { PlayOutcome::Touchdown } else { PlayOutcome::Interception };
+        let mut res = self.finish(outcome, spot, desc);
+        res.turnover = true;
+        res.return_yards = ret;
+        res.tackler = Some(self.roster_index(r));
+        // The man carrying it is a defender: he is not a receiver in the box score.
+        res.carrier = None;
+        if let Some((thrower, air)) = self.return_throw {
+            res.passer = Some(self.roster_index(thrower));
+            res.air_yards = air;
+        }
+        res.highlight = true;
+        self.result = Some(res);
     }
 
     /// Eligible receivers with the index to drive [`QbControl::target`].
@@ -3075,10 +3316,38 @@ mod tests {
         let before: Vec<Vec2> = (0..7).map(|i| sim.players[i].pos).collect();
         sim.flip_play();
         assert!(sim.play.flip, "the flip was not kept");
-        for (i, was) in before.iter().enumerate() {
+        // Nobody is placed on his new spot: everybody is still standing where he
+        // lined up, and the button that flipped the call has moved nobody.
+        for i in 0..7 {
             let now = sim.players[i].pos;
-            assert!((now.x - was.x).abs() < 1e-3, "man {i} moved upfield on a flip");
-            assert!((now.y + was.y).abs() < 1e-3, "man {i} did not mirror: {now:?}");
+            assert!(
+                (now - before[i]).length() < 0.05,
+                "man {i} was teleported across on the flip: {now:?} from {:?}",
+                before[i]
+            );
+        }
+        // Then they run there. The guards do not go anywhere at all.
+        sim.await_snap(true);
+        for _ in 0..45 {
+            sim.step(FIXED_DT);
+        }
+        for i in 0..7 {
+            let role = OffRole::ALL[sim.players[i].role_index];
+            let now = sim.players[i].pos;
+            if role.is_line() {
+                assert!(
+                    (now - before[i]).length() < 0.05,
+                    "{role:?} moved on a flip: {now:?} from {:?}",
+                    before[i]
+                );
+                continue;
+            }
+            assert!((now.x - before[i].x).abs() < 0.02, "{role:?} moved upfield on a flip");
+            assert!(
+                (now.y + before[i].y).abs() < 0.05,
+                "{role:?} did not walk to the mirrored spot: {now:?} from {:?}",
+                before[i]
+            );
         }
         // The routes are mirrored too, not just the alignments.
         assert!(
@@ -3086,6 +3355,95 @@ mod tests {
             "the wide left route did not mirror: {:?}",
             sim.players[5].route
         );
+    }
+
+    #[test]
+    fn an_incompletion_lands_before_the_play_is_over() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 21);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        sim.request_snap();
+        for _ in 0..6 {
+            sim.step(FIXED_DT);
+        }
+        let los = sim.los;
+        sim.let_fall(PlayOutcome::PassIncomplete, los, "Incomplete.".to_string(), 0, 12.0, false);
+        // The word does not come while the ball is still up there.
+        assert!(sim.result.is_none(), "the play died in the air");
+        let z0 = sim.ball_position().1;
+        for _ in 0..4 {
+            sim.step(FIXED_DT);
+        }
+        assert!(sim.ball_position().1 < z0, "the ball never started down");
+        assert!(sim.result.is_none(), "the play died before the ball landed");
+        for _ in 0..40 {
+            sim.step(FIXED_DT);
+        }
+        let r = sim.result.clone().expect("the incompletion never came down");
+        assert_eq!(r.outcome, PlayOutcome::PassIncomplete);
+        assert!(sim.ball_position().1 < 0.3, "it was booked above the turf");
+    }
+
+    #[test]
+    fn an_interception_is_run_back_instead_of_ending_the_snap() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_pass())
+            .expect("no pass play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(45.0, 1, 10.0, 31);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        sim.start_return(7, 45.0, 0, 14.0);
+        assert_eq!(sim.phase, Phase::Return, "the pick did not turn the play round");
+        assert_eq!(sim.ball.holder, Some(7), "the wrong man has the ball");
+        sim.step(FIXED_DT);
+        assert!(sim.result.is_none(), "the pick ended the play on the catch");
+        // Nobody gets there for a while: he is away with it.
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 700 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        let r = sim.result.expect("the return never ended");
+        assert!(
+            r.outcome == PlayOutcome::Interception || r.touchdown,
+            "the return came back as {:?}",
+            r.outcome
+        );
+        assert!(r.return_yards >= 0.0, "a return with negative yards");
+        assert!(r.turnover, "an interception is not a turnover");
+    }
+
+    #[test]
+    fn a_return_that_reaches_the_goal_line_is_six() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_pass())
+            .expect("no pass play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(45.0, 1, 10.0, 33);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        // He picks it near the goal he is running at, with nobody between him and
+        // the paint.
+        sim.players[7].pos = Vec2::new(1.4, 0.0);
+        sim.start_return(7, 45.0, 0, 14.0);
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 200 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        let r = sim.result.expect("the return never ended");
+        assert_eq!(r.outcome, PlayOutcome::Touchdown, "the goal line was not six");
+        assert!(r.touchdown);
+        assert!(r.turnover, "the score did not come off a turnover");
     }
 
     #[test]

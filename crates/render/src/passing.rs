@@ -55,8 +55,18 @@ pub struct Guide {
     pub landing: Vec3,
 }
 
+/// The man on the pad: a ring on the turf under him and his name over his head,
+/// so which player is yours is never a guess, whatever phase of the play it is.
+#[derive(Clone, Debug)]
+pub struct Focus {
+    /// Where he is standing, on the ground.
+    pub at: Vec3,
+    pub label: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct PassUi {
+    pub focus: Option<Focus>,
     pub badges: Vec<Badge>,
     pub guide: Option<Guide>,
     /// Meter reading 0..1 while a throw button is held.
@@ -74,6 +84,9 @@ impl PassUi {
                 .project(camera.view(p))
                 .map(|(x, y, _)| (x.round() as i32, y.round() as i32))
         };
+        if let Some(focus) = &self.focus {
+            draw_focus(frame, &project, focus);
+        }
         if let Some(guide) = &self.guide {
             draw_guide(frame, &project, guide, self.short);
         }
@@ -91,6 +104,43 @@ fn shade_for(color: Rgb) -> Rgb {
         INK
     } else {
         WHITE
+    }
+}
+
+/// The reticle: a ring on the grass around the man the pad is on, a caret over
+/// his head and his name beside it. Drawn through the camera, so it sits on the
+/// turf at every angle rather than floating in screen space.
+fn draw_focus(
+    frame: &mut Frame,
+    project: &impl Fn(Vec3) -> Option<(i32, i32)>,
+    focus: &Focus,
+) {
+    const RING: Rgb = Rgb::hex(0x3FD2FF);
+    // A circle in the world, projected: it lies on the grass and squashes with
+    // the camera the way a painted ring would.
+    let mut prev: Option<(i32, i32)> = None;
+    for k in 0..=22 {
+        let a = k as f32 / 22.0 * std::f32::consts::TAU;
+        let p = Vec3::new(
+            focus.at.x + a.cos() * 0.66,
+            focus.at.y + a.sin() * 0.66,
+            0.05,
+        );
+        let Some((x, y)) = project(p) else {
+            prev = None;
+            continue;
+        };
+        if let Some((px, py)) = prev {
+            frame.line(px, py, x, y, RING, 2);
+        }
+        prev = Some((x, y));
+    }
+    // The caret and the name: a ring alone is hard to read in a pile.
+    if let Some((x, y)) = project(Vec3::new(focus.at.x, focus.at.y, 2.45)) {
+        frame.fill_rect_alpha(x - 5, y, 11, 5, RING, 0.92);
+        frame.fill_rect_alpha(x - 3, y - 5, 7, 5, RING, 0.92);
+        frame.fill_rect_alpha(x - 1, y - 8, 3, 3, RING, 0.92);
+        frame.text_shadowed(x + 9, y - 2, &focus.label, 1, WHITE, 1);
     }
 }
 
@@ -213,6 +263,7 @@ mod tests {
         let mut frame = Frame::new(320, 180);
         frame.clear(Rgb::BLACK);
         let ui = PassUi {
+            focus: None,
             badges: vec![Badge {
                 at: Vec3::new(2.0, 1.0, 2.1),
                 label: "A",
@@ -241,6 +292,7 @@ mod tests {
         let mut frame = Frame::new(320, 180);
         frame.clear(Rgb::BLACK);
         let ui = PassUi {
+            focus: None,
             badges: vec![Badge {
                 at: Vec3::new(-40.0, 0.0, 2.1),
                 label: "A",
