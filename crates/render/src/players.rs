@@ -785,7 +785,9 @@ pub fn build_mesh_at(
     let head_r = h * 0.068;
     // The pelvis is narrower than the shoulders, but not by the canyon the old
     // number left: hips carry the stride and the shorts sit on them.
-    let hip_lateral = shoulder_w * (0.26 + 0.08 * pose.strafe.clamp(0.0, 1.0));
+    // Hip joints sit close to the midline: put them wide and the thighs hang
+    // outside the waist no matter how the shorts are cut.
+    let hip_lateral = shoulder_w * (0.18 + 0.06 * pose.strafe.clamp(0.0, 1.0));
 
     // ---------------- legs ----------------
     // Half a cycle between them, so one foot is always cycling toward the ground
@@ -816,10 +818,10 @@ pub fn build_mesh_at(
     // Legs sized off the body, not off a bodybuilder: the thigh was thick enough
     // that the shorts sat out wider than the shoulders, which is what made the
     // figure read as bottom-heavy rather than athletic.
-    let thigh_r = 0.108 * bulk;
-    let knee_r = 0.060 * bulk;
-    let calf_r = 0.084 * bulk;
-    let ankle_r = 0.044 * bulk;
+    let thigh_r = 0.092 * bulk;
+    let knee_r = 0.058 * bulk;
+    let calf_r = 0.082 * bulk;
+    let ankle_r = 0.043 * bulk;
 
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
         let [thigh, knee, foot] = legs[i];
@@ -839,12 +841,22 @@ pub fn build_mesh_at(
         // most of the street-football silhouette, and a tight tube reads as a
         // swimmer instead.
         let hem = hip.lerp(knee_pos, 0.72);
+        // Cut like shorts, not like a pipe: narrow at the waistband, widest a
+        // third of the way down the thigh, gathered again at the hem. The old
+        // tube started at the hip at full width with a flat cap, so the top of
+        // each leg was a cylinder standing out past the waist.
+        let waistband = Vec3::new(
+            hip.x - 0.008,
+            side * hip_lateral * 0.70,
+            hip.z + h * 0.030,
+        );
         mesh.tube(
             &smooth_profile(
                 &[
-                    (hip, thigh_r * 1.00),
-                    (hip.lerp(knee_pos, 0.40), thigh_r * 1.05),
-                    (hem, thigh_r * 0.97),
+                    (waistband, thigh_r * 0.78),
+                    (hip, thigh_r * 0.94),
+                    (hip.lerp(knee_pos, 0.44), thigh_r * 1.02),
+                    (hem, thigh_r * 0.99),
                 ],
                 detail.rings(),
             ),
@@ -857,8 +869,11 @@ pub fn build_mesh_at(
             &mut mesh,
             hem.lerp(hip, 0.07),
             hem,
-            thigh_r * 1.03,
-            thigh_r * 1.02,
+            // Proud enough to clear a twelve-sided ring's own facet depth;
+            // at two percent the trim and the shorts surfaces interlaced and the
+            // hem read as a dotted line.
+            thigh_r * 1.07,
+            thigh_r * 1.06,
             sides,
             accent,
         );
@@ -870,8 +885,8 @@ pub fn build_mesh_at(
         mesh.tube(
             &smooth_profile(
                 &[
-                    (hem, thigh_r * 1.00),
-                    (quad, thigh_r * 0.96),
+                    (hem, thigh_r * 0.94),
+                    (quad, thigh_r * 0.92),
                     (knee_pos, knee_r),
                 ],
                 detail.rings(),
@@ -960,20 +975,20 @@ pub fn build_mesh_at(
     let seat = [
         Ring::new(
             pelvis + Vec3::new(0.0, 0.0, -h * 0.035),
-            0.086 * bulk,
-            hip_lateral * 0.90,
+            0.082 * bulk,
+            shoulder_w * 0.240,
             hip_yaw * 0.6,
         ),
         Ring::new(
             pelvis + Vec3::new(0.0, 0.0, h * 0.005),
-            0.100 * bulk,
-            hip_lateral * 0.98,
+            0.096 * bulk,
+            shoulder_w * 0.266,
             hip_yaw,
         ),
         Ring::new(
             pelvis + Vec3::new(0.0, 0.0, h * 0.048),
-            0.110 * bulk,
-            hip_lateral * 0.92,
+            0.104 * bulk,
+            shoulder_w * 0.252,
             hip_yaw * 0.7,
         ),
     ];
