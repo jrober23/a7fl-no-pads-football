@@ -726,10 +726,13 @@ pub fn build_mesh_at(
     // the turf and the swinging foot is clear of it.
     let hip_z = SOLE + reach;
 
-    let thigh_r = 0.152 * bulk;
-    let knee_r = 0.090 * bulk;
-    let calf_r = 0.112 * bulk;
-    let ankle_r = 0.056 * bulk;
+    // Legs sized off the body, not off a bodybuilder: the thigh was thick enough
+    // that the shorts sat out wider than the shoulders, which is what made the
+    // figure read as bottom-heavy rather than athletic.
+    let thigh_r = 0.128 * bulk;
+    let knee_r = 0.078 * bulk;
+    let calf_r = 0.096 * bulk;
+    let ankle_r = 0.050 * bulk;
 
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
         let [thigh, knee, foot] = legs[i];
@@ -745,7 +748,7 @@ pub fn build_mesh_at(
         // most of the street-football silhouette, and a tight tube reads as a
         // swimmer instead.
         let hem = hip.lerp(knee_pos, 0.82);
-        limb(&mut mesh, hip, hem, thigh_r * 1.18, thigh_r * 1.04, sides, shorts);
+        limb(&mut mesh, hip, hem, thigh_r * 1.16, thigh_r * 1.03, sides, shorts);
         // Trim round the hem, so the short leg ends on a line instead of a cut.
         limb(
             &mut mesh,
