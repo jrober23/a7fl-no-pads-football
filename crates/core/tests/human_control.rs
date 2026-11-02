@@ -137,8 +137,17 @@ fn the_stick_runs_the_ball_carrier() {
 fn a_human_snap_is_booked_by_the_game() {
     let teams = league_teams();
     let mut game = GameState::new(teams[0].clone(), teams[1].clone(), 21);
-    // Clear the opening throw-off.
-    game.simulate_next();
+    // Clear the opening throw-off, and the try if it was run all the way back:
+    // the test needs a scrimmage down, not a particular first play.
+    let mut guard = 0;
+    while !matches!(game.action(), a7fl_core::game::Action::CallPlay { .. }) && guard < 4 {
+        game.simulate_next();
+        guard += 1;
+    }
+    assert!(
+        matches!(game.action(), a7fl_core::game::Action::CallPlay { .. }),
+        "the game never reached a scrimmage down"
+    );
     let before = game.total_plays();
 
     let play = playbook()

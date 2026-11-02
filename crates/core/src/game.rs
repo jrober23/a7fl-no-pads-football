@@ -12,7 +12,8 @@ use crate::math::{clamp, Rng};
 use crate::playbook::{DefCall, Play};
 use crate::rules::{
     enforce, penalty_sentence, CONVERSION_ONE_POINT_YARDS, CONVERSION_TWO_POINT_YARDS, DOWNS,
-    MERCY_LEAD_TOUCHDOWNS, OVERTIME_FIRST_DOWNS_ALLOWED, OVERTIME_SPOT_YARD_LINE,
+    MERCY_LEAD_TOUCHDOWNS, MERCY_LEAD_TOUCHDOWNS_EARLY, OVERTIME_FIRST_DOWNS_ALLOWED,
+    OVERTIME_SPOT_YARD_LINE,
     PLAY_CLOCK_SECONDS, QUARTER_SECONDS, SAFETY_THROW_OFF_YARD_LINE, THROW_OFF_SPOT_YARD_LINE,
     TIME_BETWEEN_SNAPS, TIMEOUTS_PER_HALF, TIMEOUT_SECONDS, TWO_MINUTE_WARNING, YARDS_TO_GO,
 };
@@ -820,6 +821,10 @@ impl GameState {
         if let Some(ot) = self.ot.as_mut() {
             ot.scores[team] += points;
         }
+        // The lead is checked the moment it is taken, not at the end of the
+        // quarter: five touchdowns in the first is a game that is over there and
+        // then, and the rule the league plays by is written that way.
+        self.apply_mercy_rule();
     }
 
     fn start_series(&mut self, offense: usize, spot: f32) {
@@ -983,9 +988,7 @@ impl GameState {
                 // Teams switch ends; the team with the ball keeps it.
                 self.refresh_direction();
             }
-            if self.quarter == 4 {
-                self.apply_mercy_rule();
-            }
+            self.apply_mercy_rule();
             return;
         }
 
@@ -999,13 +1002,29 @@ impl GameState {
     }
 
     fn apply_mercy_rule(&mut self) {
+        if self.over || self.is_overtime() {
+            return;
+        }
         let diff = (self.score[0] as i32 - self.score[1] as i32).abs();
-        if diff >= (MERCY_LEAD_TOUCHDOWNS as i32) * 6 {
+        // Five touchdowns ends it in the first quarter; seven is the mark from the
+        // second quarter on, where a team has had a half to find something.
+        let early = self.quarter <= 1;
+        let tds = if early {
+            MERCY_LEAD_TOUCHDOWNS_EARLY
+        } else {
+            MERCY_LEAD_TOUCHDOWNS
+        };
+        if diff >= (tds as i32) * 6 {
             let winner = if self.score[0] > self.score[1] { 0 } else { 1 };
+            let when = if early {
+                "five touchdowns before the end of the first quarter"
+            } else {
+                "seven touchdowns"
+            };
             self.commentary
-                .push("Mercy rule: the lead is seven touchdowns, ball game.".to_string());
+                .push(format!("Mercy rule: the lead is {when}, ball game."));
             self.finish_game(Some(winner));
-        } else if diff >= 4 * 6 {
+        } else if self.quarter == 4 && diff >= 4 * 6 {
             self.no_timeouts_for_leader = true;
             self.commentary
                 .push("Four-score lead in the fourth: the leader can't use timeouts.".to_string());
@@ -1252,6 +1271,30 @@ mod tests {
         g.end_quarter();
         assert_eq!(g.quarter, 4);
         assert!(g.over, "a 56-point lead should end it at the start of the fourth");
+        assert_eq!(g.winner, Some(0));
+    }
+
+    #[test]
+    fn five_touchdowns_in_the_first_quarter_ends_it() {
+        let t = league_teams();
+        let mut g = GameState::new(t[0].clone(), t[1].clone(), 11);
+        g.quarter = 1;
+        g.apply_score(0, 24);
+        assert!(!g.over, "four scores in the first quarter is still a game");
+        g.apply_score(0, 6);
+        assert!(g.over, "thirty points in the first should call the game");
+        assert_eq!(g.winner, Some(0));
+    }
+
+    #[test]
+    fn seven_touchdowns_is_the_mark_after_the_first_quarter() {
+        let t = league_teams();
+        let mut g = GameState::new(t[0].clone(), t[1].clone(), 12);
+        g.quarter = 2;
+        g.apply_score(0, 30);
+        assert!(!g.over, "a five-score lead after the first is not the rule");
+        g.apply_score(0, 12);
+        assert!(g.over, "a forty-two point lead should call the game");
         assert_eq!(g.winner, Some(0));
     }
 

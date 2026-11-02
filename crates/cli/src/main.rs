@@ -324,7 +324,8 @@ fn cmd_rules() {
     println!("  fourth down  throw-off from the line of scrimmage replaces the punt");
     println!("  overtime     possessions from the 25, two first downs allowed, one timeout;");
     println!("               two-point conversions forced from the second overtime on");
-    println!("  mercy        seven touchdown lead at the start of the fourth ends the game");
+    println!("  mercy        five touchdowns in the first quarter ends the game, and");
+    println!("               seven touchdowns from the second quarter on");
     println!();
     println!("PENALTIES ENFORCED");
     for kind in [

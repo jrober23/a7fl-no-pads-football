@@ -8,6 +8,7 @@
 //! run as they do in `sim`.
 
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use a7fl_core::ai;
@@ -20,6 +21,7 @@ use a7fl_core::playbook::{
 };
 use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use a7fl_core::sim::{DefControl, Phase, PlaySim, QbControl};
+use a7fl_core::team::league_teams;
 use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::hud;
@@ -29,6 +31,7 @@ use a7fl_render::defsheet;
 use a7fl_render::playsheet::Dir;
 use a7fl_render::terminal;
 
+use crate::menu;
 use crate::pad::{self, Input, Pad};
 use crate::settings::Settings;
 use crate::view::{View, CANVAS_H, CANVAS_W};
@@ -323,23 +326,60 @@ impl Arcade {
             print!("{}", terminal::enter());
             io::stdout().flush().ok();
         }
-        self.play();
+        loop {
+            BACK_TO_MENU.store(false, Ordering::Relaxed);
+            self.quit = false;
+            self.play();
+            // A lens moved in the pause menu is the player's lens too: it goes
+            // back into the settings file rather than lasting only as long as
+            // this game.
+            if let Some(settings) = &mut self.settings {
+                let (zoom, tilt) = self.broadcast.lens();
+                if (settings.lens_zoom - zoom).abs() > 0.001
+                    || (settings.lens_tilt - tilt).abs() > 0.001
+                {
+                    settings.lens_zoom = zoom;
+                    settings.lens_tilt = tilt;
+                    settings.save();
+                }
+            }
+            // Leaving a game no longer closes the program: the player picks the
+            // clubs and goes again, and only the menu's own quit ends it.
+            if !BACK_TO_MENU.load(Ordering::Relaxed) || !self.reopen_menu() {
+                break;
+            }
+        }
         if terminal_mode {
             print!("{}", terminal::leave());
             io::stdout().flush().ok();
         }
-        // A lens moved in the pause menu is the player's lens too: it goes back
-        // into the settings file rather than lasting only as long as this game.
-        if let Some(settings) = &mut self.settings {
-            let (zoom, tilt) = self.broadcast.lens();
-            if (settings.lens_zoom - zoom).abs() > 0.001
-                || (settings.lens_tilt - tilt).abs() > 0.001
-            {
-                settings.lens_zoom = zoom;
-                settings.lens_tilt = tilt;
-                settings.save();
-            }
-        }
+    }
+
+    /// Back to the front end after a game the player left on purpose: pick the
+    /// clubs again and start over. False when they quit from the menu, which is
+    /// the one way out of the program now.
+    fn reopen_menu(&mut self) -> bool {
+        let Some(settings) = self.settings.as_mut() else {
+            return false;
+        };
+        let kick = match menu::run(&mut self.view, self.pad.as_mut(), settings) {
+            Some(kick) => kick,
+            None => return false,
+        };
+        let teams = league_teams();
+        let seed = self.game.seed ^ 0x00A7_F1E5;
+        let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
+        game.set_opening_receiver(if kick.receive { 0 } else { 1 });
+        game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(settings.difficulty));
+        self.broadcast = Broadcast::new(
+            CANVAS_W,
+            CANVAS_H,
+            [game.teams[0].clone(), game.teams[1].clone()],
+        );
+        self.broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
+        self.game = game;
+        self.my_team = Some(0);
+        true
     }
 
     fn play(&mut self) {
@@ -1435,15 +1475,6 @@ impl Arcade {
     }
 }
 
-/// Run one snap live: simulate in fixed steps, render at a steady rate and let the
-/// player steer the quarterback until the play resolves. Returns false when the
-/// player has quit.
-#[allow(clippy::too_many_arguments)]
-/// The pause screen. Returns false when the player chose to quit the game.
-///
-/// START used to close the game on the spot, which put the camera setting — the
-/// one thing a player wants to change in the middle of a drive — out of reach
-/// once the ball was snapped.
 /// What the pause screen can put behind its menu: the call sheet and the
 /// between-plays cards have no live picture, but a snap and a throw-off do.
 enum PausedShot<'s, 'a> {
@@ -1493,6 +1524,15 @@ fn draw_pause_lines(frame: &mut a7fl_render::Frame, lines: &[String]) {
     }
 }
 
+/// Set when the player asked for the front end instead of the desktop.
+///
+/// The pause screen is a free function called from the bottom of a snap, a
+/// throw-off and the call sheets, and everything up that stack only knows "carry
+/// on" or "the game is over". The one answer that has to survive the walk out is
+/// this one: a player who wants another game should not have to start the program
+/// again.
+static BACK_TO_MENU: AtomicBool = AtomicBool::new(false);
+
 /// The pause screen. Returns false when the player chose to quit the game.
 ///
 /// START used to close the game on the spot, which put the camera setting — the
@@ -1513,6 +1553,8 @@ fn pause_menu(
     // The lens sub-screen: the stick on the camera, the frozen picture in front
     // of it, exactly like the lens screen in the settings.
     let mut tuning = false;
+    // The quit prompt: 0 is the menu, 1 is the desktop.
+    let mut leaving: Option<usize> = None;
     let mut last = Instant::now();
     // The picture as the lens last saw it, redrawn only when the lens moves.
     let mut still: Option<a7fl_render::Frame> = None;
@@ -1527,6 +1569,8 @@ fn pause_menu(
             // B backs out of the lens without leaving the game paused behind it.
             if tuning {
                 tuning = false;
+            } else if leaving.is_some() {
+                leaving = None;
             } else {
                 break true;
             }
@@ -1554,6 +1598,20 @@ fn pause_menu(
             if input.pressed.a {
                 tuning = false;
             }
+        } else if let Some(choice) = leaving.as_mut() {
+            // Quitting asks a question first: this game, or the whole game?
+            // Leaving used to close the window on the spot, so a player who only
+            // wanted another club had to start the program again.
+            match nav.step(input.stick, dt) {
+                Some(Dir::Up) | Some(Dir::Down) => *choice = (*choice + 1) % 2,
+                _ => {}
+            }
+            if input.pressed.a {
+                if *choice == 0 {
+                    BACK_TO_MENU.store(true, Ordering::Relaxed);
+                }
+                break false;
+            }
         } else {
             match nav.step(input.stick, dt) {
                 Some(Dir::Up) => pick = (pick + ITEMS - 1) % ITEMS,
@@ -1568,7 +1626,8 @@ fn pause_menu(
                         still = None;
                     }
                     2 => tuning = true,
-                    _ => break false,
+                    3 => leaving = Some(0),
+                    _ => {}
                 }
             }
         }
@@ -1583,6 +1642,16 @@ fn pause_menu(
                 String::new(),
                 "  [STICK] ZOOM / TILT   [X] RESET   [A] DONE".to_string(),
             ]
+        } else if let Some(choice) = leaving {
+            vec![
+                String::new(),
+                "  LEAVE THIS GAME?".to_string(),
+                String::new(),
+                format!("    {} BACK TO THE MENU", mark(choice == 0)),
+                format!("    {} QUIT THE GAME", mark(choice == 1)),
+                String::new(),
+                "  [STICK] CHOOSE   [A] SELECT   [B] STAY".to_string(),
+            ]
         } else {
             vec![
                 String::new(),
@@ -1595,7 +1664,7 @@ fn pause_menu(
                     cam_name(CAMS[*cam % CAMS.len()])
                 ),
                 format!("    {} LENS      {zoom:.2} / {tilt:+.2}   [A] ADJUST", mark(pick == 2)),
-                format!("    {} QUIT GAME", mark(pick == 3)),
+                format!("    {} LEAVE GAME", mark(pick == 3)),
                 String::new(),
                 "  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string(),
             ]
@@ -1627,11 +1696,21 @@ fn pause_menu(
 }
 
 /// Whether a dead snap is worth running back: fifteen yards of offence, six
-/// points, or a return that came out of a turnover.
+/// points, a return that came out of a turnover, or any flag at all.
+///
+/// A penalty is always worth a look: the flag is the one thing on the field a
+/// player cannot see for himself from the far sideline, and the snap is where
+/// the foul happened.
 fn worth_a_replay(sim: &PlaySim) -> bool {
     sim.result
         .as_ref()
-        .map(|r| r.touchdown || r.yards >= 15.0 || r.return_yards >= 15.0)
+        .map(|r| {
+            r.touchdown
+                || r.yards >= 15.0
+                || r.return_yards >= 15.0
+                || r.penalty.is_some()
+                || sim.flag.is_some()
+        })
         .unwrap_or(false)
 }
 

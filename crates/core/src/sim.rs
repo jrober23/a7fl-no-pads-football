@@ -67,13 +67,17 @@ pub const PUMP_TIME: f32 = 0.55;
 
 /// How long an interception may be run back before the returner is done.
 pub const RETURN_SECONDS: f32 = 9.0;
+/// How long the chase takes to reach full speed. They have to turn and run; the
+/// man with the ball does not. Without it the nearest two were on him as soon as
+/// the grace ran out and every interception came back three yards.
+pub const CHASE_WARMUP: f32 = 1.4;
 
 /// The beat of daylight the man who just picked it off gets before anybody can
 /// lay a hand on him. The catch happens at the landing spot, which is where the
 /// man the ball was thrown to is standing, so without it the nearest "tackler"
 /// was the receiver he had just taken it from and every interception was booked
 /// dead on the frame the return started.
-pub const RETURN_GRACE: f32 = 0.85;
+pub const RETURN_GRACE: f32 = 1.7;
 
 /// How much room a body is allowed past the paint. The advertising boards stand
 /// 0.55 of a yard beyond the sideline; a man used to be allowed a yard and a
@@ -1857,24 +1861,27 @@ impl<'a> PlaySim<'a> {
         Vec2::new(qb.x - self.dirf() * 0.6, qb.y + slide * 1.1)
     }
 
-    /// Blockers mirror the nearest threat to their aim point.
+    /// Is this man in the block, rather than running a route or holding the ball?
+    fn blocker_on_this_play(&self, i: usize) -> bool {
+        let role = OffRole::ALL[self.players[i].role_index];
+        matches!(
+            self.play.assignment(role),
+            Some(Assign::PassBlock { .. })
+                | Some(Assign::RunBlock { .. })
+                | Some(Assign::ScreenBlock { .. })
+        ) || (role != OffRole::Qb && self.carrier.is_some() && self.play.family.is_run())
+    }
+
+    /// Blockers mirror the threat to their aim point.
+    ///
+    /// On Easy it is the nearest body, which is what a line of men who have never
+    /// spoken to each other manages. On Normal and Hard the line counts inside
+    /// out: the man nearest the ball picks first, and every blocker after him
+    /// takes the most inside rusher nobody else has. Without that, two linemen
+    /// doubled one rusher while a third came through the gap they left.
     fn block_target(&self, i: usize, aim: Vec2) -> Vec2 {
-        let mut best: Option<(usize, f32)> = None;
-        for d in 7..14 {
-            if self.players[d].down || self.players[d].stun > 0.0 {
-                continue;
-            }
-            let pos = self.players[d].pos;
-            let dist = pos.dist(aim);
-            if dist < 7.0 {
-                let closer = best.map(|(_, b)| dist < b).unwrap_or(true);
-                if closer {
-                    best = Some((d, dist));
-                }
-            }
-        }
-        match best {
-            Some((d, _)) => {
+        match self.block_threat(i, aim) {
+            Some(d) => {
                 let threat = self.players[d].pos;
                 let to_threat = (threat - self.players[i].pos).normalize_or_zero();
                 // Take the defender on the upfield shoulder.
@@ -1882,6 +1889,44 @@ impl<'a> PlaySim<'a> {
             }
             None => aim,
         }
+    }
+
+    /// Which rusher this blocker takes. On Easy that is simply the closest; on
+    /// the harder levels the line works inside out, so every man has his own.
+    fn block_threat(&self, i: usize, aim: Vec2) -> Option<usize> {
+        let mut men: Vec<(usize, f32)> = (7..14)
+            .filter(|&d| !self.players[d].down && self.players[d].stun <= 0.0)
+            .map(|d| (d, self.players[d].pos.dist(aim)))
+            .filter(|(_, dist)| *dist < 7.0)
+            .collect();
+        // Most inside first: the rusher nearest the ball is the one who matters.
+        men.sort_by(|a, b| {
+            let inside = |d: usize| (self.players[d].pos.y - self.setup.ball_y).abs();
+            inside(a.0)
+                .partial_cmp(&inside(b.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+        });
+        if self.difficulty == Difficulty::Easy {
+            return men
+                .iter()
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
+                .map(|(d, _)| *d);
+        }
+        // How many blockers line up closer to the ball than this one: they pick
+        // first, so he takes the card after theirs.
+        let my_inside = (self.players[i].pos.y - self.setup.ball_y).abs();
+        let ahead = (0..7)
+            .filter(|&j| j != i && self.blocker_on_this_play(j))
+            .filter(|&j| {
+                let theirs = (self.players[j].pos.y - self.setup.ball_y).abs();
+                theirs + 0.25 < my_inside
+                    || ((theirs - my_inside).abs() <= 0.25 && j < i)
+            })
+            .count();
+        // More blockers than rushers is normal: the spare men hold their ground
+        // at the aim point rather than doubling up on somebody's man.
+        men.get(ahead).map(|(d, _)| *d)
     }
 
     // -----------------------------------------------------------------
@@ -2121,21 +2166,21 @@ impl<'a> PlaySim<'a> {
             if self.players[i].down || self.players[i].stun > 0.0 {
                 continue;
             }
-            let role = OffRole::ALL[self.players[i].role_index];
-            let is_blocker = matches!(
-                self.play.assignment(role),
-                Some(Assign::PassBlock { .. })
-                    | Some(Assign::RunBlock { .. })
-                    | Some(Assign::ScreenBlock { .. })
-            ) || (role != OffRole::Qb && self.carrier.is_some() && self.play.family.is_run());
-            if !is_blocker {
+            if !self.blocker_on_this_play(i) {
                 continue;
             }
+            // On the harder levels nobody doubles up: a defender already leaning
+            // on a teammate is somebody else's man.
+            let coordinated = self.difficulty != Difficulty::Easy;
             // Find a defender to lean on.
             let mut target = None;
             let mut best = 1.35f32;
             for d in 7..14 {
-                if self.players[d].down || self.players[d].stun > 0.0 || self.players[d].beaten > 0.0 {
+                if self.players[d].down
+                    || self.players[d].stun > 0.0
+                    || self.players[d].beaten > 0.0
+                    || (coordinated && self.players[d].engaged.is_some())
+                {
                     continue;
                 }
                 let dist = self.players[d].pos.dist(self.players[i].pos);
@@ -3024,9 +3069,21 @@ impl<'a> PlaySim<'a> {
             return;
         }
         self.play = play;
+        // An audible changes what the offence is doing. The defence is standing
+        // where it is standing: re-drawing their alignment turned every defender
+        // round on his mark, which read as the other team resetting at the line.
+        let def_was: Vec<(Vec2, f32)> = (7..14)
+            .map(|d| (self.players[d].pos, self.players[d].heading))
+            .collect();
         self.line_up();
         self.build_routes();
         self.assign_coverage();
+        for (k, (pos, heading)) in def_was.into_iter().enumerate() {
+            let d = 7 + k;
+            self.players[d].pos = pos;
+            self.players[d].heading = heading;
+            self.players[d].vel = Vec2::ZERO;
+        }
         self.capture_presnap();
         self.carrier = None;
         self.intended = None;
@@ -3082,7 +3139,7 @@ impl<'a> PlaySim<'a> {
         self.shift = None;
         self.shift_t = 0.0;
         let upfield = self.dirf().atan2(0.0);
-        for i in 0..14 {
+        for i in 0..7 {
             let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
             self.players[i].pos = base;
             self.players[i].vel = Vec2::ZERO;
@@ -3101,7 +3158,10 @@ impl<'a> PlaySim<'a> {
         let upfield = Vec2::new(self.dirf(), 0.0);
         let up_angle = upfield.y.atan2(upfield.x);
         let mut done = true;
-        for i in 0..14 {
+        // Only the offence walks. The defence keeps its ground, its footing and
+        // its eyes: turning seven defenders round on the spot every time the
+        // player flipped a call read as the other team resetting at the line.
+        for i in 0..7 {
             let to = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
             let start = from.get(i).copied().unwrap_or(to);
             let delta = to - start;
@@ -3207,10 +3267,14 @@ impl<'a> PlaySim<'a> {
             .collect();
         chasers.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         chasers.truncate(3);
+        // The chase starts behind the play: they have to turn and run, and the
+        // man with the ball does not, so the first stride or two are slower.
+        let warm = (self.return_t / CHASE_WARMUP).clamp(0.0, 1.0);
+        let chase_pace = 0.55 + 0.42 * warm;
         for (n, (i, _)) in chasers.iter().enumerate() {
             let lead = 0.22 + 0.12 * n as f32;
             let aim = self.players[r].pos + self.players[r].vel * lead;
-            let spd = self.speed_cap(*i) * 0.97;
+            let spd = self.speed_cap(*i) * chase_pace;
             self.steer(*i, aim, spd, dt);
         }
         for i in 0..14 {
@@ -3858,6 +3922,69 @@ mod tests {
         );
         assert!(r.return_yards >= 0.0, "a return with negative yards");
         assert!(r.turnover, "an interception is not a turnover");
+    }
+
+    /// A return is worth more than the catch: the cover men were standing on the
+    /// spot when he took it, and used to end it after three yards.
+    #[test]
+    fn an_interception_return_is_longer_than_the_catch() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_pass())
+            .expect("no pass play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(45.0, 1, 10.0, 39);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        sim.start_return(7, 45.0, 0, 14.0);
+        // The receiver he took it from is on top of him at the catch.
+        let spot = sim.players[7].pos;
+        sim.players[4].pos = spot;
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 900 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        let r = sim.result.expect("the return never ended");
+        assert!(
+            r.return_yards >= 8.0,
+            "the return was only {} yards",
+            r.return_yards
+        );
+    }
+
+    /// The harder levels give the line one man each instead of letting two men
+    /// stand on the same rusher while a third walks through.
+    #[test]
+    fn the_line_takes_a_man_each_on_normal_and_hard() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_pass())
+            .expect("no pass play");
+        let aim = Vec2::new(45.0, 0.0);
+        for level in [Difficulty::Normal, Difficulty::Hard] {
+            let dcall = defensive_playbook()[0].clone();
+            let s = setup(45.0, 1, 10.0, 93);
+            let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+            sim.difficulty = level;
+            let picks: Vec<usize> = (0..7)
+                .filter(|&i| sim.blocker_on_this_play(i))
+                .filter_map(|i| sim.block_threat(i, aim))
+                .collect();
+            let mut seen: Vec<usize> = Vec::new();
+            for d in &picks {
+                assert!(
+                    !seen.contains(d),
+                    "{level:?}: two blockers took defender {d}: {picks:?}"
+                );
+                seen.push(*d);
+            }
+            assert!(!picks.is_empty(), "{level:?}: nobody had a man to block");
+        }
     }
 
     #[test]

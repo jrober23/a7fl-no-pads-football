@@ -3,7 +3,8 @@
 //! Everything here comes from the published "Official Rules of American 7s Football
 //! League": 4 x 15 minute quarters, a 30 second play clock, throw-offs instead of
 //! kickoffs, no kicking at all, 1- or 2-point conversion by scrimmage play, overtime
-//! possessions from the 25 and the mercy rule.
+//! possessions from the 25, and the mercy rule (five touchdowns in the first
+//! quarter, seven after it).
 //!
 //! Penalty distances, dead/live status, "loss of down" and automatic first downs are
 //! transcribed from the A7FL penalty summary. Enforcement uses `BasicSpot`,
@@ -45,6 +46,10 @@ pub const THROW_OFF_GUNNERS: usize = 3;
 pub const OVERTIME_SPOT_YARD_LINE: f32 = 25.0;
 pub const OVERTIME_FIRST_DOWNS_ALLOWED: u8 = 2;
 pub const MERCY_LEAD_TOUCHDOWNS: u32 = 7;
+/// The first quarter is called early: five touchdowns is a game that has
+/// stopped being a game, and the league does not make anybody play out the rest
+/// of a 30-point half. From the second quarter on it takes seven.
+pub const MERCY_LEAD_TOUCHDOWNS_EARLY: u32 = 5;
 
 /// Conversion spots (from the scoring team's perspective, yards to goal).
 pub const CONVERSION_ONE_POINT_YARDS: f32 = 5.0;

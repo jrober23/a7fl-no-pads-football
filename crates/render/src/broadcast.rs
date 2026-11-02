@@ -619,12 +619,14 @@ impl Broadcast {
             // A pinned shot is cut on the flag and holds it: no ball tracking, no
             // preview blend, just the spot the foul was called on.
             Some(at) => self.flag_camera(at, dir),
-            None => {
-                let shot = self.camera_for(mode, focus, dir, sim.los, sim.setup.ball_y);
-                let wide =
-                    self.camera_for(CameraMode::SkyCam, focus, dir, sim.los, sim.setup.ball_y);
-                blend_camera(&shot, &wide, smooth(self.preview_ease))
-            }
+            None => self.preview_camera(
+                mode,
+                focus,
+                dir,
+                sim.los,
+                sim.setup.ball_y,
+                self.preview_ease,
+            ),
         };
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
@@ -927,10 +929,12 @@ impl Broadcast {
         self.scene.draw_mesh(frame, &crowd, camera);
     }
 
-    /// Yellow line of scrimmage and blue first-down marker, painted on the turf.
+    /// Blue line of scrimmage and yellow first-down marker, painted on the turf.
+    /// The two used to be the other way round, which put the bright yellow on the
+    /// line the ball was already on and the quiet blue on the one it had to reach.
     fn paint_lines(&mut self, frame: &mut Frame, camera: &Camera, los: f32, direction: i8, to_go: f32) {
         let first_down = los + direction as f32 * to_go;
-        for (x, color) in [(los, Rgb::hex(0xF2C14E)), (first_down, Rgb::hex(0x4EA8F2))] {
+        for (x, color) in [(los, Rgb::hex(0x4EA8F2)), (first_down, Rgb::hex(0xF2C14E))] {
             if x < -field::ENDZONE_DEPTH || x > FIELD_LENGTH + field::ENDZONE_DEPTH {
                 continue;
             }
@@ -960,6 +964,34 @@ impl Broadcast {
                 }
             }
         }
+    }
+
+    /// The live shot, lifted into the pre-snap preview.
+    ///
+    /// The effect is the same -- the picture rises out of the runner's shot and
+    /// opens over the whole route tree -- but both ends of the rise are aimed
+    /// straight down the field. Blending the live shot as it was carried half its
+    /// sideline angle into every frame of the rise, which is the tilt that kept
+    /// showing. Now only the height and the distance travel; the axis never
+    /// leaves the ball's lane.
+    fn preview_camera(
+        &self,
+        mode: CameraMode,
+        focus: Vec2,
+        direction: i8,
+        los: f32,
+        ball_y: f32,
+        ease: f32,
+    ) -> Camera {
+        let shot = self.camera_for(mode, focus, direction, los, ball_y);
+        if ease <= 0.001 {
+            return shot;
+        }
+        // The smoothstep only shapes the pace of the rise; the straightness holds
+        // from the first frame it moves on, which is what the player sees.
+        let t = smooth(ease).max(0.001);
+        let wide = self.camera_for(CameraMode::SkyCam, focus, direction, los, ball_y);
+        blend_camera(&straight_camera(&shot, focus, direction), &wide, t)
     }
 
     /// The shot on a flag: tight, low and side-on, with the pennant in the middle
@@ -1667,6 +1699,45 @@ mod tests {
         }
     }
 
+    /// Every frame of the preview is straight down the field, however far the
+    /// rise has got: the tilt the player saw was the live shot's angle mixed in.
+    #[test]
+    fn no_frame_of_the_preview_is_tilted() {
+        let teams = league_teams();
+        let b = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        for mode in [CameraMode::Broadcast, CameraMode::Classic] {
+            for y in [0.0f32, -11.0, 8.0] {
+                for dir in [1i8, -1] {
+                    let expect = if dir > 0 { 0.0 } else { std::f32::consts::PI };
+                    // Ease 0 is the live shot itself; every frame of the rise
+                    // after it has to be straight.
+                    for step in 1..=10 {
+                        let ease = step as f32 / 10.0;
+                        let cam =
+                            b.preview_camera(mode, Vec2::new(50.0, y), dir, 40.0, 0.0, ease);
+                        assert!(
+                            (cam.pos.y - y).abs() < 1e-3,
+                            "{mode:?} preview sits {:.2} yards off the lane at ease {ease}",
+                            cam.pos.y - y
+                        );
+                        let mut off = cam.yaw - expect;
+                        while off > std::f32::consts::PI {
+                            off -= std::f32::consts::TAU;
+                        }
+                        while off < -std::f32::consts::PI {
+                            off += std::f32::consts::TAU;
+                        }
+                        assert!(
+                            off.abs() < 1e-3,
+                            "{mode:?} preview is {off:.3} rad off the field at ease {ease}"
+                        );
+                        assert!(cam.pitch < 0.0, "the preview is not looking at the field");
+                    }
+                }
+            }
+        }
+    }
+
     /// A reviewed foul is cut to the flag, not to the ball.
     #[test]
     fn a_pinned_shot_frames_the_flag_instead_of_the_ball() {
@@ -1890,6 +1961,18 @@ fn build_crowd(teams: &[Team; 2]) -> Vec<CrowdFigure> {
         z = z_top;
         y_front = y_back;
     }
+    out
+}
+
+/// The same shot, re-aimed straight up the field: same place on the ground, same
+/// height and lens, but standing in the ball's lane and looking down it. Used as
+/// the near end of the preview, so no part of the rise is cross-field.
+fn straight_camera(cam: &Camera, focus: Vec2, direction: i8) -> Camera {
+    let d = direction as f32;
+    let pos = Vec3::new(cam.pos.x, focus.y, cam.pos.z);
+    let mut out = Camera::new(pos, 0.0, 0.0);
+    out.look_at(Vec3::new(pos.x + d * 24.0, focus.y, 0.4));
+    out.fov = cam.fov;
     out
 }
 

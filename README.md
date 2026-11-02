@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.23.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.24.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -330,19 +330,23 @@ The lens is saved when the game closes, so a shot tuned at the half is still the
 the next time it opens.
 
 It works on the call sheet and on the fourth-down choice as well, and START no longer
-closes the game anywhere: **QUIT GAME** is the only way out. It used to close on the
-spot, which meant the camera setting — the one thing a player does want to change
-mid-drive — was unreachable once the ball was snapped, and a stray press on the call
-sheet ended the whole game.
+closes the game anywhere. **LEAVE GAME** asks which game you mean: *BACK TO THE MENU*
+puts down this one and returns to the front end to pick two clubs again, and *QUIT THE
+GAME* closes the program. It used to be one choice only, and it closed the window on
+the spot, so a player who wanted another game had to start the program again.
 
 ### At the line
 
 The line of scrimmage is a place to work now, not a menu to get through.
 
 Holding RT at the line is the play preview: the shot lifts straight up over the
-whole route tree — it rises into the sky shot, which is square to the field rather
-than tilted across it — and the routes are drawn on the grass, heavier, with a
-bigger bar at the end of each one. Let go and the picture drops back behind the ball and the drawing goes
+whole route tree — it rises into the sky shot, and every frame of the rise is square
+to the field rather than tilted across it, because only the height and the distance
+travel and the axis never leaves the ball's lane — and the routes are drawn on the
+grass, heavier, with a bigger bar at the end of each one.
+
+The line of scrimmage is painted blue and the first-down marker yellow: the line you
+have to reach is the bright one, and the line the ball is already on is not. Let go and the picture drops back behind the ball and the drawing goes
 with it — the call is not left lying open for the defence to read.
 
 The line is live otherwise. You may walk a defender anywhere before the snap,
@@ -455,8 +459,8 @@ set. Classic, the shot from behind the ball, is tilted down a little further tha
 used to be, so the running back behind the quarterback is in the frame instead of
 under it.
 
-Any snap that gains fifteen yards or more, scores, or comes back out of an
-interception gets a replay from the broadcast camera before the card comes up, with
+Any snap that gains fifteen yards or more, scores, comes back out of an
+interception, or carries any flag at all gets a replay before the card comes up, with
 `REPLAY` in the corner: A skips it. The replay is the play as it was played — the
 frames it was drawn from are kept for it — so the throws, moves and stick work in it
 are the ones you put in.
@@ -465,6 +469,7 @@ A flagged snap is replayed at the flag instead. The tape is cut to the spot of t
 foul and labelled `THE FLAG`, because on a big play with a call on it the call is
 what the second look is for: the pennant stands where the infraction happened in the
 same picture, and the play that made the replay worth running is the background.
+Every flag gets that second look, whether or not the play was worth one on its own.
 
 A man who goes out of bounds stays on the grass side of the advertising boards. The
 boards stand on the bleacher line rather than on the paint, with a run-off apron
@@ -573,13 +578,16 @@ The rule set follows the 7-on-7 no-pads rulebook rather than the NFL's:
 - **Throw-offs replace kickoffs.** The ball is *thrown* from the throwing team's
   own 35, with three gunners against one returner, a minimum of 40 air yards.
   Fair catch is legal, a touchback comes out to the 20, and a returner downed in
-  his own end zone concedes a safety.
+  his own end zone concedes a safety. A returner alone under the ball always fields
+  it: only a catch made in contact can be muffed.
 - **Fourth down becomes a throw-off** from the line of scrimmage instead of a punt.
 - **Conversions are chosen, not kicked.** 1 point from the 5 or 2 points from the
   10, and the choice is locked in for the game.
 - **Overtime** gives each side a possession from the 25 with two first downs
   allowed; two-point conversions are forced from the second overtime on.
-- **Mercy rule:** a seven-touchdown lead at the start of the fourth ends the game.
+- **Mercy rule:** five touchdowns before the end of the first quarter ends the game,
+  and seven touchdowns from the second quarter on. The lead is checked the moment it
+  is taken, not at the next change of quarters.
 
 The penalty catalog covers 33 fouls (false start, offside, delay of game, holding,
 block in the back, clipping, chop block, intentional grounding, both pass
@@ -602,6 +610,12 @@ Defense is played out on the field, not decided in the dark:
   The rush gets home, the hit is the same wrap, and the picture says `SACK`.
 - **Tackles for loss.** A run stopped behind the line is read as a tackle for loss
   on the picture and on the card, with the yards lost spelled out.
+- **Returns are worth running.** The chase has to turn and run and the man with the
+  ball does not, so an interception comes back ten or fifteen yards before anybody
+  can lay a hand on it, instead of dying three yards past the catch.
+- **The line works inside out.** On Normal and Hard every blocker takes his own
+  rusher, starting with the man nearest the ball, so two linemen never double up
+  while a third walks through the gap they left. Easy still blocks the nearest body.
 - **Balls in the air.** A defender standing in the flight path is not scenery. He
   either knocks the ball down or takes it away, depending on how well he covers
   and how good his hands are. Height matters — nobody bats down a ball over his

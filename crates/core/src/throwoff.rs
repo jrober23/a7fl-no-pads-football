@@ -158,6 +158,10 @@ const LOOSE_SECONDS: f32 = 2.2;
 /// ruled a muff he had never touched.
 const CATCH_RADIUS: f32 = 3.4;
 
+/// How close a gunner has to be for a catch to be a contest at all. Outside it
+/// the returner is standing on his own under the ball, and he takes it.
+const CONTESTED_CATCH: f32 = 3.5;
+
 /// How long the tackle that ends a return takes to put him on the turf. The ball
 /// is dead at the moment of contact; this is the picture of it, so the return does
 /// not vanish into a card while both men are still standing.
@@ -700,9 +704,14 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
-        // Catch, muff or strip.
-        let catch_p = 0.80 + self.attrs(returner).catch_factor() * 0.18;
-        if !self.rng.chance(catch_p) {
+        // Catch, muff or strip. A man with nobody on him catches the ball: a
+        // drop used to be rolled on every landing, so an untouched returner who
+        // was standing under it could still put it on the turf, and the next
+        // thing on the screen was a recovery he was never part of. Only a ball
+        // that comes down into contact can be muffed.
+        let caught = self.rng.chance(0.80 + self.attrs(returner).catch_factor() * 0.18);
+        let contested = nearest_gunner < CONTESTED_CATCH;
+        if contested && !caught {
             // A muff is a live ball: the throwing team may recover it but cannot
             // advance. It is played out on the ground like any other loose ball.
             self.loose(landing, true);
@@ -1423,6 +1432,34 @@ mod tests {
             caught >= 8,
             "a returner standing under the ball fielded it {caught} times in 12"
         );
+    }
+
+    /// A ball nobody is near cannot be dropped. The returner alone under it takes
+    /// it, whatever the roll: an untouched catch used to be able to go loose.
+    #[test]
+    fn an_uncontested_ball_is_never_muffed() {
+        let (a, b) = teams();
+        for seed in 0..16u64 {
+            let setup = ThrowOffSetup { seed, ..ThrowOffSetup::normal() };
+            let mut sim = ThrowOffSim::new(&setup, &a, &b);
+            sim.human = Some(4);
+            sim.human_dir = Vec2::ZERO;
+            sim.snap_delay = 0.0;
+            sim.launch_with(1.0, 0.0);
+            let mut guard = 0;
+            while sim.result.is_none() && sim.phase != ThrowPhase::Return && guard < 900 {
+                // The gunners are nowhere near him.
+                for g in 1..4 {
+                    sim.players[g].pos = Vec2::new(sim.players[g].pos.x, 30.0);
+                }
+                sim.step(1.0 / 60.0);
+                guard += 1;
+                assert!(
+                    !(sim.phase == ThrowPhase::Loose && sim.muffed),
+                    "seed {seed}: an untouched ball was called a muff"
+                );
+            }
+        }
     }
 
     /// The thirty-second clock is on the return, not on the throw-off. A throw
