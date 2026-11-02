@@ -359,6 +359,91 @@ impl Frame {
         }
     }
 
+    /// Gouraud shaded triangle with a z test: the shade at each corner is
+    /// interpolated across the face.
+    ///
+    /// A facet is not what makes a limb look flat — a facet given a single shade
+    /// *is*. Interpolated per-corner shading lets the same geometry read as a
+    /// curved surface, which is why this replaced flat shading nearly everywhere
+    /// the figures are drawn. The shade is affine in screen space, so it steps
+    /// along a scanline like the edge functions do.
+    pub fn shade_tri(
+        &mut self,
+        p: [(f32, f32, f32); 3],
+        color: Rgb,
+        shades: [f32; 3],
+        fog: Rgb,
+        fog_amount: f32,
+    ) {
+        let (x0, y0, iz0) = p[0];
+        let (x1, y1, iz1) = p[1];
+        let (x2, y2, iz2) = p[2];
+        let min_x = x0.min(x1).min(x2).floor().max(0.0) as i32;
+        let max_x = x0.max(x1).max(x2).ceil().min(self.w as f32 - 1.0) as i32;
+        let min_y = y0.min(y1).min(y2).floor().max(0.0) as i32;
+        let max_y = y0.max(y1).max(y2).ceil().min(self.h as f32 - 1.0) as i32;
+        if min_x > max_x || min_y > max_y {
+            return;
+        }
+        let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+        if area.abs() < 1e-6 {
+            return;
+        }
+        let inv_area = 1.0 / area;
+
+        // Fog is constant over the triangle, so fold it into one multiply and one
+        // offset per channel rather than lerping every pixel.
+        let fog_t = clamp(fog_amount, 0.0, 1.0);
+        let k_fog = 1.0 - fog_t;
+        let fog_r = fog.r as f32 * fog_t;
+        let fog_g = fog.g as f32 * fog_t;
+        let fog_b = fog.b as f32 * fog_t;
+
+        // shade = s2 + (s0 - s2) * w0 + (s1 - s2) * w1
+        let d0 = shades[0] - shades[2];
+        let d1 = shades[1] - shades[2];
+
+        let dw0_dx = (y1 - y2) * inv_area;
+        let dw0_dy = (x2 - x1) * inv_area;
+        let dw1_dx = (y2 - y0) * inv_area;
+        let dw1_dy = (x0 - x2) * inv_area;
+        let ds_dx = d0 * dw0_dx + d1 * dw1_dx;
+        let ds_dy = d0 * dw0_dy + d1 * dw1_dy;
+
+        let (sx, sy) = (min_x as f32 + 0.5, min_y as f32 + 0.5);
+        let mut row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv_area;
+        let mut row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv_area;
+        let mut row_s = shades[2] + row0 * d0 + row1 * d1;
+        for py in min_y..=max_y {
+            let mut w0 = row0;
+            let mut w1 = row1;
+            let mut s = row_s;
+            let row = py as usize * self.w;
+            for px in min_x..=max_x {
+                let w2 = 1.0 - w0 - w1;
+                if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                    let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
+                    let idx = row + px as usize;
+                    if iz > 1e-6 && iz > self.depth[idx] {
+                        let k = s * k_fog;
+                        self.depth[idx] = iz;
+                        self.color[idx] = Rgb::new(
+                            tint(color.r, k, fog_r),
+                            tint(color.g, k, fog_g),
+                            tint(color.b, k, fog_b),
+                        );
+                    }
+                }
+                w0 += dw0_dx;
+                w1 += dw1_dx;
+                s += ds_dx;
+            }
+            row0 += dw0_dy;
+            row1 += dw1_dy;
+            row_s += ds_dy;
+        }
+    }
+
     pub fn downsample(&self, factor: usize) -> Frame {
         if factor <= 1 {
             return self.clone();

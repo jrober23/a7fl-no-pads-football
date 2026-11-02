@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.14.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.15.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -334,10 +334,13 @@ perspective-correct textured triangles, near-plane clipping, distance fog and so
 ground shadows, plus five camera setups — high sideline broadcast, behind the
 quarterback, sky cam, low replay and end zone.
 
-The lighting is deliberately cartoon: the diffuse term is quantised onto three
-tones with a narrow blend at each terminator, a green bounce comes back up off the
-turf, and an edge light wraps the silhouette. Broad soft steps read as a painted
-figure at 640x360, where a full grey ramp reads as a low-poly model.
+The lighting is cartoon without being flat: the diffuse term is quantised onto
+three tones with a soft blend at each terminator, a green bounce comes back up off
+the turf, and an edge light wraps the silhouette. Every corner of every triangle
+carries its own normal, so shading is interpolated across the face instead of being
+painted on it — a twelve-sided arm is lit as a round arm, not as twelve plates with
+a step between each. That is the difference between a model that reads as faceted
+and one that reads as carved.
 
 The turf is painted at sixteen pixels per yard — mown stripes with feathered mow
 edges, yard lines and hashes, painted numbers, coaching boxes, end-zone wordmarks
@@ -362,19 +365,22 @@ that tapers into a waist over a seat, quadriceps that swell above the knee, calv
 that fill a sock, deltoids that overhang the ribcage.
 
 The figure is built to a sixth-generation console look rather than to a low-poly
-budget: eighteen sides around the torso and nine around a limb, six bands from
+budget: twenty-two sides around the torso and twelve around a limb, six bands from
 waist to shoulder so the pectorals sit over the ribs, cloth broken into soft folds
 by the shading instead of reading as one smooth tube, baggy shorts with trim at the
 hem, two stripes on each sock, a cleat built as a sole, an upper and a toe box, and
-a face with a brow, eyes, a nose and a mouth under the hair.
+a face with a brow, eyes, a nose and a mouth under the hair. Limbs, torso and head
+take their normals from the surface they were built from, so the light runs around
+them; the only place a facet is left is the silhouette.
 
 **The number is on the shirt.** Every patch of paint is laid against the same torso
-profile the cloth was lofted from, at the depth of the surface under that patch, so
-the digits wrap around the chest, lean with it when he runs and sit proud of it by a
-couple of centimetres. Painted on one flat plane — which is what a jersey with a
-number floating beside the man looks like — they detach the moment the figure leans
-at all. The lit pixels of each row are merged into a single bar, so a digit reads as
-a numeral instead of a grid of loose squares.
+profile the cloth was lofted from, at the depth of the surface under that patch and
+with the cloth's own normal, so the digits wrap around the chest, lean with it when
+he runs, and are lit as the shirt under them is. Painted on one flat plane — which
+is what a jersey with a number floating beside the man looks like — they detach the
+moment the figure leans at all. The digits are cut on a five-by-seven grid with bold
+strokes rather than one-cell lines, which is what makes a numeral read as a numeral
+instead of a scatter of squares.
 
 The figure animates the hits too. A tackle is a pose, not a state flag: the defender
 reaches out and around the man with his chest over his toes, and the carrier tips
@@ -384,9 +390,9 @@ not needed to see who hit whom.
 Each figure is built at one of three detail levels chosen by its distance from the
 lens, so a man on the far hash is not paying for eyes, a bicep and a fistful of
 patches of paint that would each be a pixel and a half wide. Full detail costs
-about two thousand triangles, up from seven hundred; fourteen figures a frame is
-not something to spend freely, and this is the one place in the renderer where the
-polygons were worth it.
+about two and a half thousand triangles, up from seven hundred; fourteen figures a
+frame is not something to spend freely, and this is the one place in the renderer
+where the polygons were worth it.
 
 `film` renders six stills and a 44-frame GIF: a throw-off, a pre-snap look, a pass
 in flight from the broadcast camera, a scoring play, a turnover, the final stats
@@ -427,10 +433,12 @@ simulation can be unit tested (39 tests) without touching the renderer.
 
 - **It is a stylised renderer, not 2K5.** The presentation vocabulary — camera
   work, score bug, ticker, banners, stats panel — is modelled on 2K5, but the
-  geometry is hand-built rather than scanned: figures are flat-shaded triangle
+  geometry is hand-built rather than scanned: figures are smooth-shaded triangle
   bodies with painted-on faces, no motion capture, no skinning, no facial
-  animation, no broadcast-quality commentary, and no licensed assets or marks. It
-  is a full-figure, cel-shaded cartoon look, not a photograph of a football game.
+  animation, no texture maps on the body, no broadcast-quality commentary, and no
+  licensed assets or marks. It is a full-figure, cel-shaded cartoon look, not a
+  photograph of a football game: a yard from the lens you can still see the facets
+  on a cheek, and closing that gap takes texture maps, not more polygons.
 - **No audio, franchise mode, drafting or online play.** `arcade` is one player
   against the CPU; the renderer writes images and ANSI blocks, it does not open a
   window.

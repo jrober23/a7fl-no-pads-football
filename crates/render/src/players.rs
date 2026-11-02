@@ -28,12 +28,12 @@ const SOLE: f32 = 0.062;
 /// Sides on a limb at full detail. Nine holds a highlight down the length of a
 /// forearm instead of breaking it into facets, which is the line between a body
 /// and a PlayStation One model.
-const LIMB_SIDES: usize = 9;
+const LIMB_SIDES: usize = 12;
 
 /// Sides around the torso at full detail. Every facet is a step in the lighting
 /// across the chest, so the count is what decides whether a shirt looks like
 /// cloth wrapped around a man or like a stack of cards.
-const BODY_SIDES: usize = 18;
+const BODY_SIDES: usize = 22;
 
 /// How much of the body is worth building at a given distance from the lens.
 ///
@@ -70,16 +70,16 @@ impl Detail {
     fn sides(self) -> usize {
         match self {
             Detail::Full => LIMB_SIDES,
-            Detail::Mid => 7,
-            Detail::Far => 5,
+            Detail::Mid => 9,
+            Detail::Far => 6,
         }
     }
 
     fn body_sides(self) -> usize {
         match self {
             Detail::Full => BODY_SIDES,
-            Detail::Mid => 12,
-            Detail::Far => 7,
+            Detail::Mid => 14,
+            Detail::Far => 8,
         }
     }
 
@@ -235,6 +235,19 @@ fn superellipse(a: f32, round: f32) -> (f32, f32) {
     )
 }
 
+/// The outward normal of the same superellipse the ring is made of: the gradient
+/// of `(|x|/rx)^n + (|y|/ry)^n = 1`, turned into whatever way the ring is facing.
+/// A torso lit by these has a chest that curves away from the light instead of a
+/// row of flat panels.
+fn ring_normal(ring: &Ring, a: f32, round: f32) -> Vec3 {
+    let (ex, ey) = superellipse(a, round);
+    let p = round - 1.0;
+    let nx = ex.signum() * ex.abs().powf(p) / ring.rx.max(1e-4);
+    let ny = ey.signum() * ey.abs().powf(p) / ring.ry.max(1e-4);
+    let (s, c) = ring.yaw.sin_cos();
+    Vec3::new(nx * c - ny * s, nx * s + ny * c, 0.0).normalize_or_zero()
+}
+
 fn ring_point(ring: &Ring, a: f32, round: f32) -> Vec3 {
     let (ex, ey) = superellipse(a, round);
     let (sy, cy) = ring.yaw.sin_cos();
@@ -260,32 +273,42 @@ fn loft(
     cap_top: bool,
     color_at: impl Fn(usize, usize) -> Rgb,
 ) {
+    let angles: Vec<f32> = (0..sides)
+        .map(|k| k as f32 / sides as f32 * std::f32::consts::TAU)
+        .collect();
     let grid: Vec<Vec<Vec3>> = rings
         .iter()
-        .map(|r| {
-            (0..sides)
-                .map(|k| ring_point(r, k as f32 / sides as f32 * std::f32::consts::TAU, round))
-                .collect()
-        })
+        .map(|r| angles.iter().map(|a| ring_point(r, *a, round)).collect())
+        .collect();
+    let normals: Vec<Vec<Vec3>> = rings
+        .iter()
+        .map(|r| angles.iter().map(|a| ring_normal(r, *a, round)).collect())
         .collect();
     for i in 0..rings.len() - 1 {
         for k in 0..sides {
             let k1 = (k + 1) % sides;
-            mesh.quad_shaded(
+            mesh.quad_curved(
                 grid[i][k],
+                normals[i][k],
                 grid[i][k1],
+                normals[i][k1],
                 grid[i + 1][k1],
+                normals[i + 1][k1],
                 grid[i + 1][k],
+                normals[i + 1][k],
                 color_at(i, k),
                 1.0,
             );
         }
     }
+    // Caps keep a hard edge: the rim of a shoulder is a rim, not a smooth bend.
+    let down = Vec3::new(0.0, 0.0, -1.0);
+    let up = Vec3::new(0.0, 0.0, 1.0);
     if cap_bottom {
         let c = rings[0].center;
         for k in 0..sides {
             let k1 = (k + 1) % sides;
-            mesh.tri_shaded(c, grid[0][k1], grid[0][k], color_at(0, k), 0.82);
+            mesh.tri_curved(c, down, grid[0][k1], down, grid[0][k], down, color_at(0, k), 0.82);
         }
     }
     if cap_top {
@@ -293,7 +316,7 @@ fn loft(
         let c = rings[last].center;
         for k in 0..sides {
             let k1 = (k + 1) % sides;
-            mesh.tri_shaded(c, grid[last][k], grid[last][k1], color_at(last, k), 0.92);
+            mesh.tri_curved(c, up, grid[last][k], up, grid[last][k1], up, color_at(last, k), 0.92);
         }
     }
 }
@@ -446,6 +469,11 @@ fn yaw_mesh(mesh: &mut Mesh, angle: f32) {
             p.x = x * c - y * s;
             p.y = x * s + y * c;
         }
+        for n in [&mut t.na, &mut t.nb, &mut t.nc] {
+            let (x, y) = (n.x, n.y);
+            n.x = x * c - y * s;
+            n.y = x * s + y * c;
+        }
     }
 }
 
@@ -459,6 +487,11 @@ fn pitch_mesh(mesh: &mut Mesh, pivot: f32, angle: f32) {
             let z = p.z - pivot;
             p.x = x * c + z * s;
             p.z = pivot + z * c - x * s;
+        }
+        for n in [&mut t.na, &mut t.nb, &mut t.nc] {
+            let (x, z) = (n.x, n.z);
+            n.x = x * c + z * s;
+            n.z = z * c - x * s;
         }
     }
 }
@@ -489,36 +522,24 @@ fn raise_to_turf(mesh: &mut Mesh) {
 // Jersey numbers
 // ---------------------------------------------------------------------------
 
-/// Digits on a 3x5 grid, one bit per pixel, top row first. Reading the number off
+/// Digits on a 5x7 grid, one bit per pixel, top row first. Reading the number off
 /// a player is the whole point of the back of a jersey, so the figure wears real
-/// digits instead of a solid rectangle.
-fn digit(c: u8) -> [u8; 5] {
+/// digits instead of a solid rectangle — and five by seven is the smallest grid
+/// where a digit has curves in it instead of being a pile of blocks.
+fn digit(c: u8) -> [u8; 7] {
     match c {
-        b'0' => [0b111, 0b101, 0b101, 0b101, 0b111],
-        b'1' => [0b010, 0b110, 0b010, 0b010, 0b111],
-        b'2' => [0b111, 0b001, 0b111, 0b100, 0b111],
-        b'3' => [0b111, 0b001, 0b111, 0b001, 0b111],
-        b'4' => [0b101, 0b101, 0b111, 0b001, 0b001],
-        b'5' => [0b111, 0b100, 0b111, 0b001, 0b111],
-        b'6' => [0b111, 0b100, 0b111, 0b101, 0b111],
-        b'7' => [0b111, 0b001, 0b010, 0b010, 0b010],
-        b'8' => [0b111, 0b101, 0b111, 0b101, 0b111],
-        b'9' => [0b111, 0b101, 0b111, 0b001, 0b111],
-        _ => [0, 0, 0, 0, 0],
+        b'0' => [0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110],
+        b'1' => [0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110],
+        b'2' => [0b01110, 0b10001, 0b00001, 0b00010, 0b00100, 0b01000, 0b11111],
+        b'3' => [0b11110, 0b00001, 0b00010, 0b00100, 0b00010, 0b00001, 0b11110],
+        b'4' => [0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010],
+        b'5' => [0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110],
+        b'6' => [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110],
+        b'7' => [0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000],
+        b'8' => [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110],
+        b'9' => [0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100],
+        _ => [0, 0, 0, 0, 0, 0, 0],
     }
-}
-
-/// A flat patch of paint just proud of the cloth, facing `face` (+1 front, -1 back).
-/// Numbers are lit as if they were cloth, so they never disappear in shadow.
-fn paint_patch(mesh: &mut Mesh, x: f32, y: f32, z: f32, hy: f32, hz: f32, color: Rgb) {
-    mesh.quad_shaded(
-        Vec3::new(x, y - hy, z - hz),
-        Vec3::new(x, y + hy, z - hz),
-        Vec3::new(x, y + hy, z + hz),
-        Vec3::new(x, y - hy, z + hz),
-        color,
-        1.35,
-    );
 }
 
 /// Paint a jersey number onto one side of the chest.
@@ -544,14 +565,11 @@ fn paint_number(
 ) {
     let text = format!("{number:02}");
     let glyphs: Vec<u8> = text.bytes().collect();
-    // A digit is three cells wide and a cell wide between glyphs. The patches are
-    // a whole cell across, so they touch and the number reads as a solid numeral
-    // instead of a grid of dots.
-    let pitch = cell * 3.45;
-    let width = pitch * glyphs.len() as f32 - cell * 0.45;
-    let bite = cell * 0.50;
+    // A digit is five cells wide, plus a little more than a cell between them.
+    let pitch = cell * 5.9;
+    let width = pitch * glyphs.len() as f32 - cell * 0.9;
     // How much of the spine one row of the digit covers.
-    let row_f = cell * 1.05 / torso_len.max(0.05);
+    let row_f = cell * 1.12 / torso_len.max(0.05);
     for (gi, ch) in glyphs.iter().enumerate() {
         let rows = digit(*ch);
         let start = gi as f32 * pitch - width * 0.5;
@@ -561,40 +579,79 @@ fn paint_number(
             // curve of the chest pulls them apart, and the number reads as a grid
             // of loose squares rather than as a numeral.
             let mut col = 0u8;
-            while col < 3 {
-                if bits & (1 << (2 - col)) == 0 {
+            while col < 5 {
+                if bits & (1 << (4 - col)) == 0 {
                     col += 1;
                     continue;
                 }
                 let run_start = col;
-                while col + 1 < 3 && bits & (1 << (2 - (col + 1))) != 0 {
+                while col + 1 < 5 && bits & (1 << (4 - (col + 1))) != 0 {
                     col += 1;
                 }
-                let cells = (col - run_start + 1) as f32;
-                let lateral = start + (run_start as f32 + (cells - 1.0) * 0.5) * cell;
+                let cells = (col - run_start + 1) as i32;
+                let (center, rx, ry) = cloth(center_f + (3i32 - row as i32) as f32 * row_f);
+                // Where the shirt is, and which way it faces, at a lateral offset
+                // on this row — read off the same rounded cross-section the torso
+                // was lofted through.
+                let surface = |lateral: f32| -> (f32, f32, Vec3) {
+                    let y_rel = if face > 0.0 { -lateral } else { lateral };
+                    let across = (y_rel.abs() / ry.max(1e-3)).clamp(0.0, 1.0);
+                    let depth =
+                        rx * (1.0 - across.powf(TORSO_ROUND)).max(0.0).powf(1.0 / TORSO_ROUND);
+                    // The cloth's own normal. Give the paint a normal per cell
+                    // instead and the shading bands break the digit into a
+                    // patchwork of white and grey squares.
+                    let ax = (depth / rx.max(1e-4)).clamp(0.0, 1.0).powf(TORSO_ROUND - 1.0)
+                        / rx.max(1e-4);
+                    let ay = across.powf(TORSO_ROUND - 1.0) / ry.max(1e-4);
+                    let normal = Vec3::new(face * ax, y_rel.signum() * ay, 0.0).normalize_or_zero();
+                    (depth, y_rel, normal)
+                };
                 // Which way a digit advances across the cloth: the camera looks
                 // along the inward normal, and in this projection screen-right
                 // for a face pointing +x is -y. Get this backwards and the number
                 // is mirrored, which is what a jersey reads as a smudge.
-                let y_rel = if face > 0.0 { -lateral } else { lateral };
-                let (center, rx, ry) = cloth(center_f + (2i32 - row as i32) as f32 * row_f);
-                // The surface of the shirt at this lateral offset, on the same
-                // rounded cross-section the torso was lofted through.
-                let across = (y_rel.abs() / ry.max(1e-3)).clamp(0.0, 1.0);
-                let depth = rx * (1.0 - across.powf(TORSO_ROUND)).max(0.0).powf(1.0 / TORSO_ROUND);
-                paint_patch(
-                    mesh,
-                    // Proud of the cloth by a couple of centimetres. A patch
-                    // that only just clears the surface dips behind it wherever
-                    // the chest curves away, and the number comes out looking
-                    // moth-eaten.
-                    center.x + face * (depth + 0.018),
-                    center.y + y_rel,
-                    center.z,
-                    cells * bite,
-                    cell * 0.52,
-                    color,
-                );
+                let edge = |j: i32| -> (f32, f32, Vec3) {
+                    let mut lateral = start + (run_start as i32 + j) as f32 * cell - cell * 0.5;
+                    // Fatten the stroke by half a cell at each end. A one-cell
+                    // stroke is how a dot-matrix digit is built and how a jersey
+                    // number is not: jerseys are cut bold, and at this size a
+                    // thin stroke reads as a scatter of squares.
+                    if j == 0 {
+                        lateral -= cell * 0.5;
+                    }
+                    if j == cells {
+                        lateral += cell * 0.5;
+                    }
+                    let (depth, y_rel, normal) = surface(lateral);
+                    // Five millimetres proud. Enough to beat the cloth it sits
+                    // on, little enough that its edge is not a sliver on the
+                    // silhouette when he turns side on.
+                    (center.x + face * (depth + 0.005), center.y + y_rel, normal)
+                };
+                // Rows overlap by half a cell, so neighbouring strokes join up
+                // instead of leaving the jersey showing through the digit.
+                let (z0, z1) = (center.z - cell * 0.80, center.z + cell * 0.80);
+                // One flat quad per bar stands off the cloth at its ends and shows
+                // as a sliver as soon as the man turns side on. Walking the strip
+                // cell by cell, sampling the surface at every boundary, keeps the
+                // paint on the shirt all the way to the edge of the digit.
+                for j in 0..cells {
+                    let (xa, ya, na) = edge(j);
+                    let (xb, yb, nb) = edge(j + 1);
+                    mesh.quad_curved(
+                        Vec3::new(xa, ya, z0),
+                        na,
+                        Vec3::new(xb, yb, z0),
+                        nb,
+                        Vec3::new(xb, yb, z1),
+                        nb,
+                        Vec3::new(xa, ya, z1),
+                        na,
+                        color,
+                        1.35,
+                    );
+                }
                 col += 1;
             }
         }
@@ -881,7 +938,7 @@ pub fn build_mesh_at(
         let number_color = uniform.readable_number_color();
         // Sized off the shirt, not off a poster: a jersey number is about a hand
         // and a half wide and sits across the chest.
-        let cell = 0.050 * (h / 1.85);
+        let cell = 0.031 * (h / 1.85);
         // Where the cloth is at any height, straight off the torso profile. A
         // patch of paint that is not measured against this ends up as a flat card
         // floating in front of the sternum, or buried in the ribs.
@@ -947,8 +1004,8 @@ pub fn build_mesh_at(
         mesh.sphere(
             shoulder,
             Vec3::new(0.099 * bulk, 0.099 * bulk, 0.090 * bulk),
-            if detail.fine() { 3 } else { 2 },
-            if detail.fine() { 8 } else { 6 },
+            if detail.fine() { 4 } else { 2 },
+            if detail.fine() { 10 } else { 6 },
             skin,
         );
 
@@ -1077,8 +1134,8 @@ pub fn build_mesh_at(
         sides,
         skin,
     );
-    let head_rings = if detail.fine() { 7 } else { 4 };
-    let head_segs = if detail.fine() { 14 } else { 7 };
+    let head_rings = if detail.fine() { 9 } else { 5 };
+    let head_segs = if detail.fine() { 18 } else { 8 };
     mesh.sphere(
         head,
         Vec3::new(head_r, head_r * 0.94, head_r * 1.1),
@@ -1159,11 +1216,13 @@ pub fn build_mesh_at(
     match player.hair {
         HairStyle::Bald => {}
         HairStyle::Buzz => {
+            // A hairline is the one part of a head you cannot fake with a low
+            // segment count: it is a curve, and a nine-sided one is a helmet.
             mesh.sphere(
                 Vec3::new(head.x - 0.005, 0.0, head.z + head_r * 0.42),
                 Vec3::new(head_r, head_r * 0.94, head_r * 0.68),
-                3,
-                9,
+                if detail.fine() { 5 } else { 3 },
+                if detail.fine() { 16 } else { 9 },
                 player.hair_color,
             );
         }
@@ -1171,8 +1230,8 @@ pub fn build_mesh_at(
             mesh.sphere(
                 Vec3::new(head.x - 0.005, 0.0, head.z + head_r * 0.5),
                 Vec3::new(head_r * 1.02, head_r * 0.96, head_r * 0.7),
-                3,
-                9,
+                if detail.fine() { 5 } else { 3 },
+                if detail.fine() { 16 } else { 9 },
                 player.hair_color,
             );
         }
@@ -1180,8 +1239,8 @@ pub fn build_mesh_at(
             mesh.sphere(
                 Vec3::new(head.x - 0.01, 0.0, head.z + head_r * 0.55),
                 Vec3::new(head_r * 1.05, head_r, head_r * 0.78),
-                3,
-                9,
+                if detail.fine() { 5 } else { 3 },
+                if detail.fine() { 16 } else { 9 },
                 player.hair_color,
             );
             let strands = if detail.fine() { 7 } else { 0 };

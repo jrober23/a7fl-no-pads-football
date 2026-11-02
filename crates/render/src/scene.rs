@@ -87,9 +87,20 @@ pub struct Tri {
     pub a: Vec3,
     pub b: Vec3,
     pub c: Vec3,
+    /// Normal at each corner. Three equal normals is a flat facet; three
+    /// different ones have the light interpolated across the face, which is what
+    /// makes a limb look round instead of like a stack of plates.
+    pub na: Vec3,
+    pub nb: Vec3,
+    pub nc: Vec3,
     pub color: Rgb,
     /// Multiplier applied on top of the computed lighting (fake ambient occlusion).
     pub shade: f32,
+}
+
+#[inline]
+fn face_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
+    (b - a).cross(c - a).normalize_or_zero()
 }
 
 #[derive(Clone, Default, Debug)]
@@ -107,11 +118,48 @@ impl Mesh {
     }
 
     pub fn tri(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Rgb) {
-        self.tris.push(Tri { a, b, c, color, shade: 1.0 });
+        let n = face_normal(a, b, c);
+        self.tris.push(Tri { a, b, c, na: n, nb: n, nc: n, color, shade: 1.0 });
     }
 
     pub fn tri_shaded(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Rgb, shade: f32) {
-        self.tris.push(Tri { a, b, c, color, shade });
+        let n = face_normal(a, b, c);
+        self.tris.push(Tri { a, b, c, na: n, nb: n, nc: n, color, shade });
+    }
+
+    /// A triangle whose corners carry their own normals, so the shading runs
+    /// across it. Builders that know the surface they are making (a loft, a
+    /// cylinder, a sphere) use this; a box face stays flat on purpose.
+    pub fn tri_curved(
+        &mut self,
+        a: Vec3,
+        na: Vec3,
+        b: Vec3,
+        nb: Vec3,
+        c: Vec3,
+        nc: Vec3,
+        color: Rgb,
+        shade: f32,
+    ) {
+        self.tris.push(Tri { a, b, c, na, nb, nc, color, shade });
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn quad_curved(
+        &mut self,
+        a: Vec3,
+        na: Vec3,
+        b: Vec3,
+        nb: Vec3,
+        c: Vec3,
+        nc: Vec3,
+        d: Vec3,
+        nd: Vec3,
+        color: Rgb,
+        shade: f32,
+    ) {
+        self.tri_curved(a, na, b, nb, c, nc, color, shade);
+        self.tri_curved(a, na, c, nc, d, nd, color, shade);
     }
 
     pub fn quad(&mut self, a: Vec3, b: Vec3, c: Vec3, d: Vec3, color: Rgb) {
@@ -193,8 +241,11 @@ impl Mesh {
             let p1 = base + u * (a1.cos() * r_base) + v * (a1.sin() * r_base);
             let q0 = top + u * (a0.cos() * r_top) + v * (a0.sin() * r_top);
             let q1 = top + u * (a1.cos() * r_top) + v * (a1.sin() * r_top);
-            let shade = 0.82 + 0.18 * a0.cos().abs();
-            self.quad_shaded(p0, p1, q1, q0, color, shade);
+            // The normals come off the axis, not off the facet: that is the whole
+            // difference between a tube and a nine-sided extrusion.
+            let n0 = (u * a0.cos() + v * a0.sin()).normalize_or_zero();
+            let n1 = (u * a1.cos() + v * a1.sin()).normalize_or_zero();
+            self.quad_curved(p0, n0, p1, n1, q1, n1, q0, n0, color, 1.0);
         }
     }
 
@@ -210,6 +261,16 @@ impl Mesh {
                 center.z + radius.z * phi.cos(),
             )
         };
+        // Ellipsoid normals: the surface gradient, which is the point position
+        // divided by the square of the radius on each axis.
+        let normal = |p: Vec3| {
+            Vec3::new(
+                (p.x - center.x) / (radius.x * radius.x).max(1e-6),
+                (p.y - center.y) / (radius.y * radius.y).max(1e-6),
+                (p.z - center.z) / (radius.z * radius.z).max(1e-6),
+            )
+            .normalize_or_zero()
+        };
         for r in 0..rings {
             for s in 0..segments {
                 let a = point(r, s);
@@ -217,12 +278,24 @@ impl Mesh {
                 let c = point(r + 1, s + 1);
                 let d = point(r, s + 1);
                 let shade = 0.78 + 0.22 * (r as f32 / rings as f32);
-                self.quad_shaded(a, b, c, d, color, shade);
+                self.quad_curved(
+                    a,
+                    normal(a),
+                    b,
+                    normal(b),
+                    c,
+                    normal(c),
+                    d,
+                    normal(d),
+                    color,
+                    shade,
+                );
             }
         }
     }
 
-    /// Rotate about Z, scale, then translate every triangle.
+    /// Rotate about Z, scale, then translate every triangle. Normals rotate with
+    /// the vertices; a uniform scale leaves their lengths alone.
     pub fn place(&mut self, offset: Vec3, yaw: f32, scale: f32) {
         let (s, c) = yaw.sin_cos();
         for t in self.tris.iter_mut() {
@@ -231,6 +304,10 @@ impl Mesh {
                 let y = p.y * scale;
                 let z = p.z * scale;
                 *p = Vec3::new(offset.x + x * c - y * s, offset.y + x * s + y * c, offset.z + z);
+            }
+            for n in [&mut t.na, &mut t.nb, &mut t.nc] {
+                let (x, y) = (n.x, n.y);
+                *n = Vec3::new(x * c - y * s, x * s + y * c, n.z);
             }
         }
     }
@@ -356,27 +433,29 @@ impl SceneRenderer {
             }
             let view = [va, vb, vc];
             let n = (tri.b - tri.a).cross(tri.c - tri.a).normalize_or_zero();
-            let ndl = n.dot(self.lighting.sun).abs();
-            let lit = toon(ndl);
-            // Turf bounce, then the rim: the closer a face is edge-on to the
-            // lens, the more it catches the light behind it.
-            let bounce = n.dot(self.lighting.bounce).abs() * self.lighting.bounce_strength;
             let centroid = (tri.a + tri.b + tri.c) * (1.0 / 3.0);
             let to_eye = (cam.pos - centroid).normalize_or_zero();
             let edge = 1.0 - n.dot(to_eye).abs();
             let rim = self.lighting.rim * edge * edge * edge;
-            let shade = (self.lighting.ambient + lit * (1.0 - self.lighting.ambient)) * tri.shade
-                + bounce
-                + rim;
+            // Light each corner on its own normal. This is the line that turns a
+            // nine-sided limb into a tube: the diffuse term no longer jumps from
+            // one facet to the next, it runs around the surface, and the
+            // rasteriser interpolates what is left between the corners.
+            let corner = |cn: Vec3| -> f32 {
+                let lit = toon(cn.dot(self.lighting.sun).abs());
+                let bounce = cn.dot(self.lighting.bounce).abs() * self.lighting.bounce_strength;
+                (self.lighting.ambient + lit * (1.0 - self.lighting.ambient)) * tri.shade + bounce
+                    + rim
+            };
+            let corners = [corner(tri.na), corner(tri.nb), corner(tri.nc)];
+            let flat_shade = (corners[0] + corners[1] + corners[2]) / 3.0;
 
             // Most triangles are entirely in front of the lens, so the clipper
             // only runs on the ones that straddle it: no allocation per triangle
             // in the middle of the picture, which is most of the picture.
-            let mut clipped_storage;
-            let clipped: &[Vec3] = if view[0].z >= cam.near
-                && view[1].z >= cam.near
-                && view[2].z >= cam.near
-            {
+            let whole = view[0].z >= cam.near && view[1].z >= cam.near && view[2].z >= cam.near;
+            let clipped_storage;
+            let clipped: &[Vec3] = if whole {
                 &view
             } else {
                 clipped_storage = clip_near(&view, cam.near);
@@ -413,10 +492,18 @@ impl SceneRenderer {
             let depth = (view[0].z + view[1].z + view[2].z) / 3.0;
             let fog = fog_amount(depth, self.lighting.fog_density);
             for i in 1..n - 1 {
-                frame.flat_tri(
+                // A clipped triangle has new corners the original normals say
+                // nothing about, and it is at most a hand's width from the lens,
+                // so it falls back to the flat shade.
+                let shades = if whole {
+                    [corners[0], corners[i], corners[i + 1]]
+                } else {
+                    [flat_shade; 3]
+                };
+                frame.shade_tri(
                     [projected[0], projected[i], projected[i + 1]],
                     tri.color,
-                    shade,
+                    shades,
                     self.lighting.fog,
                     fog,
                 );
