@@ -617,7 +617,6 @@ fn cmd_arcade(args: &[String]) {
                     target: Some(index),
                     throw: true,
                     power: 1.0,
-                    aim: Vec2::ZERO,
                 }));
                 air.step(dt);
                 for (n, gap) in [(0usize, 0.18f32), (1, 0.30), (2, 0.34), (3, 0.36)] {
@@ -680,7 +679,7 @@ fn cmd_arcade(args: &[String]) {
         let mut short = false;
         let mut needed = None;
         if let Some((_, index)) = targets.first() {
-            let plan = sim.throw_plan(sim.qb, *index, 0.62, Vec2::new(0.0, 3.0));
+            let plan = sim.throw_plan(sim.qb, *index, 0.62);
             short = plan.distance > plan.reach + 0.4;
             needed = Some(plan.power_needed);
             let hand = sim.qb_pos();
@@ -703,7 +702,7 @@ fn cmd_arcade(args: &[String]) {
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2".to_string(),
             "A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9".to_string(),
-            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] PAUSE".to_string(),
+            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [START] PAUSE".to_string(),
         ];
         let framed = view::with_hud(
             live.live_frame_ui(&sim, CameraMode::Broadcast, &ui),
@@ -755,7 +754,7 @@ fn cmd_arcade(args: &[String]) {
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2".to_string(),
             "A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9".to_string(),
-            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] CLASSIC   [START] PAUSE"
+            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] CLASSIC   [START] PAUSE"
                 .to_string(),
         ];
         let framed = view::with_hud(live.live_frame(&sim, CameraMode::Classic), &lines);
@@ -782,8 +781,8 @@ fn cmd_arcade(args: &[String]) {
         let lines = vec![
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "ZONE READ - RUN - PISTOL   KAISER 6 for 9".to_string(),
-            "  [A] SPIN   [B] HURDLE   [X] DIVE   [Y] SLIDE      SPIN".to_string(),
-            "NEW ball   MOVE   [A/B/X/Y] MOVES   [RT] CLASSIC   [START] PAUSE".to_string(),
+            "  [A] SPIN   [B] HURDLE   [X] DIVE   [Y] STIFF ARM      SPIN".to_string(),
+            "NEW ball   MOVE   [A/B/X/Y] MOVES   [SELECT] CLASSIC   [START] PAUSE".to_string(),
         ];
         let framed = view::with_hud(live.live_frame(&sim, CameraMode::Classic), &lines);
         let path = "out/14_running.png";

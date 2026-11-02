@@ -205,8 +205,8 @@ fn a_soft_throw_comes_down_short_of_the_man() {
         })
         .expect("eligible receivers");
 
-    let soft = sim.throw_plan(sim.qb, deep, 0.05, Vec2::ZERO);
-    let hard = sim.throw_plan(sim.qb, deep, 1.0, Vec2::ZERO);
+    let soft = sim.throw_plan(sim.qb, deep, 0.05);
+    let hard = sim.throw_plan(sim.qb, deep, 1.0);
 
     assert!(soft.reach < hard.reach, "a tap threw further than a rope");
     assert!(
@@ -223,7 +223,7 @@ fn a_soft_throw_comes_down_short_of_the_man() {
 }
 
 #[test]
-fn the_aim_stick_bends_the_pass_off_the_receiver() {
+fn a_pass_goes_to_the_man_and_not_to_the_stick() {
     let teams = league_teams();
     let book = playbook();
     let defs = defensive_playbook();
@@ -236,13 +236,22 @@ fn the_aim_stick_bends_the_pass_off_the_receiver() {
         sim.step(1.0 / 60.0);
     }
     let receiver = sim.eligible_targets()[0].1;
+    let man = sim.players[receiver].pos;
 
-    let straight = sim.throw_plan(sim.qb, receiver, 1.0, Vec2::ZERO);
-    let led = sim.throw_plan(sim.qb, receiver, 1.0, Vec2::new(0.0, 6.0));
+    let plan = sim.throw_plan(sim.qb, receiver, 1.0);
     assert!(
-        (led.landing.y - straight.landing.y - 6.0).abs() < 0.75,
-        "aiming six yards across moved the ball {:.1}",
-        led.landing.y - straight.landing.y
+        plan.landing.dist(man) < 3.0,
+        "the ball was thrown {:.1} yards off the man it was meant for",
+        plan.landing.dist(man)
+    );
+    // The meter decides how hard it gets there, not which way it goes: a soft
+    // throw of the same ball is the same line, stopping shorter.
+    let soft = sim.throw_plan(sim.qb, receiver, 0.1);
+    let line = (soft.landing - sim.qb_pos()).normalize_or_zero();
+    let hard_line = (plan.landing - sim.qb_pos()).normalize_or_zero();
+    assert!(
+        line.dot(hard_line) > 0.9,
+        "a soft throw left the line to the man"
     );
 }
 
@@ -323,4 +332,25 @@ fn a_throw_off_set_up_by_hand_is_booked_when_it_is_played() {
         !matches!(game.phase, GamePhase::ThrowOff { .. }) || game.clock >= 0.0,
         "the game should have moved on from the throw-off"
     );
+}
+
+#[test]
+fn a_pump_fake_does_not_throw_the_ball() {
+    let teams = league_teams();
+    let book = playbook();
+    let defs = defensive_playbook();
+    let play = book
+        .iter()
+        .find(|p| p.family.is_pass())
+        .expect("a pass play");
+    let mut sim = PlaySim::new(&teams[0], &teams[1], play, &defs[0], &setup(12));
+    while sim.t < SNAP_DELAY + 0.7 && sim.result.is_none() {
+        sim.step(1.0 / 60.0);
+    }
+    assert!(sim.ball.holder == Some(sim.qb), "the ball was not in his hand");
+
+    sim.pump_fake();
+    assert!(sim.ball.flight.is_none(), "the pump fake was a throw");
+    assert!(sim.result.is_none(), "the pump fake ended the play");
+    assert!(sim.carrier.is_none(), "the pump fake made him a runner");
 }

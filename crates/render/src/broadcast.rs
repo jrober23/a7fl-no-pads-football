@@ -111,6 +111,10 @@ pub struct Broadcast {
     pub uniforms: [Uniform; 2],
     stands: Mesh,
     focus: Focus,
+    /// 0..1, how far the word over a dead ball has arrived. The client winds
+    /// this up over half a second so the announcement does not cut onto the
+    /// frame the play ended; recordings and replays leave it at 1.
+    announce: f32,
 }
 
 impl Broadcast {
@@ -120,7 +124,24 @@ impl Broadcast {
         let mut scene = SceneRenderer::new(w, h, 46f32.to_radians());
         scene.lighting = stadium_lighting();
         let stands = build_stadium(&teams);
-        Broadcast { w, h, field, scene, teams, uniforms, stands, focus: Focus::default() }
+        Broadcast {
+            w,
+            h,
+            field,
+            scene,
+            teams,
+            uniforms,
+            stands,
+            focus: Focus::default(),
+            announce: 1.0,
+        }
+    }
+
+    /// How far the word over a dead ball has arrived, 0..1. The live client
+    /// walks this up from zero when the whistle goes, so the result rises onto
+    /// the picture instead of appearing on it.
+    pub fn set_announce(&mut self, ease: f32) {
+        self.announce = ease.clamp(0.0, 1.0);
     }
 
     /// Render one frame of a recorded play at time `t` (seconds after the snap).
@@ -588,25 +609,43 @@ impl Broadcast {
         let Some(word) = result.headline() else {
             return;
         };
+        let ease = self.announce.clamp(0.0, 1.0);
+        if ease <= 0.001 {
+            return;
+        }
         let scale = 3;
         let tw = crate::font::text_width(word, scale) as i32;
         let th = crate::font::text_height(scale) as i32;
         let x = (frame.w as i32 - tw) / 2;
-        let y = 20;
+        // It settles onto its line rather than being stamped there, and the
+        // colour comes up out of the panel before it reads as white type.
+        let y = 20 + ((1.0 - ease) * 12.0) as i32;
         let color = if result.turnover {
             hud::YELLOW
         } else {
             hud::WHITE
         };
-        frame.fill_rect_alpha(x - 14, y - 8, tw + 28, th + 16, hud::INK, 0.74);
+        let color = hud::INK.lerp(color, ease);
+        frame.fill_rect_alpha(x - 14, y - 8, tw + 28, th + 16, hud::INK, 0.74 * ease);
         frame.text_shadowed(x, y, word, scale, color, 1);
 
-        let lower = result.description.to_uppercase();
-        let sub: String = lower.chars().take(58).collect();
-        let sw = crate::font::text_width(&sub, 1) as i32;
-        let sx = (frame.w as i32 - sw) / 2;
-        frame.fill_rect_alpha(sx - 8, y + th + 12, sw + 16, 18, hud::INK, 0.60);
-        frame.text_shadowed(sx, y + th + 17, &sub, 1, hud::WHITE, 1);
+        // The sentence lands after the word, not with it.
+        let sub_ease = ((ease - 0.55) / 0.45).clamp(0.0, 1.0);
+        if sub_ease > 0.05 {
+            let lower = result.description.to_uppercase();
+            let sub: String = lower.chars().take(58).collect();
+            let sw = crate::font::text_width(&sub, 1) as i32;
+            let sx = (frame.w as i32 - sw) / 2;
+            frame.fill_rect_alpha(sx - 8, y + th + 12, sw + 16, 18, hud::INK, 0.60 * sub_ease);
+            frame.text_shadowed(
+                sx,
+                y + th + 17,
+                &sub,
+                1,
+                hud::WHITE.lerp(hud::INK, 1.0 - sub_ease),
+                1,
+            );
+        }
     }
 
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
@@ -1474,7 +1513,6 @@ mod tests {
             target: Some(deep),
             throw: true,
             power: 1.0,
-            aim: Vec2::ZERO,
         }));
         for _ in 0..3 {
             sim.step(1.0 / 60.0);

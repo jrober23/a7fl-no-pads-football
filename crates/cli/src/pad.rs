@@ -16,6 +16,8 @@ pub struct Buttons {
     pub x: bool,
     pub y: bool,
     pub throw: bool,
+    /// The Select / Back button, which cycles the camera.
+    pub select: bool,
     pub start: bool,
 }
 
@@ -47,6 +49,7 @@ pub fn mix(pad: Option<&mut Pad>, keys: Input) -> Input {
             x: stick.held.x || keys.held.x,
             y: stick.held.y || keys.held.y,
             throw: stick.held.throw || keys.held.throw,
+            select: stick.held.select || keys.held.select,
             start: stick.held.start || keys.held.start,
         },
         pressed: Buttons {
@@ -55,6 +58,7 @@ pub fn mix(pad: Option<&mut Pad>, keys: Input) -> Input {
             x: stick.pressed.x || keys.pressed.x,
             y: stick.pressed.y || keys.pressed.y,
             throw: stick.pressed.throw || keys.pressed.throw,
+            select: stick.pressed.select || keys.pressed.select,
             start: stick.pressed.start || keys.pressed.start,
         },
     }
@@ -130,6 +134,7 @@ mod backend {
                 // Right trigger throws; on an 8BitDo in Switch mode that is ZR.
                 held.throw = gamepad.is_pressed(Button::RightTrigger2)
                     || gamepad.is_pressed(Button::RightTrigger);
+                held.select = gamepad.is_pressed(Button::Select);
                 held.start = gamepad.is_pressed(Button::Start);
             }
 
@@ -142,6 +147,7 @@ mod backend {
             edge(&mut pressed.x, held.x, self.prev.x);
             edge(&mut pressed.y, held.y, self.prev.y);
             edge(&mut pressed.throw, held.throw, self.prev.throw);
+            edge(&mut pressed.select, held.select, self.prev.select);
             edge(&mut pressed.start, held.start, self.prev.start);
             self.prev = held;
 

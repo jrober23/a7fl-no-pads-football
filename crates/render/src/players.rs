@@ -1229,6 +1229,12 @@ pub fn build_mesh_at(
         } else {
             0.25 + 1.20 * run_blend * live
         };
+        // The stiff arm: the hand that is not carrying the ball goes out straight
+        // at the man in front of him and stays there, elbow locked.
+        if matches!(pose.motion, Some(Kind::StiffArm)) && !ball_arm {
+            swing = 1.42;
+            flex = 0.06;
+        }
         if wrap > 0.0 {
             // Arms out and around the man: upper arms forward at shoulder height
             // and the elbows folded, so the hands close on his far side instead of
@@ -1414,6 +1420,9 @@ pub fn build_mesh_at(
                 pitch_mesh(&mut mesh, SOLE, -e * 1.15);
                 raise_to_turf(&mut mesh);
             }
+            // The arm goes out, not the body: handled where the arms are built,
+            // so the runner keeps his feet and his stride.
+            Kind::StiffArm => {}
         }
     }
 

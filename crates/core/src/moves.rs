@@ -15,6 +15,7 @@ pub const SPIN_TIME: f32 = 0.42;
 pub const HURDLE_TIME: f32 = 0.36;
 pub const DIVE_TIME: f32 = 0.34;
 pub const SLIDE_TIME: f32 = 0.40;
+pub const STIFF_ARM_TIME: f32 = 0.45;
 /// Breathing room after a move before the next one can start, so a mash of the
 /// button cannot chain moves into a permanent immunity.
 pub const COOLDOWN: f32 = 0.18;
@@ -30,6 +31,8 @@ pub enum Kind {
     Dive,
     /// The quarterback gives himself up rather than take the hit.
     Slide,
+    /// The free hand goes out at the man in front of him and shoves.
+    StiffArm,
 }
 
 impl Kind {
@@ -39,6 +42,7 @@ impl Kind {
             Kind::Hurdle => "HURDLE",
             Kind::Dive => "DIVE",
             Kind::Slide => "SLIDE",
+            Kind::StiffArm => "STIFF ARM",
         }
     }
 
@@ -50,12 +54,13 @@ impl Kind {
             Kind::Hurdle => HURDLE_TIME,
             Kind::Dive => DIVE_TIME,
             Kind::Slide => SLIDE_TIME,
+            Kind::StiffArm => STIFF_ARM_TIME,
         }
     }
 
     /// Whether the stick still steers the runner while the move runs.
     pub fn steerable(self) -> bool {
-        matches!(self, Kind::Spin)
+        matches!(self, Kind::Spin | Kind::StiffArm)
     }
 
     /// Whether the move ends the play when it finishes.
@@ -124,6 +129,7 @@ impl CarrierMove {
             Some(Kind::Hurdle) => 0.86,
             Some(Kind::Dive) => 1.45,
             Some(Kind::Slide) => 1.10,
+            Some(Kind::StiffArm) => 1.02,
             None => 1.0,
         }
     }
@@ -137,6 +143,9 @@ impl CarrierMove {
             Some(Kind::Hurdle) => 0.0,
             Some(Kind::Dive) => 0.75,
             Some(Kind::Slide) => 0.0,
+            // The hand is on the man, so the wrap is late, but he is still a
+            // runner on his feet with his whole body to hit.
+            Some(Kind::StiffArm) => 0.45,
             None => 1.0,
         }
     }
@@ -191,8 +200,19 @@ mod tests {
     }
 
     #[test]
+    fn a_stiff_arm_is_not_a_commitment() {
+        assert!(!Kind::StiffArm.commits(), "a stiff arm ended the play");
+        assert!(Kind::StiffArm.steerable(), "the runner could not steer in it");
+        let mut m = CarrierMove::default();
+        assert!(m.start(Kind::StiffArm, Vec2::new(1.0, 0.0)));
+        assert!(m.tackle_scale() < 1.0, "the arm did nothing");
+        assert!(m.speed_scale() >= 1.0, "the arm cost him his stride");
+    }
+
+    #[test]
     fn the_spin_is_the_only_move_that_keeps_the_steering() {
         assert!(Kind::Spin.steerable());
+        assert!(Kind::StiffArm.steerable());
         assert!(!Kind::Hurdle.steerable());
         assert!(!Kind::Dive.steerable());
         assert!(!Kind::Slide.steerable());

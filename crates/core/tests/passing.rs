@@ -104,8 +104,8 @@ fn the_meter_is_also_the_range() {
     let teams = league_teams();
     let sim = sim_for(&teams[0], &teams[1], 3);
     let target = deep_target(&sim);
-    let soft = sim.throw_plan(sim.qb, target, 0.15, Vec2::ZERO);
-    let hard = sim.throw_plan(sim.qb, target, 1.0, Vec2::ZERO);
+    let soft = sim.throw_plan(sim.qb, target, 0.15);
+    let hard = sim.throw_plan(sim.qb, target, 1.0);
     assert!(
         hard.reach > soft.reach + 10.0,
         "holding has to be how the ball gets downfield: {:.1} vs {:.1} yards",

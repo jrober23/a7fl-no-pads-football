@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.3-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.4-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -76,29 +76,30 @@ keyboard drives it, so the game is always playable.
  NEW 14 - 7 PAT   2ND 6:41   1ST & 10   BALL ON OWN 34
  SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2
  A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9
- NEW ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [START] PAUSE
+ NEW ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [START] PAUSE
 ```
 
 Controls:
 
 | Input | On the call sheet | At the line and during the play |
 | --- | --- | --- |
-| D-pad or left stick | Up and down move between the formations; right (or A) goes into the plays of one, and left comes back out | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
-| A / South | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, or spin once you are running |
+| D-pad or left stick | Up and down move between the formations; right (or A) goes into the plays of one, and left comes back out | Move the quarterback (past the line of scrimmage he becomes a runner); the ball itself goes to the man whose button you press |
+| A / South | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, tap to pump fake, or spin once you are running |
 | B / East | Back out to the formations | Hold to wind up, release to throw to B; once you are running, hurdle |
 | X / West | — | Open the audible; once the ball is live, throw to X, or dive as a runner |
-| Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or slide as a runner |
-| RT / ZR | — | Change camera |
+| Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or stiff-arm as a runner (slide as a quarterback) |
+| Select / Minus | — | Change camera |
 | Start | — | Pause: resume, camera, quit |
 
 | Keyboard | On the call sheet | At the line and during the play |
 | --- | --- | --- |
-| Arrows or WASD | Up and down move between formations; right goes into the plays, left comes back out | Move the quarterback; aim the pass |
+| Arrows or WASD | Up and down move between formations; right goes into the plays, left comes back out | Move the quarterback; the ball goes to the man whose button you press |
 | Space or Enter | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, or spin |
 | X | Back out to the formations | Open the audible; then throw to B, or hurdle as a runner |
 | Z | — | Flip the call; then throw to X, or dive as a runner |
-| C | — | Throw to Y; once you are running, slide |
-| Left Shift | — | Change camera |
+| C | — | Throw to Y; once you are running, stiff-arm (slide as a quarterback) |
+| Tab or Backspace | — | Change camera |
+| Left Shift | — | Throw the throw-off |
 | Esc | — | Pause: resume, camera, quit |
 
 On defense the same pad does different work:
@@ -110,7 +111,7 @@ On defense the same pad does different work:
 | B / East, X | Switch to the next defender, nearest the ball first |
 | X / West, Z | Dive tackle: a lunging hit from a half-yard further out. With the ball in the air the same button is the bat-down |
 | Y / North, C | Intercept: go and take the ball away |
-| RT / ZR, Left Shift | Change camera |
+| Select / Minus, Tab | Change camera |
 | Start, Esc | Pause |
 
 ### Choosing your team
@@ -207,11 +208,17 @@ instead of cutting in while it is still up at catch height. That is true of a ba
 that was batted down as well, and of a throw that was picked off — except that a pick
 is not dead at all, because the man who has it is running the other way.
 
+A dead ball is not a cut either. The word over the picture — INCOMPLETE, PASS BATTED
+DOWN, INTERCEPTION — used to be stamped on the frame the play ended; it now settles in
+over half a second with the sentence underneath it a beat later, while the men who
+were running coast to a stop instead of freezing mid-stride.
+
 ### Cameras
 
-RT (Left Shift on the keyboard) cycles the shot while the ball is live. On a throw-off
-it does the same while you are covering or returning; while you are throwing, the
-trigger is the throw itself, so pick the shot from the pause menu:
+SELECT (Tab or Backspace on the keyboard) cycles the shot, at the line and while the
+ball is live. On a throw-off it does the same while you are covering or returning;
+while you are throwing, the trigger is the throw itself, so pick the shot from the
+pause menu:
 
 * **Classic** — the default, and the first shot the trigger reaches: behind the ball,
   looking downfield at the defense, so the men you are throwing at are ahead of you
@@ -262,21 +269,26 @@ sheet ended the whole game.
 ### Passing
 
 Every eligible receiver gets a button over his head the moment the ball is snapped,
-colour-coded by how much room he has: green open, yellow tight, red covered. Hold
-his button and the pass meter fills; the longer you hold, the harder the ball is
-thrown. The stick bends the throw off him while the meter fills — that is how you
-lead a receiver into grass or put it on his back shoulder — and a guide runs out
-across the turf to a marker showing exactly where the ball will come down. Let go
-and he throws it.
+colour-coded by how much room he has: green open, yellow tight, red covered. Press
+his button and the ball goes to him. The sim leads him, so a throw at a crossing
+route is aimed where he will be rather than where he is, and the stick has nothing
+to do with where it lands: you pick the man, and the ball goes to the man. Hold the
+button and the meter fills; let go and he throws it at whatever weight the meter got
+to, with a guide across the turf to a marker showing exactly where it comes down.
 
-The meter is a range of passes, not one pass thrown harder. Tap the button and it is a
-floater — slow, high, and short enough that it cannot be a bomb; hold it and it is a
-rope that gets downfield in a hurry. The meter names what it has in it as it fills
+A tap is not a throw. Press and release inside a sixth of a second and the
+quarterback pumps the arm instead: the ball stays in his hand, and the defenders in
+front of him who had already committed take a step they cannot get back. Tap twice
+and he pumps twice. To throw, hold the button long enough for the meter to start.
+
+The meter is a range of passes, not one pass thrown harder. A short hold is a floater
+— slow, high, and short enough that it cannot be a bomb; hold it all the way and it is
+a rope that gets downfield in a hurry. The meter names what it has in it as it fills
 (TOUCH, DRIVE, BOMB), and the ball is timed on the grass it actually has to cover, so
 a swing pass to the flat crosses the field at the same speed as a comeback instead of
 arriving like a fastball.
 
-Power is also range: a tap drops the ball in front of the man and a full meter carries
+Power is also range: a short hold drops the ball in front of the man and a full meter carries
 it over his head. There is a notch on the meter at the weight that would just reach
 him, so an underthrow is something you can see coming rather than something the game
 does to you. The badge colours are live, the guide is drawn
@@ -312,7 +324,8 @@ pass is a penalty, so he has nothing left to do with it but run.
 | **Spin** (A) | Keeps his feet and changes the angle; a wrap-up is nearly half as likely to land while he is turning | Nothing but the beat it takes |
 | **Hurdle** (B) | Leaves his feet over a defender; a tackle attempt goes under him and the defender is left on the ground | A fifth of his speed, and the stick stops steering him until he lands |
 | **Dive** (X) | Lunges forward for the extra yard at half again his speed | The play is over where he lands |
-| **Slide** (Y) | Gives himself up, the way a quarterback does rather than take the hit | The play is over, and he does not get the extra yard a dive would |
+| **Slide** (Y, quarterback only) | Gives himself up, the way a quarterback does rather than take the hit | The play is over, and he does not get the extra yard a dive would |
+| **Stiff arm** (Y, runner) | Puts the free hand — the one not carrying the ball — into the chest of the first man who comes at him and shoves him off his line | The runner keeps his feet, his stride and the ball; the next man still gets a shot at him |
 
 A move is a state, not a button press that does something on the frame it is pressed:
 it runs for a fixed time, the tackle mathematics know what he is in the middle of, and

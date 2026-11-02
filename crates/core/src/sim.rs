@@ -52,6 +52,10 @@ pub const BALL_FALL_SECONDS: f32 = 0.42;
 /// a flipped call. A flip used to place everybody on the mirrored spot in the
 /// frame the button went down, which read as a teleport rather than a shift.
 pub const FLIP_SHIFT_SECONDS: f32 = 0.65;
+/// How long the quarterback's arm is out on a pump fake before he can use it
+/// again.
+pub const PUMP_TIME: f32 = 0.55;
+
 /// How long an interception may be run back before the returner is done.
 pub const RETURN_SECONDS: f32 = 9.0;
 /// Ground covered by one full stride cycle (two steps). Drives the run animation:
@@ -309,10 +313,6 @@ pub struct QbControl {
     /// How hard the ball is thrown, 0..1: the pass meter. The AI ignores this
     /// because it picks its own weight for every throw.
     pub power: f32,
-    /// Where to put the ball relative to the receiver, in yards: `x` down the
-    /// field, `y` across it. Zero aims at the receiver's numbers, which is what
-    /// the AI does.
-    pub aim: Vec2,
 }
 
 /// Live human input for a defender, set by an interactive client.
@@ -411,6 +411,8 @@ pub struct PlaySim<'a> {
     /// A ball dropping to the turf with nobody on it. The result is booked when
     /// it lands, not when the flight that carried it ends.
     falling: Option<Fall>,
+    /// Time left on a pump fake, in seconds.
+    pump_t: f32,
     /// The man who picked it off and the spot he caught it, while he runs it back.
     returner: Option<usize>,
     return_spot: f32,
@@ -544,6 +546,7 @@ impl<'a> PlaySim<'a> {
             pass_contacted: false,
             elapsed_override: None,
             falling: None,
+            pump_t: 0.0,
             returner: None,
             return_spot: setup.los,
             return_throw: None,
@@ -853,6 +856,7 @@ impl<'a> PlaySim<'a> {
         }
         let dt = dt.min(0.05);
         self.t += dt;
+        self.pump_t = (self.pump_t - dt).max(0.0);
         for p in self.players.iter_mut() {
             p.tackle_cooldown = (p.tackle_cooldown - dt).max(0.0);
             p.dive_t = (p.dive_t - dt).max(0.0);
@@ -989,6 +993,74 @@ impl<'a> PlaySim<'a> {
         }
     }
 
+    /// Run the last of a dead play out.
+    ///
+    /// The result is booked the frame the ball is dead, but the men on the field
+    /// are still moving: the tackle is still going to the ground, the runner is
+    /// still sliding, the ball is still settling. Freezing the picture there is
+    /// what made a dead ball read as a cut to the next screen. The client calls
+    /// this during the dead-ball beat, so the play comes to rest before the word
+    /// over it is read.
+    pub fn settle(&mut self, dt: f32) {
+        let dt = dt.clamp(0.0, 0.05);
+        self.pump_t = (self.pump_t - dt).max(0.0);
+        for p in self.players.iter_mut() {
+            p.stun = (p.stun - dt).max(0.0);
+            p.tackle_cooldown = (p.tackle_cooldown - dt).max(0.0);
+            p.beaten = (p.beaten - dt).max(0.0);
+            if p.down {
+                continue;
+            }
+            // Ground friction, not a brake: they coast to a stop.
+            p.vel *= (1.0 - 4.5 * dt).clamp(0.0, 1.0);
+            if p.vel.length() < 0.05 {
+                p.vel = Vec2::ZERO;
+            }
+            p.pos += p.vel * dt;
+            p.run_phase = (p.run_phase + p.vel.length() * dt / STRIDE_YARDS).rem_euclid(1.0);
+        }
+        if let Some(h) = self.ball.holder {
+            self.ball.pos = self.players[h].pos;
+            self.ball.z = 1.0;
+        }
+    }
+
+    /// The quarterback pumps the arm without letting go of the ball.
+    ///
+    /// Nothing is thrown, so no pass is charged to him and the play does not
+    /// change. The men in front of him buy it: a defender whose feet are already
+    /// committed takes a step he cannot get back, which is the reason to pump.
+    /// It costs him the half second the fake takes.
+    pub fn pump_fake(&mut self) {
+        let Some(holder) = self.ball.holder else { return };
+        if holder != self.qb
+            || self.ball.flight.is_some()
+            || self.result.is_some()
+            || self.phase == Phase::PreSnap
+            || self.pump_t > 0.0
+        {
+            return;
+        }
+        self.pump_t = PUMP_TIME;
+        let qb_pos = self.players[self.qb].pos;
+        let mut bit = 0;
+        for d in 7..14 {
+            if self.players[d].down {
+                continue;
+            }
+            if self.players[d].pos.dist(qb_pos) < 7.0 {
+                self.players[d].beaten = self.players[d].beaten.max(0.30);
+                bit += 1;
+            }
+        }
+        let text = if bit > 0 {
+            format!("{} pumps the arm and {} bite", self.name_of(self.qb), bit)
+        } else {
+            format!("{} pumps the arm", self.name_of(self.qb))
+        };
+        self.events.push(SimEvent { t: self.t, text });
+    }
+
     fn snap(&mut self) {
         self.phase = match self.play.family {
             PlayFamily::QuickPass | PlayFamily::DropbackPass | PlayFamily::Screen => Phase::Dropback,
@@ -1117,7 +1189,7 @@ impl<'a> PlaySim<'a> {
         if ctl.throw && can_throw && self.t > SNAP_DELAY + 0.25 {
             if let Some(target) = ctl.target {
                 if !self.players[target].down {
-                    self.throw_to_with(i, Some(target), ctl.power, ctl.aim);
+                    self.throw_to_with(i, Some(target), ctl.power);
                 }
             }
         }
@@ -1232,16 +1304,17 @@ impl<'a> PlaySim<'a> {
     }
 
     fn throw_to(&mut self, qb: usize, target: Option<usize>) {
-        self.throw_to_with(qb, target, 0.8, Vec2::ZERO);
+        self.throw_to_with(qb, target, 0.8);
     }
 
-    /// What a throw of this weight, bent this far off a receiver, would do.
+    /// What a throw of this weight at this man would do.
     ///
-    /// The thrower's arm sets how far the ball can carry: the meter is a range,
-    /// so a soft throw dies in front of the man and a hard one carries over his
-    /// head. Leading him is automatic, and `aim` is on top of that, which is what
-    /// lets a player throw somebody open.
-    pub fn throw_plan(&self, qb: usize, target: usize, power: f32, aim: Vec2) -> ThrowPlan {
+    /// The ball goes to the receiver the button named, and leading him is the
+    /// sim's job, not the player's: a throw at a moving man is aimed where he
+    /// will be, not where he is. The meter decides only how hard it gets there --
+    /// the arm sets how far it can carry, so a soft throw dies in front of a man
+    /// too far downfield and a hard one carries over his head.
+    pub fn throw_plan(&self, qb: usize, target: usize, power: f32) -> ThrowPlan {
         let qb_pos = self.players[qb].pos;
         let power = power.clamp(0.0, 1.0);
         let arm = self.attrs(qb).arm_strength();
@@ -1249,7 +1322,7 @@ impl<'a> PlaySim<'a> {
         let speed = 17.0 + arm * 0.5;
         let rough = (receiver - qb_pos).length().max(0.1);
         let lead = self.players[target].vel * (rough / speed).clamp(0.25, 2.4) * 0.75;
-        let wanted = receiver + lead + aim;
+        let wanted = receiver + lead;
         let offset = wanted - qb_pos;
         let distance = offset.length();
         let reach = 9.0 + (arm * 0.42 + 8.0) * power;
@@ -1269,7 +1342,7 @@ impl<'a> PlaySim<'a> {
         }
     }
 
-    fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32, aim: Vec2) {
+    fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32) {
         // A new throw is a new chance for somebody to get a hand on it.
         self.pass_contacted = false;
         let qb_pos = self.players[qb].pos;
@@ -1277,7 +1350,7 @@ impl<'a> PlaySim<'a> {
 
         let (to, air, receiver) = match target {
             Some(t) => {
-                let plan = self.throw_plan(qb, t, power, aim);
+                let plan = self.throw_plan(qb, t, power);
                 let accuracy = self.attrs(qb).accuracy_factor();
                 let pressure = self.qb_pressure();
                 // A soft throw hangs and drifts; a rope arrives flat and can run
@@ -1429,6 +1502,7 @@ impl<'a> PlaySim<'a> {
             Kind::Hurdle => format!("{name} goes over the top"),
             Kind::Dive => format!("{name} dives forward"),
             Kind::Slide => format!("{name} slides down"),
+            Kind::StiffArm => format!("{name} puts a hand out"),
         };
         self.events.push(SimEvent { t: self.t, text });
     }
@@ -1979,6 +2053,22 @@ impl<'a> PlaySim<'a> {
             // A dive reaches further and holds on less: it is a lunge, not a wrap.
             if Some(d) == self.human_defender && self.players[d].dive_t > 0.0 {
                 p = (p - 0.12).max(0.05);
+            }
+            // A stiff arm is a shove, not a tackle: the free hand goes into the
+            // first man's chest and pushes him off his line. It does not end the
+            // play, and it does not stop the runner.
+            if self.carrier_moves.kind() == Some(Kind::StiffArm) {
+                let away = (self.players[d].pos - self.players[carrier].pos).normalize_or_zero();
+                self.players[d].pos += away * 0.70;
+                self.players[d].vel += away * 1.4;
+                self.players[d].stun = 0.45;
+                self.players[d].tackle_cooldown = 0.35;
+                self.players[carrier].vel *= 0.95;
+                self.events.push(SimEvent {
+                    t: self.t,
+                    text: format!("{} stiff-arms {}!", self.name_of(carrier), self.name_of(d)),
+                });
+                continue;
             }
             // A man in the air cannot be wrapped up: the attempt goes under him and
             // he is left grasping at the turf.

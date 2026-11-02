@@ -44,18 +44,33 @@ const RESULT_HOLD: Duration = Duration::from_millis(2600);
 /// to be read. The play used to cut to the card a quarter of a second after the
 /// hit, which put the result screen over a tackle nobody had seen.
 const DEAD_BALL_HOLD: Duration = Duration::from_millis(1500);
+/// How long the word over a dead ball takes to arrive on the picture. The play
+/// used to be announced the frame it ended; this is the beat it rises over.
+const ANNOUNCE_EASE: f32 = 0.55;
 /// How long before [A] can move it on: past the hit, not past the replay.
 const DEAD_BALL_SKIP: Duration = Duration::from_millis(520);
 /// How long the pass meter takes to fill from nothing to a full-weight throw.
 const CHARGE_TIME: f32 = 1.05;
-/// Even a tap throws the ball; it just does not throw it far.
+/// Even a short hold throws the ball; it just does not throw it far.
 const MIN_POWER: f32 = 0.18;
-/// How far the aim stick can bend a pass off the man it is aimed at.
-const MAX_LEAD_YARDS: f32 = 7.5;
+/// A press shorter than this is not a throw at all: it is a pump fake. Tap the
+/// same receiver twice and the quarterback pumps twice.
+const PUMP_TAP: f32 = 0.16;
 /// The four passing buttons, in the order the badges are drawn.
 const PASS_LABELS: [&str; 4] = ["A", "B", "X", "Y"];
-/// The same four buttons once the ball is in a runner's hands.
-const MOVES: [Kind; 4] = [Kind::Spin, Kind::Hurdle, Kind::Dive, Kind::Slide];
+/// The same four buttons once the ball is in a runner's hands. Y is the stiff
+/// arm, which is what a carrier does with the hand not holding the ball.
+const MOVES: [Kind; 4] = [Kind::Spin, Kind::Hurdle, Kind::Dive, Kind::StiffArm];
+
+/// The moves for the man holding the ball. A quarterback still has a slide in
+/// him -- he gives himself up rather than take the hit -- and a runner does not.
+fn moves_for(sim: &PlaySim) -> [Kind; 4] {
+    if sim.ball.holder == Some(sim.qb) {
+        [Kind::Spin, Kind::Hurdle, Kind::Dive, Kind::Slide]
+    } else {
+        MOVES
+    }
+}
 /// How far across the field a throw-off can be aimed: the width of the landing
 /// zone the returner has to work in.
 const THROW_OFF_AIM_YARDS: f32 = 13.0;
@@ -623,7 +638,7 @@ impl Arcade {
                 },
                 String::new(),
                 "  THROW-OFF: STICK AIMS, HOLD A TO LOAD POWER, LET GO TO THROW".to_string(),
-                "  RETURN: STICK RUNS, [X] CHANGES CAMERA, [START] PAUSES".to_string(),
+                "  RETURN: STICK RUNS, [SELECT] CHANGES CAMERA, [START] PAUSES".to_string(),
                 String::new(),
                 "  [STICK] CHOOSE YOUR TEAM   [A] KICK OFF".to_string(),
             ];
@@ -740,11 +755,10 @@ impl Arcade {
                 acc = 0.0;
                 continue;
             }
-            // The trigger cycles the lens while you are covering or returning.
-            // While you are throwing it is the throw itself, so the camera lives
-            // in the pause menu instead -- X is the dive now.
+            // SELECT cycles the lens while you are covering or returning; the
+            // trigger is the throw itself, so it cannot be both.
             let throwing = sim.phase == ThrowPhase::Presnap && sim.human_thrower;
-            if input.pressed.throw && !throwing {
+            if input.pressed.select && !throwing {
                 self.cam = (self.cam + 1) % CAMS.len();
             }
             // The same screen mapping as a scrimmage snap, pointed the way this
@@ -1391,8 +1405,6 @@ fn drive(
     // The button being held for a pass: which receiver, and for how long. The
     // meter fills while it is down and the ball leaves when it comes up.
     let mut charge: Option<(usize, f32)> = None;
-    // Where the aim stick has bent the throw, in yards off the receiver.
-    let mut aim = Vec2::ZERO;
     // When the ball died, so the picture can hold on the tackle before the card.
     let mut dead_at: Option<Instant> = None;
 
@@ -1413,9 +1425,8 @@ fn drive(
             acc = 0.0;
             continue;
         }
-        // The trigger is free during a snap now that the face buttons pass, so it
-        // cycles the camera.
-        if input.pressed.throw {
+        // SELECT cycles the camera: the trigger is not a camera button any more.
+        if input.pressed.select {
             *cam = (*cam + 1) % CAMS.len();
         }
         let view_mode = CAMS[*cam % CAMS.len()];
@@ -1459,31 +1470,27 @@ fn drive(
         if running {
             // A pass wound up before he crossed the line is not a throw any more.
             charge = None;
-            for (slot, kind) in MOVES.iter().enumerate() {
+            let set = moves_for(sim);
+            for (slot, kind) in set.iter().enumerate() {
                 if down[slot] {
                     sim.request_move(*kind);
                 }
             }
         }
 
-        // Holding a receiver's button winds the pass up. The stick bends it off
-        // him while the meter fills, which is how you lead a man into grass or
-        // put it on his back shoulder.
+        // Holding a receiver's button winds the pass up. The ball goes to the man
+        // the button names, led by the sim rather than by the stick, so the only
+        // thing being decided here is how hard it gets there.
         if let Some((slot, held_for)) = charge {
             if slot >= targets.len() {
                 charge = None;
             } else {
-                if stick.length() > 0.30 {
-                    aim = Vec2::new(stick.x, stick.y).normalize_or_zero()
-                        * (MAX_LEAD_YARDS * stick.length().min(1.0));
-                }
                 charge = Some((slot, held_for + frame_dt as f32));
             }
         }
         if charge.is_none() && !running {
             if let Some(slot) = (0..targets.len().min(PASS_LABELS.len())).find(|&s| down[s]) {
                 charge = Some((slot, 0.0));
-                aim = Vec2::ZERO;
             }
         }
 
@@ -1491,8 +1498,14 @@ fn drive(
         let mut release: Option<(usize, f32)> = None;
         if let Some((slot, held_for)) = charge {
             if !held[slot] {
-                let power = (held_for / CHARGE_TIME).clamp(MIN_POWER, 1.0);
-                release = Some((targets[slot].1, power));
+                if held_for < PUMP_TAP {
+                    // A tap is not a throw: the arm comes forward and the ball
+                    // stays in his hand. Tap twice and he pumps twice.
+                    sim.pump_fake();
+                } else {
+                    let power = (held_for / CHARGE_TIME).clamp(MIN_POWER, 1.0);
+                    release = Some((targets[slot].1, power));
+                }
                 charge = None;
             }
         }
@@ -1510,16 +1523,20 @@ fn drive(
             target: aimed,
             throw: release.is_some(),
             power,
-            aim,
         }));
-        if release.is_some() {
-            aim = Vec2::ZERO;
-        }
 
         while acc >= STEP as f64 && sim.result.is_none() {
             sim.step(STEP);
             acc -= STEP as f64;
         }
+
+        // The word over a dead ball arrives over half a second rather than cutting
+        // onto the frame the play ended.
+        broadcast.set_announce(
+            dead_at
+                .map(|since| (since.elapsed().as_secs_f32() / ANNOUNCE_EASE).clamp(0.0, 1.0))
+                .unwrap_or(1.0),
+        );
 
         if now.duration_since(drew) >= FRAME || sim.result.is_some() {
             drew = now;
@@ -1550,7 +1567,7 @@ fn drive(
             let mut needed = None;
             if let Some((slot, _)) = charge {
                 if let Some((_, index)) = targets.get(slot) {
-                    let plan = sim.throw_plan(sim.qb, *index, power, aim);
+                    let plan = sim.throw_plan(sim.qb, *index, power);
                     short = plan.distance > plan.reach + 0.4;
                     needed = Some(plan.power_needed);
                     let hand = sim.qb_pos();
@@ -1592,7 +1609,14 @@ fn drive(
 
             if running {
                 // The moves, and which one is in flight right now.
-                let mut row = String::from("  [A] SPIN   [B] HURDLE   [X] DIVE   [Y] SLIDE");
+                let set = moves_for(sim);
+                let mut row = format!(
+                    "  [A] {}   [B] {}   [X] {}   [Y] {}",
+                    set[0].label(),
+                    set[1].label(),
+                    set[2].label(),
+                    set[3].label()
+                );
                 if let Some(kind) = sim.carrier_move().kind() {
                     row.push_str(&format!("      {}", kind.label()));
                 }
@@ -1616,12 +1640,12 @@ fn drive(
             }
             if presnap {
                 lines.push(format!(
-                    "  AT THE LINE   [A] SNAP   [X] AUDIBLE   [Y] FLIP   [RT] {}   [START] PAUSE",
+                    "  AT THE LINE   [A] SNAP   [X] AUDIBLE   [Y] FLIP   [SELECT] {}   [START] PAUSE",
                     cam_name(view_mode)
                 ));
             } else {
                 lines.push(format!(
-                    "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] PAUSE",
+                    "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] {}   [START] PAUSE",
                     cam_name(view_mode)
                 ));
             }
@@ -1647,6 +1671,9 @@ fn drive(
             // The ball is dead; the picture is not. Hold the shot while the hit
             // finishes and the players get up, then let the card come up.
             let since = *dead_at.get_or_insert(now);
+            // Let the play come to rest: the bodies coast, the ball settles. The
+            // card comes up after that, not on top of a frozen picture.
+            sim.settle(frame_dt as f32);
             let waited = since.elapsed();
             if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
                 return true;
@@ -1811,7 +1838,7 @@ fn drive_defense(
             acc = 0.0;
             continue;
         }
-        if input.pressed.throw {
+        if input.pressed.select {
             *cam = (*cam + 1) % CAMS.len();
         }
         let view_mode = CAMS[*cam % CAMS.len()];
@@ -1834,6 +1861,14 @@ fn drive_defense(
             sim.step(STEP);
             acc -= STEP as f64;
         }
+
+        // The word over a dead ball arrives over half a second rather than cutting
+        // onto the frame the play ended.
+        broadcast.set_announce(
+            dead_at
+                .map(|since| (since.elapsed().as_secs_f32() / ANNOUNCE_EASE).clamp(0.0, 1.0))
+                .unwrap_or(1.0),
+        );
 
         if now.duration_since(drew) >= FRAME || sim.result.is_some() {
             drew = now;
@@ -1877,7 +1912,7 @@ fn drive_defense(
                 );
             } else {
                 lines.push(
-                    "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RT] CAMERA   [START] PAUSE"
+                    "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [SELECT] CAMERA   [START] PAUSE"
                         .to_string(),
                 );
             }
@@ -1900,6 +1935,9 @@ fn drive_defense(
             // The ball is dead; the picture is not. Hold the shot while the hit
             // finishes, then let the card come up.
             let since = *dead_at.get_or_insert(now);
+            // Let the play come to rest: the bodies coast, the ball settles. The
+            // card comes up after that, not on top of a frozen picture.
+            sim.settle(frame_dt as f32);
             let waited = since.elapsed();
             if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
                 return true;
@@ -1998,7 +2036,7 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: 
     let cam = cam_name(CAMS[arcade.cam % CAMS.len()]);
     if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
         return format!(
-            "  THROW   AIM WITH STICK   HOLD [A] TO LOAD   [START] PAUSE   CAMERA LIVES IN THERE"
+            "  THROW   AIM WITH STICK   HOLD [A] TO LOAD   [SELECT] CAMERA   [START] PAUSE"
         );
     }
     if sim.setup.throwing_team == my_team {
@@ -2012,7 +2050,7 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: 
             })
             .unwrap_or_else(|| "NOBODY".to_string());
         return format!(
-            "  COVER   YOU: {who:<11} MOVE   [A] TACKLE   [X] DIVE   [B] SWITCH   [RT] {cam}   [START] PAUSE"
+            "  COVER   YOU: {who:<11} MOVE   [A] TACKLE   [X] DIVE   [B] SWITCH   [SELECT] {cam}   [START] PAUSE"
         );
     }
     let fair = if sim.phase == ThrowPhase::Flight {
@@ -2025,7 +2063,7 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: 
         ""
     };
     format!(
-        "  RETURN IT   {} BALL   MOVE WITH STICK{fair}   [RT] {cam}   [START] PAUSE",
+        "  RETURN IT   {} BALL   MOVE WITH STICK{fair}   [SELECT] {cam}   [START] PAUSE",
         arcade.game.teams[sim.setup.receiving_team].abbr,
     )
 }
