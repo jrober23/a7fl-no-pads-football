@@ -47,10 +47,16 @@ pub const FIXED_DT: f32 = 1.0 / 60.0;
 /// The flight ends at the catch height, so without this the whistle went while
 /// the ball was still up in the air and the incompletion never landed.
 pub const BALL_FALL_SECONDS: f32 = 0.42;
-/// How long the men who have to change sides take to walk to their new spots on
-/// a flipped call. A flip used to place everybody on the mirrored spot in the
-/// frame the button went down, which read as a teleport rather than a shift.
-pub const FLIP_SHIFT_SECONDS: f32 = 0.65;
+/// How fast the men who have to change sides jog to their new spots on a flipped
+/// call. A flip used to slide everybody across on an eased lerp, which read as a
+/// teleport with a smear on it; a flip is a man turning, jogging, and squaring up.
+pub const FLIP_JOG_SPEED: f32 = 2.9;
+/// How fast a man can turn on the way to his new spot, radians a second.
+pub const FLIP_TURN_RATE: f32 = 9.0;
+/// How close two bodies have to be before it is a touch and not a lean. The
+/// wrap-up radius is nearly a yard, which had a defender standing at the line
+/// flagged the instant he leaned across it: this is shoulder to shoulder.
+pub const PRESNAP_TOUCH: f32 = 0.62;
 /// How long the quarterback's arm is out on a pump fake before he can use it
 /// again.
 pub const PUMP_TIME: f32 = 0.55;
@@ -64,7 +70,7 @@ pub const PRESNAP_WAIT: f32 = 2.6;
 pub const DUMMY_TIME: f32 = 1.1;
 /// How far a defender may lean into the neutral zone before the ball goes. Any
 /// further and he is across the line, which is a foul the moment the snap comes.
-pub const NEUTRAL_ZONE: f32 = 1.6;
+
 /// Ground covered by one full stride cycle (two steps). Drives the run animation:
 /// about 3.2 yards at speed, which is five or so steps a second flat out.
 pub const STRIDE_YARDS: f32 = 3.2;
@@ -900,8 +906,13 @@ impl<'a> PlaySim<'a> {
                 if Some(i) == self.human_defender {
                     continue;
                 }
+                // A man mid-jog is being moved by the walk itself; the settle of
+                // the formation must not drag him along behind it.
+                if self.shift.is_some() {
+                    continue;
+                }
                 let jitter = Vec2::new(0.0, (self.t * 1.7 + i as f32).sin() * 0.02);
-                let base = self.shifted_pos(i);
+                let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
                 self.players[i].pos = base + jitter;
             }
             self.walk_presnap_defender(dt);
@@ -1118,24 +1129,21 @@ impl<'a> PlaySim<'a> {
                 self.players[d].vel = Vec2::ZERO;
             }
         }
-        // He can lean into the neutral zone, not walk into the backfield.
-        let along = (self.players[d].pos.x - self.los) * self.dirf();
-        if along > NEUTRAL_ZONE {
-            self.players[d].pos.x = self.los + self.dirf() * NEUTRAL_ZONE;
-            self.players[d].vel.x = 0.0;
-        }
+        // He may go where he likes before the snap, including across the line.
+        // What makes it a foul is putting a hand on somebody, not the depth of
+        // his alignment: pinning him to the line was being read as being stuck.
     }
 
     /// Contact across the line before the snap is encroachment, and it is
     /// whistled the moment it happens rather than at the snap.
     fn check_presnap_encroachment(&mut self) {
         let Some(d) = self.human_defender else { return };
-        if (self.players[d].pos.x - self.los) * self.dirf() <= 0.02 {
+        // You cannot foul from your own side of the ball.
+        if (self.players[d].pos.x - self.los) * self.dirf() <= 0.12 {
             return;
         }
         let touched = (0..7).any(|i| {
-            !self.players[i].down
-                && self.players[i].pos.dist(self.players[d].pos) < TACKLE_RADIUS * 0.85
+            !self.players[i].down && self.players[i].pos.dist(self.players[d].pos) < PRESNAP_TOUCH
         });
         if touched {
             self.call_encroachment(d);
@@ -1164,14 +1172,8 @@ impl<'a> PlaySim<'a> {
     }
 
     fn snap(&mut self) {
-        // A defender still across the line when the ball goes is the foul, even
-        // if he never touched anybody.
-        if let Some(d) = self.human_defender {
-            if (self.players[d].pos.x - self.los) * self.dirf() > 0.02 {
-                self.call_encroachment(d);
-                return;
-            }
-        }
+        // Being across the line at the snap is not a foul by itself: the whistle
+        // is for contact, and that is checked while he is walking, not here.
         self.phase = match self.play.family {
             PlayFamily::QuickPass | PlayFamily::DropbackPass | PlayFamily::Screen => Phase::Dropback,
             PlayFamily::PlayAction => Phase::Dropback,
@@ -2410,7 +2412,12 @@ impl<'a> PlaySim<'a> {
     fn finish_tackle(&mut self, carrier: usize, _tackler: Option<usize>) {
         self.players[carrier].down = true;
         self.players[carrier].vel = Vec2::ZERO;
-        self.ball.holder = None;
+        // He is the one going to the ground with the ball, so he keeps it. Clear
+        // the holder and the ball is drawn loose at his feet, which reads as the
+        // tackler standing over the pile holding it.
+        self.ball.holder = Some(carrier);
+        self.ball.pos = self.players[carrier].pos;
+        self.ball.z = 0.55;
     }
 
     fn fumble(&mut self, carrier: usize, defender: usize) {
@@ -2977,45 +2984,46 @@ impl<'a> PlaySim<'a> {
     /// shift that is still in progress.
     pub fn finish_shift(&mut self) {
         self.shift = None;
-        self.shift_t = FLIP_SHIFT_SECONDS;
+        self.shift_t = 0.0;
+        let upfield = self.dirf().atan2(0.0);
         for i in 0..14 {
             let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
             self.players[i].pos = base;
             self.players[i].vel = Vec2::ZERO;
+            self.players[i].heading = upfield;
         }
     }
 
+    /// The walk to a flipped alignment, one leg at a time: turn to face the way
+    /// he is going, jog to the spot at a speed a person runs, then square his
+    /// shoulders to the line. Men whose spot did not move do not move at all.
     fn advance_shift(&mut self, dt: f32) {
         let Some(from) = self.shift.clone() else {
             return;
         };
         self.shift_t += dt;
-        let k = (self.shift_t / FLIP_SHIFT_SECONDS).clamp(0.0, 1.0);
-        let eased = k * k * (3.0 - 2.0 * k);
+        let upfield = Vec2::new(self.dirf(), 0.0);
+        let up_angle = upfield.y.atan2(upfield.x);
+        let mut done = true;
         for i in 0..14 {
             let to = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
             let start = from.get(i).copied().unwrap_or(to);
-            self.players[i].pos = start.lerp(to, eased);
-            // A man on the move is running: the stride follows his feet.
-            self.players[i].vel = (to - start) / FLIP_SHIFT_SECONDS;
-            if k >= 1.0 {
-                self.players[i].vel = Vec2::ZERO;
+            let delta = to - start;
+            let dist = delta.length();
+            let travel = if dist > 0.01 { delta / dist } else { upfield };
+            let jogged = (FLIP_JOG_SPEED * self.shift_t).min(dist);
+            let arrived = jogged >= dist - 0.01;
+            let want = if arrived { upfield } else { travel };
+            let p = &mut self.players[i];
+            p.heading = turn_towards(p.heading, want.y.atan2(want.x), FLIP_TURN_RATE * dt);
+            p.pos = if arrived { to } else { start + travel * jogged };
+            p.vel = if arrived { Vec2::ZERO } else { travel * FLIP_JOG_SPEED };
+            if !arrived || angle_gap(p.heading, up_angle) > 0.01 {
+                done = false;
             }
         }
-        if k >= 1.0 {
+        if done {
             self.shift = None;
-        }
-    }
-
-    fn shifted_pos(&self, i: usize) -> Vec2 {
-        let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
-        match &self.shift {
-            Some(from) => {
-                let k = (self.shift_t / FLIP_SHIFT_SECONDS).clamp(0.0, 1.0);
-                let eased = k * k * (3.0 - 2.0 * k);
-                from.get(i).copied().unwrap_or(base).lerp(base, eased)
-            }
-            None => base,
         }
     }
 
@@ -3201,6 +3209,21 @@ impl<'a> PlaySim<'a> {
             self.ball.pos.x
         }
     }
+}
+
+/// Turn a heading toward another by at most `step` radians, the short way round.
+fn turn_towards(heading: f32, want: f32, step: f32) -> f32 {
+    let gap = angle_gap(heading, want);
+    if gap.abs() <= step {
+        want
+    } else {
+        heading + gap.clamp(-step, step)
+    }
+}
+
+/// The signed difference between two headings, -pi..pi.
+fn angle_gap(a: f32, b: f32) -> f32 {
+    (b - a + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI
 }
 
 fn route_pace(depth: u8) -> f32 {
@@ -3619,9 +3642,15 @@ mod tests {
         }
         // Then they run there. The guards do not go anywhere at all.
         sim.await_snap(true);
-        for _ in 0..45 {
+        // A receiver's mirrored spot can be the width of the formation away, so
+        // the jog is given all the time it needs rather than a fixed count.
+        for _ in 0..1200 {
             sim.step(FIXED_DT);
+            if sim.shift.is_none() {
+                break;
+            }
         }
+        assert!(sim.shift.is_none(), "the jog never finished");
         for i in 0..7 {
             let role = OffRole::ALL[sim.players[i].role_index];
             let now = sim.players[i].pos;
@@ -3738,16 +3767,36 @@ mod tests {
     }
 
     #[test]
-    fn a_defender_across_the_line_at_the_snap_is_flagged() {
+    fn leaning_across_the_line_is_not_encroachment_but_contact_is() {
         let (off, def) = teams();
         let book = playbook();
         let dcall = defensive_playbook()[0].clone();
         let s = setup(40.0, 1, 10.0, 72);
+
+        // A yard into the backfield, with nobody near him: depth is not a foul,
+        // and the ball still goes when it is asked for.
         let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
         sim.set_human_defender(Some(7));
-        sim.players[7].pos.x = s.los + s.direction as f32 * 0.9;
+        sim.players[7].pos = Vec2::new(s.los + s.direction as f32, s.ball_y + 20.0);
+        for _ in 0..6 {
+            sim.step(FIXED_DT);
+        }
+        assert!(sim.result.is_none(), "leaning across the line drew a flag");
         sim.request_snap();
-        let r = sim.result.clone().expect("no flag was thrown");
+        assert!(sim.result.is_none(), "being across at the snap drew a flag");
+        assert_ne!(sim.phase, Phase::Dead, "the ball was whistled dead before it went");
+
+        // A hand on a man while across the line, and the flag is on the ground.
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        sim.set_human_defender(Some(7));
+        // On top of the man over the ball, a step across the line.
+        let man = sim.players[1].pos;
+        sim.players[7].pos = Vec2::new(s.los + s.direction as f32 * 0.35, man.y);
+        sim.step(FIXED_DT);
+        let r = sim
+            .result
+            .clone()
+            .expect("a touch across the line was not flagged");
         let call = r.penalty.clone().expect("a penalty with no call");
         assert_eq!(call.kind, crate::rules::PenaltyKind::Encroachment);
         assert_eq!(call.against, crate::rules::FoulTeam::Defense);

@@ -174,6 +174,7 @@ impl WindowView {
             y: key(minifb::Key::C),
             throw: key(minifb::Key::LeftShift) || key(minifb::Key::RightShift),
             select: key(minifb::Key::Tab) || key(minifb::Key::Backspace),
+            preview: key(minifb::Key::R),
             dummy: key(minifb::Key::Q),
             shoulder: key(minifb::Key::E),
             start: key(minifb::Key::Escape),
@@ -193,6 +194,7 @@ impl WindowView {
         let stick = Vec2::new(stick.x.clamp(-1.0, 1.0), stick.y.clamp(-1.0, 1.0));
 
         let pressed = Buttons {
+            preview: held.preview && !self.prev.preview,
             a: held.a && !self.prev.a,
             b: held.b && !self.prev.b,
             x: held.x && !self.prev.x,

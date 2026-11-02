@@ -1452,10 +1452,10 @@ fn drive(
         let view_mode = CAMS[*cam % CAMS.len()];
 
         // Before the snap the pad belongs to the line, not to the quarterback: A
-        // goes, X opens the audible, Y flips the call, LT barks a hard count and
-        // holding RT shows the whole route tree until it is let go.
+        // goes, X opens the audible, Y flips the call, LB barks a hard count and
+        // holding LT shows the whole route tree until it is let go.
         if sim.phase == Phase::PreSnap {
-            sim.set_preview(input.held.throw);
+            sim.set_preview(input.held.preview);
             if input.pressed.dummy {
                 sim.dummy_audible();
             }
@@ -1464,12 +1464,10 @@ fn drive(
             }
             if input.pressed.x {
                 let current = sim.play.clone();
-                let forms = formations_in(book);
-                let list = forms
-                    .iter()
-                    .position(|f| *f == current.formation)
-                    .map(|f| plays_in(book, forms[f]))
-                    .unwrap_or_default();
+                // An audible changes the play, not the formation: the men are
+                // already lined up, and re-shaping the huddle at the line is a
+                // different thing from checking to another call out of it.
+                let list = plays_in(book, current.formation);
                 match audible_popup(
                     sim,
                     broadcast,
@@ -1496,12 +1494,15 @@ fn drive(
             sim.set_preview(false);
         }
         let presnap = sim.phase == Phase::PreSnap;
+        // A running play has no throw to weigh, so it has no meter, no badges and
+        // no guide. The face buttons are the ball carrier's moves from the snap.
+        let run_call = sim.play.family.is_run();
 
         // Once the ball is in a runner's hands and there is no pass to throw, the
         // face buttons are his move set rather than the receivers'.
         let returning = sim.phase == Phase::Return;
         let running = !presnap && !returning && sim.face_buttons_are_moves();
-        let targets = if running || presnap || returning {
+        let targets = if running || presnap || returning || run_call {
             Vec::new()
         } else {
             sim.eligible_targets()
@@ -1533,7 +1534,7 @@ fn drive(
                 charge = Some((slot, held_for + frame_dt as f32));
             }
         }
-        if charge.is_none() && !running {
+        if charge.is_none() && !running && !run_call {
             if let Some(slot) = (0..targets.len().min(PASS_LABELS.len())).find(|&s| down[s]) {
                 charge = Some((slot, 0.0));
             }
@@ -1662,7 +1663,11 @@ fn drive(
                 focus,
                 badges,
                 guide,
-                power: charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0)),
+                power: if run_call {
+                    None
+                } else {
+                    charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
+                },
                 short,
                 needed,
             };
@@ -1719,7 +1724,7 @@ fn drive(
             }
             if presnap {
                 lines.push(format!(
-                    "  [A] SNAP   [X] AUDIBLE   [Y] FLIP   HOLD [RT] PREVIEW   [LT] DUMMY COUNT   [SELECT] {}",
+                    "  [A] SNAP   [X] AUDIBLE   [Y] FLIP   HOLD [LT] PREVIEW   [LB] DUMMY COUNT   [SELECT] {}",
                     cam_name(view_mode)
                 ));
             } else {
@@ -2033,6 +2038,12 @@ fn drive_defense(
         // RB checks the defence at the line: three calls at a time over the
         // picture, so the look being checked out of stays on the field.
         if sim.phase == Phase::PreSnap && input.pressed.shoulder {
+            // A check stays in the front that is on the field: it is a call, not
+            // a new alignment with seven men walking around before the snap.
+            let calls: Vec<DefCall> = def_calls_in(defbook, sim.def.front)
+                .iter()
+                .map(|&i| defbook[i].clone())
+                .collect();
             match defense_popup(
                 sim,
                 broadcast,
@@ -2040,7 +2051,7 @@ fn drive_defense(
                 pad.as_deref_mut(),
                 view_mode,
                 header,
-                defbook,
+                &calls,
             ) {
                 DefenseAudible::Picked(call) => sim.call_defense(call),
                 DefenseAudible::Back => {}

@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.5-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.6-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -89,7 +89,8 @@ Controls:
 | X / West | — | Open the audible over the field; once the ball is live, throw to X, or dive as a runner |
 | Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or stiff-arm as a runner (slide as a quarterback) |
 | Select / Minus | — | Change camera |
-| LT / ZL | — | Dummy count at the line: bark the snap count and try to draw a defender across |
+| LT / ZL | — | Hold for the play preview: the shot lifts over the route tree until you let go |
+| LB / L1 | — | Dummy count at the line: bark the snap count and try to draw a defender across |
 | RB / ZR | — | On defense, check to another call: three at a time, over the field |
 | Start | — | Pause: resume, camera, quit |
 
@@ -101,6 +102,7 @@ Controls:
 | Z | — | Flip the call; then throw to X, or dive as a runner |
 | C | — | Throw to Y; once you are running, stiff-arm (slide as a quarterback) |
 | Tab or Backspace | — | Change camera |
+| R | — | Hold for the play preview |
 | Q | — | Dummy count at the line |
 | E | — | Defensive check at the line |
 | Left Shift | — | Throw the throw-off |
@@ -212,6 +214,10 @@ instead of cutting in while it is still up at catch height. That is true of a ba
 that was batted down as well, and of a throw that was picked off — except that a pick
 is not dead at all, because the man who has it is running the other way.
 
+The man who goes to the ground keeps the ball. It used to be let go at the moment
+of the tackle, which read as the tackler standing over the pile holding it; it now
+stays in the carrier's hands all the way down.
+
 A dead ball is not a cut either. The word over the picture — INCOMPLETE, PASS BATTED
 DOWN, INTERCEPTION — used to be stamped on the frame the play ended; it now settles in
 over half a second with the sentence underneath it a beat later, while the men who
@@ -281,27 +287,37 @@ sheet ended the whole game.
 
 The line of scrimmage is a place to work now, not a menu to get through.
 
-Holding RT at the line is the play preview: the shot lifts over the whole route
+Holding LT at the line is the play preview: the shot lifts over the whole route
 tree and the routes are drawn heavier, with a bigger bar at the end of each one.
 Let go and the picture drops back behind the ball. It is the same drawing that is
 always on the grass before the snap, only readable at a glance.
 
-LT is the dummy count. The quarterback barks the count and the men on the ball
+LB is the dummy count. The quarterback barks the count and the men on the ball
 either bite or they do not: a defender who jumps is five yards and the down is
 replayed, and a defense that sits still has heard the count for nothing.
 
 X opens the audible as a card over the picture, three plays at a time, and the
 stick pages through the rest. The field stays on screen behind it, which matters,
-because the whole reason to audible is the look the defense is showing. On defense
-RB does the same thing with three calls: the offense is not re-lined by a check,
-the defense is.
+because the whole reason to audible is the look the defense is showing. The check
+stays inside the formation you are in: it changes the play, not the shape of the
+huddle. On defense RB does the same thing with three calls out of the front that is
+on the field, and the offense is not re-lined by a check -- the defense is.
 
-On defense you walk the man on the pad before the snap. The neutral zone is his to
-lean into -- a yard and a half of it -- and nothing more. Run into an offensive
-player across the line and the flag is on the ground before the snap; still be
-across the line when the ball goes and it is the same flag: encroachment, five
-yards, replay the down. Once the ball is live a defender goes wherever he likes,
-including past the line, because the man with the ball is not going to wait.
+On defense you walk the man on the pad before the snap, and there is no line he
+cannot cross. The flag is for contact: put a hand on an offensive player while you
+are across the line and it is on the ground before the snap, encroachment, five
+yards, replay the down. Leaning into the neutral zone, working along the line, or
+standing a yard into the backfield is not a foul, and neither is being across when
+the ball goes. Once the ball is live a defender goes wherever he likes, because the
+man with the ball is not going to wait.
+
+A flip is a jog now, not a slide. Y turns the men who have to change sides, they
+run to their mirrored spots at a pace a person runs, and they square their
+shoulders to the line when they get there. The men on the ball do not move.
+
+A run has no power meter: the meter weighs a throw, and a running play has no throw
+in it. The face buttons are the carrier's moves from the snap, with nothing to wind
+up.
 
 ### Passing
 

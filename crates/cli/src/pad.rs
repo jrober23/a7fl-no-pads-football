@@ -18,7 +18,9 @@ pub struct Buttons {
     pub throw: bool,
     /// The Select / Back button, which cycles the camera.
     pub select: bool,
-    /// The left trigger: a dummy count at the line.
+    /// The left trigger, held: the play preview at the line.
+    pub preview: bool,
+    /// The left bumper: a dummy count at the line.
     pub dummy: bool,
     /// The right shoulder: the defensive audible at the line.
     pub shoulder: bool,
@@ -54,6 +56,7 @@ pub fn mix(pad: Option<&mut Pad>, keys: Input) -> Input {
             y: stick.held.y || keys.held.y,
             throw: stick.held.throw || keys.held.throw,
             select: stick.held.select || keys.held.select,
+            preview: stick.held.preview || keys.held.preview,
             dummy: stick.held.dummy || keys.held.dummy,
             shoulder: stick.held.shoulder || keys.held.shoulder,
             start: stick.held.start || keys.held.start,
@@ -65,6 +68,7 @@ pub fn mix(pad: Option<&mut Pad>, keys: Input) -> Input {
             y: stick.pressed.y || keys.pressed.y,
             throw: stick.pressed.throw || keys.pressed.throw,
             select: stick.pressed.select || keys.pressed.select,
+            preview: stick.pressed.preview || keys.pressed.preview,
             dummy: stick.pressed.dummy || keys.pressed.dummy,
             shoulder: stick.pressed.shoulder || keys.pressed.shoulder,
             start: stick.pressed.start || keys.pressed.start,
@@ -140,13 +144,14 @@ mod backend {
                 held.x = gamepad.is_pressed(Button::West);
                 held.y = gamepad.is_pressed(Button::North);
                 // Right trigger throws; on an 8BitDo in Switch mode that is ZR.
-                held.throw = gamepad.is_pressed(Button::RightTrigger2)
-                    || gamepad.is_pressed(Button::RightTrigger);
+                // The right bumper is the defensive check, not a second throw.
+                held.throw = gamepad.is_pressed(Button::RightTrigger2);
                 held.select = gamepad.is_pressed(Button::Select);
-                // Left trigger is the dummy count; the right bumper is the
-                // defensive audible. The right trigger stays the throw.
-                held.dummy = gamepad.is_pressed(Button::LeftTrigger2)
-                    || gamepad.is_pressed(Button::LeftTrigger);
+                // Left trigger held is the play preview, the left bumper is the
+                // dummy count, and the right bumper is the defensive check. The
+                // right trigger stays the throw.
+                held.preview = gamepad.is_pressed(Button::LeftTrigger2);
+                held.dummy = gamepad.is_pressed(Button::LeftTrigger);
                 held.shoulder = gamepad.is_pressed(Button::RightTrigger);
                 held.start = gamepad.is_pressed(Button::Start);
             }
@@ -161,6 +166,7 @@ mod backend {
             edge(&mut pressed.y, held.y, self.prev.y);
             edge(&mut pressed.throw, held.throw, self.prev.throw);
             edge(&mut pressed.select, held.select, self.prev.select);
+            edge(&mut pressed.preview, held.preview, self.prev.preview);
             edge(&mut pressed.dummy, held.dummy, self.prev.dummy);
             edge(&mut pressed.shoulder, held.shoulder, self.prev.shoulder);
             edge(&mut pressed.start, held.start, self.prev.start);
