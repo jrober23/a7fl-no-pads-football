@@ -8,7 +8,8 @@
 use std::time::{Duration, Instant};
 
 use a7fl_core::math::Rgb;
-use a7fl_core::team::{clubs, Club, Division};
+use a7fl_core::team::{clubs, Club, Division, TeamRatings};
+use a7fl_render::venues::{self, Venue};
 use a7fl_render::raster::Frame;
 
 use crate::arcade::CAMERA_LABELS;
@@ -44,6 +45,8 @@ pub struct Kickoff {
     pub theirs: usize,
     /// True when the player takes the opening throw-off.
     pub receive: bool,
+    /// The ground the game is played at: an index into the venue list.
+    pub venue: usize,
 }
 
 enum Start {
@@ -253,7 +256,7 @@ fn settings_screen(
     pad: &mut Option<&mut Pad>,
     settings: &mut Settings,
 ) -> Option<()> {
-    const ROWS: usize = 6;
+    const ROWS: usize = 7;
     const DIFFICULTY_LABELS: [&str; 3] = ["EASY", "NORMAL", "HARD"];
     let mut pick = 0usize;
     let mut nav = Repeat::default();
@@ -293,6 +296,12 @@ fn settings_screen(
                     changed = true;
                 }
                 2 => {
+                    let n = a7fl_cli_quarter_count();
+                    let i = ((settings.quarter_index() as isize + dir).rem_euclid(n)) as usize;
+                    settings.set_quarter(i);
+                    changed = true;
+                }
+                3 => {
                     // The lens opens its own live preview: two numbers are easier
                     // to judge against the picture than in a menu row.
                     if forward {
@@ -301,13 +310,13 @@ fn settings_screen(
                         continue;
                     }
                 }
-                3 => {
+                4 => {
                     let n = RESOLUTIONS.len() as isize;
                     let i = ((settings.resolution_index() as isize + dir).rem_euclid(n)) as usize;
                     settings.set_resolution(i);
                     changed = true;
                 }
-                4 => {
+                5 => {
                     settings.fullscreen = !settings.fullscreen;
                     changed = true;
                 }
@@ -332,6 +341,7 @@ fn settings_screen(
         let rows = [
             ("CAMERA", CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string()),
             ("DIFFICULTY", DIFFICULTY_LABELS[settings.difficulty % 3].to_string()),
+            ("QUARTERS", settings.quarter_label()),
             ("LENS", settings.lens_label()),
             ("RESOLUTION", settings.resolution_label()),
             ("DISPLAY", settings.display_label().to_string()),
@@ -369,13 +379,142 @@ fn ids_in(all: &[Club], division: Division) -> Vec<usize> {
 
 fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
     let all = clubs();
+    // One roster build per club: the card's ratings and the men it names come
+    // off the same roster, so sixteen cards cost sixteen rosters, not thirty-two.
+    let cards: Vec<Card> = all
+        .iter()
+        .map(|c| {
+            let (ratings, men) = c.profile(3);
+            Card {
+                ratings,
+                stars: men
+                    .into_iter()
+                    .map(|(pos, name, rating)| {
+                        (format!("{} {}", pos.abbr(), name.to_uppercase()), rating)
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
     // Both sides are the player's to pick now, not just his own: the second
     // screen is the club he is playing against, from any division. Either screen
     // can be left to a roll instead.
-    let yours = pick_team(view, pad, &all, None, "YOUR TEAM")?.club(&all, None);
-    let theirs = pick_team(view, pad, &all, Some(yours), "THEIR TEAM")?.club(&all, Some(yours));
+    let yours = pick_team(view, pad, &all, &cards, None, "YOUR TEAM")?.club(&all, None);
+    let theirs = pick_team(view, pad, &all, &cards, Some(yours), "THEIR TEAM")?
+        .club(&all, Some(yours));
     let receive = coin_flip(view, pad, &all, yours, theirs)?;
-    Some(Kickoff { yours, theirs, receive })
+    let venue = pick_venue(view, pad, yours)?;
+    Some(Kickoff { yours, theirs, receive, venue })
+}
+
+/// Everything about a club the picker shows that is not its badge: the numbers
+/// and the three men who carry them.
+struct Card {
+    ratings: TeamRatings,
+    stars: Vec<(String, u8)>,
+}
+
+/// How many quarter lengths the settings screen can offer.
+fn a7fl_cli_quarter_count() -> isize {
+    crate::settings::QUARTER_CHOICES.len() as isize
+}
+
+/// The ground. It opens on the home club's own park, because that is where the
+/// game would be played; left and right walk the rest of the list.
+fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Option<usize> {
+    let first_home = 2 + home;
+    let mut sel = first_home.min(venues::COUNT - 1);
+    let mut nav = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return None;
+        }
+        if let d = nav.step(input.stick.x, dt) {
+            if d != 0 {
+                sel = wrap(sel, venues::COUNT, d);
+            }
+        }
+        let venue = Venue::from_index(sel);
+        let sky = venue.sky();
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        frame.gradient_rect(
+            0,
+            0,
+            CANVAS_W as i32,
+            CANVAS_H as i32,
+            sky[0],
+            sky[2],
+        );
+        frame.fill_rect_alpha(0, 0, CANVAS_W as i32, CANVAS_H as i32, Rgb::new(4, 6, 10), 0.55);
+        centered(&mut frame, 26, "WHERE IS IT PLAYED", 2, accent());
+        centered(&mut frame, 92, &venue.name(), 3, paper());
+        centered(&mut frame, 134, &venue.sub(), 2, sky[1].lerp(paper(), 0.45));
+        // The blurb is one sentence, wrapped by hand onto two lines.
+        let words: Vec<&str> = venue.blurb().split(' ').collect();
+        let mut line = String::new();
+        let mut lines = Vec::new();
+        for word in words {
+            if line.len() + word.len() + 1 > 74 && !line.is_empty() {
+                lines.push(line.clone());
+                line.clear();
+            }
+            if !line.is_empty() {
+                line.push(' ');
+            }
+            line.push_str(word);
+        }
+        if !line.is_empty() {
+            lines.push(line);
+        }
+        for (i, text) in lines.iter().enumerate() {
+            centered(&mut frame, 176 + i as i32 * 14, &text.to_uppercase(), 1, paper());
+        }
+        if sel == first_home {
+            centered(&mut frame, 220, "YOUR CLUB'S HOME GROUND", 1, accent());
+        }
+        centered(
+            &mut frame,
+            244,
+            &format!("{} OF {}", sel + 1, venues::COUNT),
+            1,
+            dim(),
+        );
+        footer(&mut frame, "[LEFT/RIGHT] GROUND   [UP/DOWN] SKIP 16   [A] PLAY   [B] BACK");
+        if !view.show(&mut frame, &[]) {
+            return None;
+        }
+        // Up and down jump between the practice grounds, the club grounds and
+        // the four one-offs, so the list can be crossed in three presses.
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                sel = if d > 0 {
+                    if sel < 2 {
+                        2
+                    } else if sel < 18 {
+                        18
+                    } else {
+                        0
+                    }
+                } else if sel < 2 {
+                    venues::COUNT - 1
+                } else if sel < 18 {
+                    0
+                } else {
+                    2
+                };
+            }
+        }
+        if input.pressed.a {
+            return Some(sel);
+        }
+        beat();
+    }
 }
 
 /// What the carousel came back with: a club, or a roll of the division it was
@@ -454,6 +593,7 @@ fn pick_team(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     all: &[Club],
+    cards: &[Card],
     avoid: Option<usize>,
     heading: &str,
 ) -> Option<Pick> {
@@ -529,19 +669,47 @@ fn pick_team(
             ),
             None => ("RANDOM".to_string(), "ROLL THE DICE".to_string(), accent()),
         };
-        centered(&mut frame, 246, &city, 3, paper());
-        centered(&mut frame, 284, &name, 2, tone);
-        if said > 0.0 {
-            centered(&mut frame, 310, "ALREADY IN THIS GAME", 1, Rgb::new(255, 120, 96));
-        } else {
+        centered(&mut frame, 238, &city, 3, paper());
+        centered(&mut frame, 272, &name, 2, tone);
+        if let Some(i) = club {
+            let card = &cards[i];
+            let r = card.ratings;
             centered(
                 &mut frame,
-                310,
-                &format!("{} OF {}", sel + 1, n),
-                1,
-                dim(),
+                292,
+                &format!(
+                    "OVR {}    OFF {}    DEF {}",
+                    r.overall, r.offense, r.defense
+                ),
+                2,
+                paper(),
             );
+            for (k, (who, rating)) in card.stars.iter().enumerate() {
+                centered(
+                    &mut frame,
+                    314 + k as i32 * 10,
+                    &format!("{who}  {rating}"),
+                    1,
+                    dim(),
+                );
+            }
         }
+        // The counter keeps to the corner so the card has the middle of the
+        // screen to itself.
+        let note = if said > 0.0 {
+            "ALREADY IN THIS GAME".to_string()
+        } else {
+            format!("{} OF {}", sel + 1, n)
+        };
+        let note_color = if said > 0.0 { Rgb::new(255, 120, 96) } else { dim() };
+        frame.text_shadowed(
+            CANVAS_W as i32 - 14 - text_width(&note, 1),
+            18,
+            &note,
+            1,
+            note_color,
+            1,
+        );
         footer(&mut frame, "[LEFT/RIGHT] ROLL   [UP/DOWN] DIVISION   [A] PICK   [B] BACK");
         if !view.show(&mut frame, &[]) {
             return None;

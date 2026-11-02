@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.24.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -620,6 +620,52 @@ Defense is played out on the field, not decided in the dark:
   either knocks the ball down or takes it away, depending on how well he covers
   and how good his hands are. Height matters — nobody bats down a ball over his
   head — and it is one chance per throw, not a dice roll on every frame of it.
+
+### The grounds
+
+Twenty-two of them, chosen after the coin toss and before the ball is thrown.
+
+The two practice fields are the ones the game shipped with: **the practice field**,
+open air with a full house, and **the closed practice**, the same bowl with the roof
+on and the stands empty. The lens sits under the roof, so the shot still sees the
+field rather than the top of the building.
+
+The sixteen clubs each have their own park, and each one is its city: Boston's
+harbour and brick rowhouses, Chicago's stacks and steel, Miami's palms and pastel
+hotels, New York's wall of windows, Denver's pines under the mountains, and so on.
+The skyline, the sky and the fog change with the ground; the field, the bowl and the
+scoreboard stay the league's.
+
+Then the four the league takes the game to:
+
+- **The Deep** — a glass dome on the sea bed. The roof runs with lights, the water
+  stands outside it on every side, and a school of fish keeps swimming past the glass,
+  moving frame by frame the way the crowd does.
+- **The Back of Beyond** — a field cut into red earth, with mesas, boulders, a water
+  tower and a windmill, and nothing else for miles.
+- **The Strand** — the ocean down one sideline, a resort down the other, palms over
+  both and umbrellas along the sand.
+- **The Championship** — the final. Both clubs are painted into both end zones in
+  their own colours, with bunting down both stands and the confetti already falling.
+
+The ground has its own screen, which opens on the home club's own park and says what
+each one is before the ball is thrown. Left and right walk the list; up and down jump
+between the practice grounds, the club grounds and the four one-offs.
+
+### Ratings and the clock
+
+The picker shows what a club is worth before it is picked: **OVR** for the whole
+side, **OFF** for the seven who take the snap and **DEF** for the seven who defend
+it. Each is the average of the starters' player ratings — the best man at every
+position, counted the way the formation counts him — so a club is rated on the men
+who will actually be on the field and not on its bench. The three best players on
+the roster are named under the number with their positions and their own ratings,
+which is where the team number comes from.
+
+The settings screen carries the quarter length as well: 4, 6, 8, 10, 12 or 15
+minute quarters, saved in `settings.cfg` and used for every quarter of the game,
+including the clock that runs out at the end of regulation. Fifteen is still the
+league's default, and overtime is unaffected.
 
 ### Simulation
 

@@ -16,7 +16,7 @@ use crate::fieldtex;
 use crate::hud::{self, Banner, INK};
 use crate::players::{self, Pose};
 use crate::raster::{Frame, Texture};
-use crate::scene::{Camera, Lighting, Mesh, SceneRenderer};
+use crate::scene::{Camera, Mesh, SceneRenderer};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CameraMode {
@@ -108,6 +108,8 @@ pub struct Broadcast {
     pub field: Texture,
     pub scene: SceneRenderer,
     pub teams: [Team; 2],
+    /// The building around the field.
+    pub venue: crate::venues::Venue,
     pub uniforms: [Uniform; 2],
     stands: Mesh,
     focus: Focus,
@@ -127,22 +129,35 @@ pub struct Broadcast {
     /// The crowd, one man at a time, so it can move.
     crowd: Vec<CrowdFigure>,
     crowd_t: f32,
+    /// The school outside the glass, when the ground is the dome.
+    fish: Vec<crate::venues::FishFigure>,
 }
 
 impl Broadcast {
     pub fn new(w: usize, h: usize, teams: [Team; 2]) -> Self {
+        Self::with_venue(w, h, teams, crate::venues::Venue::from_index(0))
+    }
+
+    /// The same picture, on a particular ground.
+    pub fn with_venue(
+        w: usize,
+        h: usize,
+        teams: [Team; 2],
+        venue: crate::venues::Venue,
+    ) -> Self {
         let field = fieldtex::build_field_texture(&teams[0], &teams[1]);
         let uniforms = [teams[0].home, teams[1].away];
         let mut scene = SceneRenderer::new(w, h, 46f32.to_radians());
-        scene.lighting = stadium_lighting();
-        let stands = build_stadium(&teams);
-        let crowd = build_crowd(&teams);
+        scene.lighting = venue.lighting();
+        let stands = build_stadium(&teams, venue);
+        let crowd = if venue.has_crowd() { build_crowd(&teams) } else { Vec::new() };
         Broadcast {
             w,
             h,
             field,
             scene,
             teams,
+            venue,
             uniforms,
             stands,
             focus: Focus::default(),
@@ -153,7 +168,18 @@ impl Broadcast {
             pin: None,
             crowd,
             crowd_t: 0.0,
+            fish: if matches!(venue.kind(), crate::venues::Kind::Underwater) {
+                crate::venues::school(0xA7F1_5EED)
+            } else {
+                Vec::new()
+            },
         }
+    }
+
+    /// How much concrete the ground has, for the tests: a closed practice has
+    /// the same bowl as the open one, with the people taken out of it.
+    pub fn stand_triangles(&self) -> usize {
+        self.stands.tris.len()
     }
 
     /// How far the word over a dead ball has arrived, 0..1. The live client
@@ -906,9 +932,7 @@ impl Broadcast {
     fn paint_environment(&mut self, frame: &mut Frame, camera: &Camera) {
         // Sky gradient: night game under the lights, with the sodium glow of the
         // city sitting on the horizon behind the far stand.
-        let top = Rgb::hex(0x0A1428);
-        let mid = Rgb::hex(0x20364E);
-        let horizon = Rgb::hex(0x7E8F96);
+        let [top, mid, horizon] = self.venue.sky();
         let h = frame.h.max(1) as f32;
         for row in 0..frame.h as i32 {
             let t = row as f32 / h;
@@ -927,6 +951,11 @@ impl Broadcast {
         // arms up. It is rebuilt every frame because placing a mesh bakes it.
         let crowd = self.crowd_frame();
         self.scene.draw_mesh(frame, &crowd, camera);
+        // Outside the glass, the school keeps swimming.
+        if !self.fish.is_empty() {
+            let school = crate::venues::school_frame(&self.fish, self.crowd_t);
+            self.scene.draw_mesh(frame, &school, camera);
+        }
     }
 
     /// Blue line of scrimmage and yellow first-down marker, painted on the turf.
@@ -1100,21 +1129,10 @@ fn lens_shift(pos: Vec3, look: Vec3, anchor: Vec2, zoom: f32, tilt: f32) -> (Vec
     (pos, look)
 }
 
-fn stadium_lighting() -> Lighting {
-    Lighting {
-        sun: Vec3::new(-0.30, 0.26, 0.92).normalize_or_zero(),
-        ambient: 0.46,
-        fog: Rgb::hex(0x9DB2C4),
-        fog_density: 0.008,
-        bounce: Vec3::new(0.05, 0.0, -1.0).normalize_or_zero(),
-        bounce_strength: 0.13,
-        rim: 0.20,
-    }
-}
 
 /// Paint lettering onto a flat surface of the stadium: the scoreboard and the
 /// fascia read as a real building rather than a grey slab if they carry a word.
-fn paint_word(
+pub(crate) fn paint_word(
     mesh: &mut Mesh,
     text: &str,
     origin: Vec3,
@@ -1159,7 +1177,7 @@ fn paint_word(
 /// Heights are kept well under the broadcast lens, which sits eight yards above
 /// the top row: the building has to be in the picture without ever getting
 /// between the camera and the ball.
-fn build_stadium(teams: &[Team; 2]) -> Mesh {
+fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
     let mut mesh = Mesh::new();
     let mut seed = 0x1F35_1A7Bu32;
     let mut rand = move || {
@@ -1324,7 +1342,7 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
                 tone.scale(0.92),
             );
             let mut py = -26.0f32;
-            while py < 26.0 {
+            while venue.has_crowd() && py < 26.0 {
                 let len = 2.2 + rand() * 1.2;
                 let color = crowd_colors[(rand() * crowd_colors.len() as f32) as usize
                     % crowd_colors.len()];
@@ -1343,6 +1361,9 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
             depth += 1.1;
         }
     }
+
+    // The world outside the bowl: the city, the sea, the red dirt.
+    crate::venues::scenery(venue, teams, &mut mesh, &mut rand);
 
     // ------------------------------------------------------------------
     // Scoreboard behind the left end zone, with the league mark on it.

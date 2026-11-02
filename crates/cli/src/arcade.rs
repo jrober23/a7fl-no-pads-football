@@ -371,10 +371,14 @@ impl Arcade {
         let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
         game.set_opening_receiver(if kick.receive { 0 } else { 1 });
         game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(settings.difficulty));
-        self.broadcast = Broadcast::new(
+        // The quarter length and the ground are chosen on the front end, so the
+        // game is built to them rather than patched afterwards.
+        game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
+        self.broadcast = Broadcast::with_venue(
             CANVAS_W,
             CANVAS_H,
             [game.teams[0].clone(), game.teams[1].clone()],
+            a7fl_render::venues::Venue::from_index(kick.venue),
         );
         self.broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
         self.game = game;

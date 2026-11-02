@@ -345,6 +345,68 @@ impl Uniform {
 // Teams
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Ratings
+// ---------------------------------------------------------------------------
+
+/// What a club is worth on the field, on the same 40..99 scale as the men who
+/// make it up: the seven starters on each side of the ball, averaged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TeamRatings {
+    pub overall: u8,
+    pub offense: u8,
+    pub defense: u8,
+}
+
+/// The seven who start on each side of the ball in 7-on-7, and how many of each
+/// the rating counts. The best at each position starts, so depth does not drag a
+/// club's number down — the man on the field is what is being rated.
+const OFFENSE_STARTERS: [(Position, usize); 5] = [
+    (Position::Qb, 1),
+    (Position::Ol, 2),
+    (Position::Rb, 1),
+    (Position::Wr, 2),
+    (Position::Te, 1),
+];
+const DEFENSE_STARTERS: [(Position, usize); 3] =
+    [(Position::Dl, 2), (Position::Lb, 2), (Position::Db, 3)];
+
+fn mean(values: &[u8]) -> u8 {
+    if values.is_empty() {
+        return 0;
+    }
+    let sum: u32 = values.iter().map(|v| *v as u32).sum();
+    (sum as f32 / values.len() as f32).round() as u8
+}
+
+fn starters(roster: &[Player], plan: &[(Position, usize)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &(pos, count) in plan {
+        let mut picked: Vec<u8> = roster
+            .iter()
+            .filter(|p| p.pos == pos)
+            .map(|p| p.overall())
+            .collect();
+        picked.sort_unstable_by(|a, b| b.cmp(a));
+        out.extend(picked.into_iter().take(count));
+    }
+    out
+}
+
+impl TeamRatings {
+    pub fn from_roster(roster: &[Player]) -> TeamRatings {
+        let offense = starters(roster, &OFFENSE_STARTERS);
+        let defense = starters(roster, &DEFENSE_STARTERS);
+        let mut all = offense.clone();
+        all.extend_from_slice(&defense);
+        TeamRatings {
+            offense: mean(&offense),
+            defense: mean(&defense),
+            overall: mean(&all),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Team {
     pub id: u8,
@@ -366,6 +428,11 @@ impl Team {
 
     pub fn display_upper(&self) -> String {
         self.full_name().to_uppercase()
+    }
+
+    /// The club's number, from the men who will actually be on the field.
+    pub fn ratings(&self) -> TeamRatings {
+        TeamRatings::from_roster(&self.roster)
     }
 
     fn depth_by_pos(&self, pos: Position) -> Vec<usize> {
@@ -766,6 +833,20 @@ impl Club {
     pub fn full_name(&self) -> String {
         format!("{} {}", self.city, self.name)
     }
+
+    /// The card's numbers and the men worth naming, off one roster build: the
+    /// menu shows sixteen of these, so it must not build thirty-two rosters.
+    pub fn profile(&self, stars: usize) -> (TeamRatings, Vec<(Position, String, u8)>) {
+        let roster = generate_roster(self.seed, self.level);
+        let ratings = TeamRatings::from_roster(&roster);
+        let mut men: Vec<(Position, String, u8)> = roster
+            .iter()
+            .map(|p| (p.pos, p.full_name(), p.overall()))
+            .collect();
+        men.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.1.cmp(&b.1)));
+        men.truncate(stars);
+        (ratings, men)
+    }
 }
 
 fn build_uniform(
@@ -902,6 +983,43 @@ pub fn league_teams() -> Vec<Team> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_club_is_rated_on_the_player_scale() {
+        for club in clubs() {
+            let (ratings, stars) = club.profile(3);
+            for v in [ratings.overall, ratings.offense, ratings.defense] {
+                assert!((40..=99).contains(&v), "{} rated {v}", club.abbr);
+            }
+            assert_eq!(stars.len(), 3, "{} named {} men", club.abbr, stars.len());
+            for (pos, name, rating) in &stars {
+                assert!(!pos.abbr().is_empty());
+                assert!(!name.is_empty());
+                assert!((40..=99).contains(rating), "{} rated {rating}", club.abbr);
+            }
+            // The best man on the card is at least as good as the side he plays
+            // on: a club whose star is below its own average is mis-rated.
+            assert!(
+                stars[0].2 >= ratings.offense.min(ratings.defense),
+                "{}: star {} under the side's {}",
+                club.abbr,
+                stars[0].2,
+                ratings.offense.min(ratings.defense)
+            );
+        }
+    }
+
+    #[test]
+    fn ratings_separate_the_clubs() {
+        let mut overalls: Vec<u8> = league_teams().iter().map(|t| t.ratings().overall).collect();
+        overalls.sort_unstable();
+        overalls.dedup();
+        assert!(
+            overalls.len() >= 6,
+            "sixteen clubs collapsed into {} ratings: {overalls:?}",
+            overalls.len()
+        );
+    }
 
     #[test]
     fn rosters_are_legal_and_unique() {

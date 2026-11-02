@@ -12,6 +12,10 @@ use std::path::PathBuf;
 /// gets resampled off a pixel grid.
 pub const RESOLUTIONS: [(usize, usize); 4] = [(960, 540), (1280, 720), (1600, 900), (1920, 1080)];
 
+/// The quarter lengths the settings screen offers, in minutes. The league plays
+/// fifteen; the short ones are for a game that has to fit in a lunch break.
+pub const QUARTER_CHOICES: [u32; 6] = [4, 6, 8, 10, 12, 15];
+
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     /// Index into the camera list the game runs on.
@@ -25,6 +29,8 @@ pub struct Settings {
     pub lens_tilt: f32,
     /// 0 easy, 1 normal, 2 hard.
     pub difficulty: usize,
+    /// Minutes in a quarter, from [QUARTER_CHOICES].
+    pub quarter_minutes: u32,
 }
 
 impl Default for Settings {
@@ -37,6 +43,7 @@ impl Default for Settings {
             lens_zoom: 1.0,
             lens_tilt: 0.0,
             difficulty: 0,
+            quarter_minutes: 15,
         }
     }
 }
@@ -64,6 +71,22 @@ impl Settings {
         format!("{:.2} / {:+.2}", self.lens_zoom, self.lens_tilt)
     }
 
+    /// Where the quarter length sits in the list, for the arrow keys.
+    pub fn quarter_index(&self) -> usize {
+        QUARTER_CHOICES
+            .iter()
+            .position(|&m| m == self.quarter_minutes)
+            .unwrap_or(QUARTER_CHOICES.len() - 1)
+    }
+
+    pub fn set_quarter(&mut self, i: usize) {
+        self.quarter_minutes = QUARTER_CHOICES[i % QUARTER_CHOICES.len()];
+    }
+
+    pub fn quarter_label(&self) -> String {
+        format!("{} MIN", self.quarter_minutes)
+    }
+
     pub fn display_label(&self) -> &'static str {
         if self.fullscreen {
             "FULLSCREEN"
@@ -85,14 +108,15 @@ impl Settings {
 
     pub fn text(&self) -> String {
         format!(
-            "# A7FL settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\n",
+            "# A7FL settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\n",
             self.camera,
             self.width,
             self.height,
             self.fullscreen as u8,
             self.lens_zoom,
             self.lens_tilt,
-            self.difficulty
+            self.difficulty,
+            self.quarter_minutes,
         )
     }
 
@@ -141,6 +165,11 @@ impl Settings {
                         out.difficulty = v;
                     }
                 }
+                "quarters" => {
+                    if let Ok(v) = value.parse::<u32>() {
+                        out.quarter_minutes = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -154,6 +183,14 @@ impl Settings {
             self.camera = 0;
         }
         self.difficulty %= 3;
+        // A hand-edited quarter length snaps to the nearest offered one rather
+        // than to a clock the menus cannot walk back to.
+        if !QUARTER_CHOICES.contains(&self.quarter_minutes) {
+            self.quarter_minutes = *QUARTER_CHOICES
+                .iter()
+                .min_by_key(|&&m| (m as i32 - self.quarter_minutes as i32).abs())
+                .unwrap_or(&15);
+        }
         // A hand-edited file must not put the lens inside the turf.
         self.lens_zoom =
             if self.lens_zoom.is_finite() { self.lens_zoom.clamp(0.6, 1.8) } else { 1.0 };
@@ -214,12 +251,14 @@ mod tests {
             lens_zoom: 1.25,
             lens_tilt: 0.1,
             difficulty: 2,
+            quarter_minutes: 6,
         };
         let back = Settings::parse(&s.text());
         assert_eq!(back.camera, s.camera);
         assert_eq!(back.width, s.width);
         assert_eq!(back.height, s.height);
         assert_eq!(back.fullscreen, s.fullscreen);
+        assert_eq!(back.quarter_minutes, s.quarter_minutes);
     }
 
     #[test]

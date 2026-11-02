@@ -312,7 +312,8 @@ fn cmd_rules() {
     println!("NO PADS FOOTBALL RULESET IMPLEMENTED");
     println!("  field        120 x 37.5 yards, 100 yard field of play, 10 yard end zones, no goal posts");
     println!("  players      7 on 7: QB + 2 down linemen + 4 eligibles vs 2 DL + 2 LB + 3 DB");
-    println!("  clock        4 x 15 minutes, 30 second play clock, running clock");
+    println!("  clock        4 x 15 minutes (set per game in settings), 30 second play clock");
+    println!("               running clock");
     println!("               stops only on penalties, change of possession and conversions");
     println!("               (plus incomplete passes and out of bounds inside two minutes)");
     println!("  downs        4 downs to gain 10 yards");
@@ -324,6 +325,8 @@ fn cmd_rules() {
     println!("  fourth down  throw-off from the line of scrimmage replaces the punt");
     println!("  overtime     possessions from the 25, two first downs allowed, one timeout;");
     println!("               two-point conversions forced from the second overtime on");
+    println!("  ground       twenty-two grounds: two practice fields, sixteen club parks");
+    println!("               and four one-offs, chosen on the front end");
     println!("  mercy        five touchdowns in the first quarter ends the game, and");
     println!("               seven touchdowns from the second quarter on");
     println!();

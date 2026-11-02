@@ -25,6 +25,7 @@ pub mod players;
 pub mod raster;
 pub mod scene;
 pub mod terminal;
+pub mod venues;
 
 pub use broadcast::{Broadcast, CameraMode};
 pub use capture::{write_gif, write_png};

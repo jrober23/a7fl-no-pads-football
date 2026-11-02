@@ -146,6 +146,9 @@ pub struct GameState {
     pub score: [u32; 2],
     pub quarter: u8,
     pub clock: f32,
+    /// How long one quarter runs, in seconds. The league plays fifteen; a
+    /// player setting a shorter game sets this before the opening throw-off.
+    pub quarter_seconds: f32,
     pub possession: usize,
     pub spot: f32,
     pub ball_y: f32,
@@ -177,6 +180,17 @@ pub struct GameState {
 
 impl GameState {
     /// Set how hard the other sideline plays, from the settings screen.
+    /// Set the length of a quarter, in seconds. It has to be set before the
+    /// opening throw-off: a clock already running is not rewound under the
+    /// players, but every quarter after this one uses the new length.
+    pub fn set_quarter_seconds(&mut self, seconds: f32) {
+        let seconds = seconds.clamp(60.0, 3600.0);
+        self.quarter_seconds = seconds;
+        if self.log.is_empty() && self.quarter == 1 && self.clock > 0.0 {
+            self.clock = seconds;
+        }
+    }
+
     pub fn set_difficulty(&mut self, difficulty: Difficulty) {
         self.difficulty = difficulty;
     }
@@ -206,6 +220,7 @@ impl GameState {
             score: [0, 0],
             quarter: 1,
             clock: QUARTER_SECONDS,
+            quarter_seconds: QUARTER_SECONDS,
             possession: first_half_receiver,
             spot: field::spot_from_yards_to_goal(65.0, 1),
             ball_y: 0.0,
@@ -969,7 +984,7 @@ impl GameState {
             .push(format!("End of the {} quarter.", self.quarter));
         if self.quarter < 4 {
             self.quarter += 1;
-            self.clock = QUARTER_SECONDS;
+            self.clock = self.quarter_seconds;
             self.two_minute_warned = false;
             self.clock_stopped = true;
             if self.quarter == 3 {
@@ -1244,6 +1259,24 @@ mod tests {
         assert!(matches!(g.phase, GamePhase::ThrowOff { .. }));
         assert_eq!(g.quarter, 1);
         assert_eq!(g.clock, QUARTER_SECONDS);
+    }
+
+    #[test]
+    fn a_quarter_is_as_long_as_it_is_set_to_be() {
+        let mut g = new_game(21);
+        g.set_quarter_seconds(4.0 * 60.0);
+        assert!((g.clock - 240.0).abs() < 0.01, "opening clock {}", g.clock);
+        g.clock = 0.1;
+        g.end_quarter();
+        assert_eq!(g.quarter, 2);
+        assert!(
+            (g.clock - 240.0).abs() < 0.01,
+            "the second quarter is {} seconds",
+            g.clock
+        );
+        // And a whole game at that length still reaches a result.
+        g.simulate_game();
+        assert!(g.over, "a short game never ended");
     }
 
     #[test]
