@@ -1,4 +1,4 @@
-//! Continuous-time 7-on-7 scrimmage play simulation.
+//! Continuous-time 7 on 7 scrimmage play simulation.
 //!
 //! Every snap is advanced in fixed timesteps so the broadcast renderer can draw any
 //! frame of it, and so a whole game can be simulated headlessly at high speed. The

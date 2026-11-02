@@ -358,7 +358,7 @@ pub struct TeamRatings {
     pub defense: u8,
 }
 
-/// The seven who start on each side of the ball in 7-on-7, and how many of each
+/// The seven who start on each side of the ball in 7 on 7, and how many of each
 /// the rating counts. The best at each position starts, so depth does not drag a
 /// club's number down — the man on the field is what is being rated.
 const OFFENSE_STARTERS: [(Position, usize); 5] = [

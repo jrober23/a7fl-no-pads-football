@@ -1,6 +1,6 @@
 # No Pads Football
 
-A playable no-pads football game written in Rust: a complete 7-on-7 rules engine,
+A playable no-pads football game written in Rust: a complete 7 on 7 rules engine,
 a simulated season-length game, and a software-rendered broadcast package in the
 spirit of the ESPN NFL 2K5 presentation. Players wear no-pads kit — sleeveless
 jersey, shorts, bare arms and legs, no helmets, no pads.
@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.1-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -567,7 +567,7 @@ the whole call can be seen.
 
 ### No-pads rules, not NFL rules
 
-The rule set follows the 7-on-7 no-pads rulebook rather than the NFL's:
+The rule set follows the 7 on 7 no-pads rulebook rather than the NFL's:
 
 - **7 on 7.** Quarterback, two down linemen and four eligibles against two edge
   rushers, two linebackers and three defensive backs.
@@ -669,7 +669,7 @@ league's default, and overtime is unaffected.
 
 ### Simulation
 
-`a7fl_core::sim` runs one snap as a continuous 7-on-7 play at 60 Hz: dropback,
+`a7fl_core::sim` runs one snap as a continuous 7 on 7 play at 60 Hz: dropback,
 route running against man and zone coverage, pass rush and holding, quarterback
 progression reads, throw power and accuracy, catch radius, wrap tackles, broken
 tackles, fumbles, interceptions, defensive pass interference, sacks, safeties,
@@ -770,7 +770,7 @@ crates/core     a7fl_core   — no dependencies
   rules.rs      penalty catalog and enforcement
   team.rs       attributes, appearance, uniforms, the sixteen-club league
   playbook.rs   22 offensive plays, 6 formations, 9 defensive calls in 3 fronts
-  sim.rs        the 7-on-7 snap engine
+  sim.rs        the 7 on 7 snap engine
   throwoff.rs   the throw-off engine
   stats.rs      box score, drives, per-player lines
   ai.rs         play calling and game management
@@ -781,7 +781,7 @@ crates/render   a7fl_render — depends on `image` (PNG) and `gif`
   font.rs       5x7 bitmap font
   scene.rs      camera, projector, near clipping, mesh primitives, lighting, fog
   fieldtex.rs   the painted turf texture
-  players.rs    the 7-on-7 player meshes and poses
+  players.rs    the 7 on 7 player meshes and poses
   broadcast.rs  camera work and frame assembly
   hud.rs        score bug, banners, ticker, stats panel
   capture.rs    PNG and GIF writers

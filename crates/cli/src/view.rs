@@ -51,12 +51,17 @@ impl View {
 
     /// Rebuild the window at the size and mode the settings ask for. minifb has
     /// no resize call, so the window is made again rather than nudged.
+    ///
+    /// Only a different size or display mode needs that: rebuilding it for a row
+    /// that does not touch the window made the picture vanish and the window come
+    /// back somewhere else on the desktop every time difficulty was changed.
     pub fn apply(&mut self, settings: &Settings) {
-        if !self.is_window() {
+        let View::Window(window) = self else { return };
+        if window.matches(settings) {
             return;
         }
-        if let Some(window) = WindowView::open(settings) {
-            *self = View::Window(window);
+        if let Some(opened) = WindowView::open(settings) {
+            *self = View::Window(opened);
         }
     }
 
@@ -120,6 +125,11 @@ pub struct WindowView {
     window: minifb::Window,
     buf: Vec<u32>,
     prev: Buttons,
+    /// What this window was asked for, so `apply` can tell a real change from a
+    /// row that never touched the window.
+    w: usize,
+    h: usize,
+    fullscreen: bool,
 }
 
 impl WindowView {
@@ -138,7 +148,21 @@ impl WindowView {
         )
         .ok()?;
         window.set_target_fps(0);
-        Some(WindowView { window, buf: Vec::new(), prev: Buttons::default() })
+        Some(WindowView {
+            window,
+            buf: Vec::new(),
+            prev: Buttons::default(),
+            w: settings.width,
+            h: settings.height,
+            fullscreen: settings.fullscreen,
+        })
+    }
+
+    /// True when this window already is the one the settings describe.
+    fn matches(&self, settings: &Settings) -> bool {
+        self.w == settings.width
+            && self.h == settings.height
+            && self.fullscreen == settings.fullscreen
     }
 
     fn describe(&self) -> String {

@@ -188,6 +188,11 @@ pub fn throw_off_air(power: f32) -> f32 {
         + power.clamp(0.0, 1.0) * (THROW_OFF_MAX_AIR_YARDS - THROW_OFF_LIGHT_AIR)
 }
 
+/// Slack at the meter's notch. The notch is drawn on the forty and is what the
+/// player loads the arm against, so a throw at the mark has to be legal even when
+/// the power-to-distance arithmetic lands a hair the wrong side of it.
+const THROW_OFF_NOTCH_SLACK: f32 = 0.5;
+
 /// The meter reading that would just carry a throw `air` yards.
 pub fn power_for_air(air: f32) -> f32 {
     ((air - THROW_OFF_LIGHT_AIR) / (THROW_OFF_MAX_AIR_YARDS - THROW_OFF_LIGHT_AIR)).clamp(0.0, 1.0)
@@ -503,7 +508,8 @@ impl<'a> ThrowOffSim<'a> {
             air,
             landing: Vec2::new(landing_x, landing_y),
             through_endzone,
-            too_short: !self.setup.free_throw && air < THROW_OFF_MIN_AIR_YARDS,
+            too_short: !self.setup.free_throw
+                && air + THROW_OFF_NOTCH_SLACK < THROW_OFF_MIN_AIR_YARDS,
             out_of_bounds,
         }
     }
@@ -556,7 +562,7 @@ impl<'a> ThrowOffSim<'a> {
                 ThrowOffOutcome::RunBack,
                 format!(
                     "The throw-off travels {:.0} yards in the air, short of the forty the rule asks for. Run Back.",
-                    plan.air
+                    plan.air.floor()
                 ),
             ));
         }
@@ -1258,6 +1264,32 @@ mod tests {
         assert!((flight.to.x - plan.landing.x).abs() < 1e-3);
         assert!((flight.to.y - plan.landing.y).abs() < 1e-3);
         assert_eq!(sim.phase, ThrowPhase::Flight);
+    }
+
+    /// The notch on the meter is the forty, so a throw loaded to it is legal and
+    /// the return goes live instead of being called back as short.
+    #[test]
+    fn a_throw_loaded_to_the_notch_is_legal() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let power = power_for_air(THROW_OFF_MIN_AIR_YARDS);
+        let plan = sim.throw_off_plan(power, 2.0);
+        assert!(!plan.too_short, "a throw at the notch was called short: {plan:?}");
+        assert!(
+            (plan.air - THROW_OFF_MIN_AIR_YARDS).abs() < 0.05,
+            "the notch should be the forty, got {}",
+            plan.air
+        );
+        sim.launch_with(power, 2.0);
+        let r = sim.run_to_completion();
+        assert_ne!(
+            r.outcome,
+            ThrowOffOutcome::RunBack,
+            "a legal throw was run back: {:?} {}",
+            r.outcome,
+            r.description
+        );
     }
 
     #[test]

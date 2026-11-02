@@ -5,7 +5,7 @@
 //! * [`rules`] / [`field`] — the A7FL rulebook as data plus enforcement math.
 //! * [`team`] — teams, rosters, attributes, A7FL uniform specs.
 //! * [`playbook`] — formations, route concepts and defensive calls.
-//! * [`sim`] — the continuous-time 7-on-7 snap simulation.
+//! * [`sim`] — the continuous-time 7 on 7 snap simulation.
 //! * [`game`] — quarters, clock, downs, conversions, overtime, mercy rule.
 //! * [`ai`] — head coach play calling and clock management.
 //! * [`stats`] — box score, drive charts.
