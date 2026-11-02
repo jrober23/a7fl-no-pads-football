@@ -217,6 +217,9 @@ pub struct ThrowOffSim<'a> {
     pub human_dir: Vec2,
     /// A human is throwing this one, so the AI must not launch it for him.
     pub human_thrower: bool,
+    /// The returner has called a fair catch: he takes the ball where it comes
+    /// down and does not run it out.
+    pub fair_catch: bool,
     /// Sim time the returner took the ball in, so a client can turn its camera
     /// upfield the way a broadcast does.
     catch_t: Option<f32>,
@@ -309,11 +312,26 @@ impl<'a> ThrowOffSim<'a> {
             human: None,
             human_dir: Vec2::ZERO,
             human_thrower: false,
+            fair_catch: false,
             catch_t: None,
             violation: None,
             loose_t: 0.0,
             tackle: None,
         }
+    }
+
+    /// Call a fair catch. Legal while the ball is in the air and not before it
+    /// leaves the hand; the returner takes it where it lands and the play is
+    /// dead there.
+    pub fn call_fair_catch(&mut self) -> bool {
+        if self.phase != ThrowPhase::Flight || self.fair_catch {
+            return false;
+        }
+        self.fair_catch = true;
+        let returner = self.returner();
+        self.events
+            .push(format!("{} signals for a fair catch.", self.name(returner)));
+        true
     }
 
     /// Hand a man to the human to steer, or take him back.
@@ -594,6 +612,22 @@ impl<'a> ThrowOffSim<'a> {
         let gap = self.players[returner].pos.dist(landing);
         if gap > 2.4 {
             self.loose(landing);
+            return;
+        }
+
+        if self.fair_catch {
+            let spot = landing.x;
+            self.finish(
+                ThrowOffOutcome::FairCatch,
+                self.setup.receiving_team,
+                spot,
+                0,
+                None,
+                format!(
+                    "{} calls a fair catch and takes it where it lands.",
+                    self.name(returner)
+                ),
+            );
             return;
         }
 
@@ -934,6 +968,30 @@ pub fn simulate_throw_off(
 
 #[cfg(test)]
 mod tests {
+
+    /// A fair catch called in flight ends the play where the ball lands, and
+    /// nothing is returned. Called before the throw, it is not a call at all.
+    #[test]
+    fn a_fair_catch_can_be_called_in_flight() {
+        let teams = crate::team::league_teams();
+        let setup = ThrowOffSetup::normal();
+        let mut sim = ThrowOffSim::new(&setup, &teams[0], &teams[1]);
+        assert!(!sim.call_fair_catch(), "called before the ball was thrown");
+        sim.snap_delay = 0.0;
+        sim.launch_with(power_for_air(45.0), 0.0);
+        assert_eq!(sim.phase, ThrowPhase::Flight);
+        assert!(sim.call_fair_catch(), "refused a call in flight");
+        assert!(!sim.call_fair_catch(), "a second call is not a second call");
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 2000 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let r = sim.result.expect("the throw-off finished");
+        assert_eq!(r.outcome, ThrowOffOutcome::FairCatch);
+        assert!(r.fair_catch, "the result does not record the fair catch");
+        assert_eq!(r.return_yards, 0.0);
+    }
     use super::*;
     use crate::team::league_teams;
 

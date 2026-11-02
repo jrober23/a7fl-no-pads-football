@@ -784,6 +784,15 @@ impl Arcade {
             let mine = human_man(sim, my_team);
             sim.set_human(mine, stick);
 
+            // Fair catch: the receiving player calls it while the ball is in the
+            // air and takes it where it comes down, instead of running it out.
+            if sim.phase == ThrowPhase::Flight
+                && sim.setup.receiving_team == my_team
+                && input.pressed.y
+            {
+                sim.call_fair_catch();
+            }
+
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
@@ -1883,6 +1892,9 @@ fn throw_off_line(
                 )
             }
         }
+        ThrowPhase::Flight if sim.fair_catch => {
+            "  FAIR CATCH CALLED - STAY UNDER IT".to_string()
+        }
         ThrowPhase::Flight => "  THE BALL IS IN THE AIR".to_string(),
         ThrowPhase::Loose => "  LOOSE BALL - SOMEBODY GET ON IT".to_string(),
         ThrowPhase::Return if sim.tackle_in_progress() => {
@@ -1902,8 +1914,17 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> Str
     } else {
         "RETURN IT"
     };
+    let fair = if sim.setup.receiving_team == my_team && sim.phase == ThrowPhase::Flight {
+        if sim.fair_catch {
+            "   FAIR CATCH CALLED"
+        } else {
+            "   [Y] FAIR CATCH"
+        }
+    } else {
+        ""
+    };
     format!(
-        "{:<9} {} BALL   MOVE WITH STICK   [X] {}   [START] PAUSE",
+        "{:<9} {} BALL   MOVE WITH STICK   [X] {}{fair}   [START] PAUSE",
         job,
         arcade.game.teams[sim.setup.receiving_team].abbr,
         cam_name(CAMS[arcade.cam % CAMS.len()])

@@ -1359,7 +1359,7 @@ pub fn build_mesh_at(
             (neck_base + head_dir * (head_r * 1.02), 0.038 * bulk),
         ],
         sides,
-        jersey,
+        skin,
         false,
     );
     // Sternocleidomastoid: the cord up the side of the neck. Without it the head

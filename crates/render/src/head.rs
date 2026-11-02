@@ -118,6 +118,34 @@ impl<'a> Head<'a> {
         )
     }
 
+    /// A point on the balaclava: the skull pushed out by a few millimetres, with
+    /// the nose carried in the cloth rather than built under it.
+    fn masked_point(&self, off: f32, u: f32, v: f32) -> Vec3 {
+        let p = self.point(u, v);
+        let nose = 0.070 * gauss(v - 0.520, 0.085) * gauss(u, 0.26);
+        let ear = 0.050
+            * gauss(v - 0.560, 0.090)
+            * gauss(u.abs() - std::f32::consts::FRAC_PI_2, 0.22);
+        p + self.outward(p) * (off + self.hr() * (nose + ear))
+    }
+
+    /// The skull's normal, which the cloth wears instead of its own: faceted
+    /// normals on a sheet this thin make the mask look like a bag.
+    fn skull_normal(&self, u: f32, v: f32) -> Vec3 {
+        let d = 0.006f32;
+        let p = self.point(u, v);
+        let du = self.point(u + d, v) - self.point(u - d, v);
+        let dv = self.point(u, v + d) - self.point(u, v - d);
+        let mut n = du.cross(dv).normalize_or_zero();
+        if n.length() < 0.5 {
+            n = (p - self.center).normalize_or_zero();
+        }
+        if n.dot(p - self.center) < 0.0 {
+            n = n * -1.0;
+        }
+        n
+    }
+
     fn outward(&self, p: Vec3) -> Vec3 {
         (p - self.center).normalize_or_zero()
     }
@@ -239,76 +267,64 @@ impl<'a> Head<'a> {
         // The underside of the jaw, filling the gap between the chin and the
         // neck. Without it the open bottom of the head loft shows as a ring of
         // ragged triangles around the throat.
-        mesh.sphere(
-            c + Vec3::new(0.0, 0.0, -hr * 0.86),
-            Vec3::new(hr * 0.62, hr * 0.66, hr * 0.30),
-            if fine { 4 } else { 2 },
+        // The underside of the jaw, narrowing into the neck. A ball under the
+        // chin is a second head; a taper that gathers to the neck's own width
+        // sits down into the collar.
+        let under = skin.scale(0.90);
+        mesh.tube(
+            &[
+                (c + Vec3::new(-0.008, 0.0, -hr * 0.985), hr * 0.300),
+                (c + Vec3::new(-0.005, 0.0, -hr * 1.060), hr * 0.270),
+                (c + Vec3::new(-0.002, 0.0, -hr * 1.190), hr * 0.215),
+                (c + Vec3::new(0.0, 0.0, -hr * 1.320), hr * 0.160),
+            ],
             if fine { 10 } else { 6 },
-            self.mask.unwrap_or_else(|| skin.scale(0.88)),
+            under,
+            false,
         );
 
         // ---------------- balaclava ----------------
-        // The same surface as the skull, pushed out a few millimetres, with an
-        // aperture left for the eyes and the brows. Cloth over the nose, mouth,
-        // jaw and neck; nothing else changes underneath.
+        // Three sheets over the same skull: everything above the brow line,
+        // everything below the cheekbones, and the sides that join them, leaving
+        // a rectangular aperture across the front with the eyes and brows in it.
+        //
+        // Cut as bands with exact edges, not by skipping cells of one sheet: a
+        // skipped cell is a whole ring of the loft, and the ring above the brow
+        // was tall enough to leave a band of forehead showing.
         if let Some(cloth) = self.mask {
-            let m_rings = if portrait { rings } else if fine { 9 } else { 5 };
             let off = hr * 0.032;
-            let s = |u: f32, v: f32| {
-                let p = self.point(u, v);
-                // The cloth follows the nose underneath: a ridge down the middle
-                // of the face, so the mask is a face and not a sock pulled over
-                // one. The nose itself is not built while the mask is on.
-                let nose = 0.070 * gauss(v - 0.520, 0.085) * gauss(u, 0.26);
-                p + self.outward(p) * (off + hr * nose)
-            };
-            let d = 0.006f32;
-            let normal = |u: f32, v: f32| -> Vec3 {
-                let p = self.point(u, v);
-                let du = self.point(u + d, v) - self.point(u - d, v);
-                let dv = self.point(u, v + d) - self.point(u, v - d);
-                let mut n = du.cross(dv).normalize_or_zero();
-                if n.length() < 0.5 {
-                    n = (p - c).normalize_or_zero();
-                }
-                if n.dot(p - c) < 0.0 {
-                    n = n * -1.0;
-                }
-                n
-            };
-            for r in 0..m_rings {
-                let v0 = 0.012 + 0.988 * r as f32 / m_rings as f32;
-                let v1 = 0.012 + 0.988 * (r + 1) as f32 / m_rings as f32;
-                for seg in 0..segs {
-                    let u0 = seg as f32 / segs as f32 * std::f32::consts::TAU;
-                    let u1 = (seg + 1) as f32 / segs as f32 * std::f32::consts::TAU;
-                    let mu = ((u0 + u1) * 0.5 + std::f32::consts::PI)
-                        .rem_euclid(std::f32::consts::TAU)
-                        - std::f32::consts::PI;
-                    let mv = (v0 + v1) * 0.5;
-                    let ex = mu / 0.76;
-                    let ey = (mv - 0.632) / 0.064;
-                    if ex * ex + ey * ey < 1.0 {
-                        continue;
+            let tau = std::f32::consts::TAU;
+            let patches: [(f32, f32, f32, f32, usize); 3] = [
+                (0.700, 1.000, 0.0, tau, 3),
+                (0.012, 0.560, 0.0, tau, 5),
+                (0.560, 0.700, 0.760, tau - 0.760, 2),
+            ];
+            for (v0, v1, u0, u1, prings) in patches {
+                for r in 0..prings {
+                    let va = v0 + (v1 - v0) * r as f32 / prings as f32;
+                    let vb = v0 + (v1 - v0) * (r + 1) as f32 / prings as f32;
+                    for seg in 0..segs {
+                        let ua = u0 + (u1 - u0) * seg as f32 / segs as f32;
+                        let ub = u0 + (u1 - u0) * (seg + 1) as f32 / segs as f32;
+                        mesh.quad_curved(
+                            self.masked_point(off, ua, va),
+                            self.skull_normal(ua, va),
+                            self.masked_point(off, ub, va),
+                            self.skull_normal(ub, va),
+                            self.masked_point(off, ub, vb),
+                            self.skull_normal(ub, vb),
+                            self.masked_point(off, ua, vb),
+                            self.skull_normal(ua, vb),
+                            cloth,
+                            1.06,
+                        );
                     }
-                    mesh.quad_curved(
-                        s(u0, v0),
-                        normal(u0, v0),
-                        s(u1, v0),
-                        normal(u1, v0),
-                        s(u1, v1),
-                        normal(u1, v1),
-                        s(u0, v1),
-                        normal(u0, v1),
-                        cloth,
-                        1.06,
-                    );
                 }
             }
             // Close the crown, so the top of the mask is not a hole from above.
             let top = c + Vec3::new(0.0, 0.0, hr * 1.018);
             let ring: Vec<Vec3> = (0..segs)
-                .map(|i| s(i as f32 / segs as f32 * std::f32::consts::TAU, 1.0))
+                .map(|i| self.masked_point(off, i as f32 / segs as f32 * tau, 1.0))
                 .collect();
             for i in 0..segs {
                 let j = (i + 1) % segs;
@@ -325,16 +341,34 @@ impl<'a> Head<'a> {
             }
             // The edge of the aperture, so the opening is cloth with a thickness
             // rather than a hole cut in paper.
-            let rim: Vec<(Vec3, f32)> = (0..=16)
+            let (lo, hi, hu) = (0.560f32, 0.700f32, 0.760f32);
+            let mut rim: Vec<(Vec3, f32)> = Vec::new();
+            for i in 0..=6 {
+                let u = -hu + 2.0 * hu * i as f32 / 6.0;
+                rim.push((self.masked_point(off, u, hi), hr * 0.016));
+            }
+            for i in 1..=3 {
+                let v = hi + (lo - hi) * i as f32 / 3.0;
+                rim.push((self.masked_point(off, hu, v), hr * 0.016));
+            }
+            for i in 1..=6 {
+                let u = hu - 2.0 * hu * i as f32 / 6.0;
+                rim.push((self.masked_point(off, u, lo), hr * 0.016));
+            }
+            for i in 1..=3 {
+                let v = lo + (hi - lo) * i as f32 / 3.0;
+                rim.push((self.masked_point(off, -hu, v), hr * 0.016));
+            }
+            mesh.tube(&rim, if fine { 5 } else { 3 }, cloth.scale(0.82), false);
+            // Hem under the chin, so the mask ends in cloth and not in a ragged
+            // ring where the jaw surface meets it.
+            let hem: Vec<(Vec3, f32)> = (0..=segs)
                 .map(|i| {
-                    let t = i as f32 / 16.0 * std::f32::consts::TAU;
-                    (
-                        s(0.76 * t.cos(), 0.632 + 0.064 * t.sin()),
-                        hr * 0.024,
-                    )
+                    let u = i as f32 / segs as f32 * tau;
+                    (self.masked_point(off, u, 0.012), hr * 0.018)
                 })
                 .collect();
-            mesh.tube(&rim, if fine { 5 } else { 3 }, cloth.scale(0.82), false);
+            mesh.tube(&hem, if fine { 5 } else { 3 }, cloth, false);
         }
 
         // ---------------- eyes ----------------
@@ -498,15 +532,23 @@ impl<'a> Head<'a> {
                 -std::f32::consts::FRAC_PI_2
             };
             let base = self.point(u, 0.560);
-            let ear = base + Vec3::new(-hr * 0.012, side * hr * 0.034, -hr * 0.010);
+            // Under the mask the ear is cloth: it sits further out, inside the
+            // bump the balaclava carries there, instead of poking a hole in it.
+            let masked = self.mask.is_some();
+            let ear = base
+                + Vec3::new(
+                    -hr * 0.012,
+                    side * hr * if masked { 0.052 } else { 0.034 },
+                    -hr * 0.010,
+                );
             mesh.sphere(
                 ear,
                 Vec3::new(hr * 0.070, hr * 0.044, hr * 0.100),
                 if fine { 4 } else { 2 },
                 if fine { 8 } else { 5 },
-                skin,
+                self.mask.unwrap_or(skin),
             );
-            if face {
+            if face && self.mask.is_none() {
                 // The bowl of the ear, pressed back into it.
                 mesh.sphere(
                     ear + Vec3::new(hr * 0.012, side * hr * 0.030, -hr * 0.004),
