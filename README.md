@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.2-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -628,7 +628,9 @@ Twenty-two of them, chosen after the coin toss and before the ball is thrown.
 The two practice fields are the ones the game shipped with: **the practice field**,
 open air with a full house, and **the closed practice**, the same bowl with the roof
 on and the stands empty. The lens sits under the roof, so the shot still sees the
-field rather than the top of the building.
+field rather than the top of the building, and both long walls and both ends of it
+are given over to tall windows, so the building reads as glass with a night behind
+it rather than as a sealed box.
 
 The sixteen clubs each have their own park, and each one is its city: Boston's
 harbour and brick rowhouses, Chicago's stacks and steel, Miami's palms and pastel
@@ -638,9 +640,10 @@ scoreboard stay the league's.
 
 Then the four the league takes the game to:
 
-- **The Deep** — a glass dome on the sea bed. The roof runs with lights, the water
-  stands outside it on every side, and a school of fish keeps swimming past the glass,
-  moving frame by frame the way the crowd does.
+- **The Deep** — a clear glass dome on the sea bed. The roof is a pale vault on a
+  frame of ribs, lit down the crown, and the water stands outside it on every side:
+  a school of fish keeps swimming past the glass, moving frame by frame the way the
+  crowd does, and the sea shows through the roof instead of being painted over by it.
 - **The Back of Beyond** — a field cut into red earth, with mesas, boulders, a water
   tower and a windmill, and nothing else for miles.
 - **The Strand** — the ocean down one sideline, a resort down the other, palms over
@@ -709,11 +712,14 @@ The turf is painted at sixteen pixels per yard — mown stripes with feathered m
 edges, yard lines and hashes, painted numbers, coaching boxes, end-zone wordmarks
 and the midfield mark — and the ground pass samples it across the whole field.
 
-Around it stands a stadium: a run-off apron, advertising boards, a bowl of seating
-with a crowd in team colours, a stand behind each end zone, a roof over the far
-side, a scoreboard carrying the home club's mark and four banks of lights, all placed
-under the height of the broadcast lens so the building is in the picture without
-ever getting between the camera and the ball.
+Around it stands a stadium: a run-off apron, advertising boards, one bowl of seating
+with a crowd in team colours down each sideline, a roof over the far side, a scoreboard
+carrying the home club's mark and four banks of lights, all placed under the height of
+the broadcast lens so the building is in the picture without ever getting between the
+camera and the ball. There is no stand behind either end zone — the bowl is two long
+sides, so the end-zone and overhead shots look past the paint at the ground beyond
+it — and everything a ground brings with it, from the treeline to the water tower,
+stands outside the sidelines or above the field. The field is the players'.
 
 The overlay is 2K5-flavoured: a score bug with possession highlight and timeout
 pips, a down-and-distance card with play clock bar, the league badge, a lower-third

@@ -182,6 +182,13 @@ impl Broadcast {
         self.stands.tris.len()
     }
 
+    /// The building itself, for the tests that check nothing is standing on
+    /// the field.
+    #[cfg(test)]
+    pub fn stands(&self) -> &Mesh {
+        &self.stands
+    }
+
     /// How far the word over a dead ball has arrived, 0..1. The live client
     /// walks this up from zero when the whistle goes, so the result rises onto
     /// the picture instead of appearing on it.
@@ -1170,9 +1177,11 @@ pub(crate) fn paint_word(
     }
 }
 
-/// The building around the field: a run-off apron, advertising boards, a bowl of
-/// seating with a crowd in it, a stand behind each end zone, a roof over the far
-/// side, a scoreboard and four banks of lights.
+/// The building around the field: a run-off apron, advertising boards, one bowl
+/// of seating down each sideline with a crowd in it, a roof over the far side, a
+/// scoreboard and four banks of lights. There is no stand behind either end
+/// zone: the building is two long sides, so nothing is looking at the back of
+/// the field over the paint.
 ///
 /// Heights are kept well under the broadcast lens, which sits eight yards above
 /// the top row: the building has to be in the picture without ever getting
@@ -1187,14 +1196,6 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
         (seed >> 8) as f32 / 16_777_215.0
     };
 
-    let crowd_colors = [
-        teams[0].primary,
-        teams[1].primary,
-        Rgb::hex(0xD8DDE4),
-        Rgb::hex(0x49566A),
-        Rgb::hex(0x27303C),
-        Rgb::hex(0x8C4B3B),
-    ];
     let concrete = Rgb::hex(0x3A4450);
     let wall = Rgb::hex(0x252D38);
     let steel = Rgb::hex(0x1B222C);
@@ -1313,54 +1314,8 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
         teams[0].primary,
     );
 
-    // ------------------------------------------------------------------
-    // End stands, so the end-zone and overhead shots are not looking at the
-    // back of an empty field.
-    // ------------------------------------------------------------------
-    for end in [0, 1] {
-        let dir = if end == 0 { -1.0f32 } else { 1.0 };
-        let face = if end == 0 { x0 } else { x1 };
-        let mut z = 0.7f32;
-        let mut depth = if end == 0 { 3.0 } else { 3.0 };
-        for row in 0..4 {
-            let z_top = z + 0.50;
-            let x_in = face - dir * depth;
-            let x_out = x_in - dir * 1.1;
-            let tone = concrete.scale(1.0 - row as f32 * 0.02);
-            mesh.quad(
-                Vec3::new(x_in, -26.0, z),
-                Vec3::new(x_in, 26.0, z),
-                Vec3::new(x_in, 26.0, z_top),
-                Vec3::new(x_in, -26.0, z_top),
-                tone,
-            );
-            mesh.quad(
-                Vec3::new(x_in, -26.0, z_top),
-                Vec3::new(x_in, 26.0, z_top),
-                Vec3::new(x_out, 26.0, z_top),
-                Vec3::new(x_out, -26.0, z_top),
-                tone.scale(0.92),
-            );
-            let mut py = -26.0f32;
-            while venue.has_crowd() && py < 26.0 {
-                let len = 2.2 + rand() * 1.2;
-                let color = crowd_colors[(rand() * crowd_colors.len() as f32) as usize
-                    % crowd_colors.len()];
-                let height = 0.50 + rand() * 0.14;
-                let xc = x_in - dir * (0.28 + rand() * 0.2);
-                mesh.quad(
-                    Vec3::new(xc, py, z_top),
-                    Vec3::new(xc, py + len, z_top),
-                    Vec3::new(xc, py + len, z_top + height),
-                    Vec3::new(xc, py, z_top + height),
-                    color.scale(0.85 + rand() * 0.25),
-                );
-                py += len + 0.2;
-            }
-            z = z_top;
-            depth += 1.1;
-        }
-    }
+    // The ends are left open: the two sidelines are the whole bowl, so the
+    // end-zone and overhead shots look past the paint at the world beyond it.
 
     // The world outside the bowl: the city, the sea, the red dirt.
     crate::venues::scenery(venue, teams, &mut mesh, &mut rand);

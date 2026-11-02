@@ -16,7 +16,9 @@ use crate::scene::{Lighting, Mesh};
 /// Yards of field between the goal lines, and half the width of the paint. The
 /// building starts outside these.
 const FIELD_LEN: f32 = 120.0;
-const HALF_WIDTH: f32 = 12.0;
+/// Half the width of the paint, taken from the field itself: anything hung off
+/// these lines has to clear the sidelines, or it hangs over the field.
+const HALF_WIDTH: f32 = a7fl_core::field::FIELD_HALF_WIDTH;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -92,7 +94,7 @@ impl Venue {
                 .get(k)
                 .map(|c| c.city.to_uppercase())
                 .unwrap_or_else(|| "HOME".to_string()),
-            Kind::Underwater => "A DOME ON THE SEA BED".to_string(),
+            Kind::Underwater => "A CLEAR DOME ON THE SEA BED".to_string(),
             Kind::Outback => "RED DIRT, NO NEIGHBOURS".to_string(),
             Kind::Beach => "OCEAN ONE SIDE, HOTEL THE OTHER".to_string(),
             Kind::Championship => "BOTH END ZONES, BOTH CLUBS".to_string(),
@@ -105,7 +107,7 @@ impl Venue {
             Kind::Practice => "The field the game is learned on: open sky, a crowd in the bowl.",
             Kind::ClosedPractice => "The same field with the roof down and nobody in the seats.",
             Kind::Home(k) => cities().get(k).map(|c| c.blurb).unwrap_or("A home ground."),
-            Kind::Underwater => "Glass overhead, the sea beyond it, and the fish swimming past.",
+            Kind::Underwater => "A clear dome overhead, the sea beyond it, and the fish swimming past.",
             Kind::Outback => "A field cut into the red earth, with the mesas on the horizon.",
             Kind::Beach => "Breakers down one sideline, a hotel down the other, palms over both.",
             Kind::Championship => "The final: both clubs painted into both end zones.",
@@ -143,7 +145,7 @@ impl Venue {
         match self.kind() {
             Kind::Underwater => {
                 light.ambient = 0.62;
-                light.fog_density = 0.020;
+                light.fog_density = 0.013;
                 light.bounce = Vec3::new(0.0, 0.0, 1.0);
                 light.bounce_strength = 0.06;
             }
@@ -428,19 +430,81 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
         Rgb::hex(0x3C4652),
         1.0,
     );
-    // And a line of trees past each end zone, so the shot down the field has a
-    // horizon rather than the back of the scoreboard.
+    // And a line of trees beyond each end line, so the shot down the field has
+    // a horizon rather than the back of the scoreboard. They start behind the
+    // back of the end zone and step away from the field, never onto it: this
+    // line used to walk from ten yards behind the left end zone twenty yards
+    // into the field, and stood a row of pines on the paint.
     for end in [-1.0f32, 1.0] {
         for i in 0..9 {
-            let x = if end < 0.0 { -20.0 } else { 120.0 } + i as f32 * 5.0;
+            let x = if end < 0.0 { -18.0 - i as f32 * 5.0 } else { 118.0 + i as f32 * 5.0 };
             pine(mesh, Vec3::new(x, -26.0 + i as f32 * 6.5, 0.0), 6.0 + rand() * 3.0, rand);
         }
     }
 }
 
+/// A wall of tall windows: a sill below, a head above, and three courses of the
+/// night outside between them, with a mullion on each bay and a transom on each
+/// course line. The wall runs along x when `along_x`, and along y when not.
+fn window_band(
+    mesh: &mut Mesh,
+    along_x: bool,
+    at: f32,
+    from: f32,
+    to: f32,
+    z_sill: f32,
+    z_head: f32,
+) {
+    // The night outside, brighter than the wall it sits in, so the band reads
+    // as glass from the far end of the building and not as a painted stripe.
+    let night = [
+        Rgb::hex(0x35485C),
+        Rgb::hex(0x4E6E86),
+        Rgb::hex(0x7496AE),
+    ];
+    let frame = Rgb::hex(0x1E242C);
+    let p = |s: f32, z: f32| {
+        if along_x {
+            Vec3::new(s, at, z)
+        } else {
+            Vec3::new(at, s, z)
+        }
+    };
+    let courses = night.len() as f32;
+    // The glass, in courses: darkest at the floor, opening up toward the roof.
+    for (i, tone) in night.iter().enumerate() {
+        let za = z_sill + (z_head - z_sill) * i as f32 / courses;
+        let zb = z_sill + (z_head - z_sill) * (i as f32 + 1.0) / courses;
+        mesh.quad_shaded(p(from, za), p(to, za), p(to, zb), p(from, zb), *tone, 1.0);
+    }
+    let len = (to - from).abs();
+    // A mullion on each bay, and a transom on each course line.
+    let bays = (len / 9.0).round().max(1.0);
+    for i in 0..=bays as usize {
+        let s = from + (to - from) * i as f32 / bays;
+        let half = if along_x {
+            Vec3::new(0.3, 0.2, (z_head - z_sill) * 0.5)
+        } else {
+            Vec3::new(0.2, 0.3, (z_head - z_sill) * 0.5)
+        };
+        mesh.box_shaded(p(s, (z_sill + z_head) * 0.5), half, 0.0, frame, 1.0);
+    }
+    for i in 0..=night.len() {
+        let z = z_sill + (z_head - z_sill) * i as f32 / courses;
+        let half = if along_x {
+            Vec3::new(len * 0.5, 0.2, 0.16)
+        } else {
+            Vec3::new(0.2, len * 0.5, 0.16)
+        };
+        mesh.box_shaded(p((from + to) * 0.5, z), half, 0.0, frame, 1.0);
+    }
+}
+
 /// The practice with the roof on: four walls and a ceiling over the whole site,
-/// nothing in the seats. The lens sits under it, so the ceiling is above the
-/// camera rather than in front of it.
+/// nothing in the seats, and a band of big windows down both sides and through
+/// both ends — the kind of glass a modern indoor stadium has, tall enough to
+/// show the night rather than a slit of it. The lens sits under the roof, so the
+/// ceiling is above the camera rather than in front of it.
 fn closed_practice(mesh: &mut Mesh) {
     let steel = Rgb::hex(0x39424E);
     let wall = Rgb::hex(0x2A323C);
@@ -470,26 +534,35 @@ fn closed_practice(mesh: &mut Mesh) {
         );
         x += 10.0;
     }
-    // Walls from the top of the bowl to the roof, on all four sides.
+    // Walls from the top of the bowl to the roof, on all four sides, with the
+    // window band through the middle of them. The ends get the taller glass.
+    let z_sill = 12.0f32;
+    let z_head = 40.0f32;
     for side in [-1.0f32, 1.0] {
-        mesh.quad_shaded(
-            Vec3::new(x0, side * y, 9.0),
-            Vec3::new(x1, side * y, 9.0),
-            Vec3::new(x1, side * y, z_top),
-            Vec3::new(x0, side * y, z_top),
-            wall,
-            1.0,
-        );
+        window_band(mesh, true, side * y, x0, x1, z_sill, z_head);
+        for (z0, z1) in [(9.0f32, z_sill), (z_head, z_top)] {
+            mesh.quad_shaded(
+                Vec3::new(x0, side * y, z0),
+                Vec3::new(x1, side * y, z0),
+                Vec3::new(x1, side * y, z1),
+                Vec3::new(x0, side * y, z1),
+                wall,
+                1.0,
+            );
+        }
     }
     for (x, flip) in [(x0, 1.0f32), (x1, -1.0)] {
-        mesh.quad_shaded(
-            Vec3::new(x, -y, 3.0),
-            Vec3::new(x, y, 3.0),
-            Vec3::new(x, y, z_top),
-            Vec3::new(x, -y, z_top),
-            wall.scale(if flip > 0.0 { 1.0 } else { 0.9 }),
-            1.0,
-        );
+        window_band(mesh, false, x, -y, y, 6.0, z_head);
+        for (z0, z1) in [(3.0f32, 6.0), (z_head, z_top)] {
+            mesh.quad_shaded(
+                Vec3::new(x, -y, z0),
+                Vec3::new(x, y, z0),
+                Vec3::new(x, y, z1),
+                Vec3::new(x, -y, z1),
+                wall.scale(if flip > 0.0 { 1.0 } else { 0.9 }),
+                1.0,
+            );
+        }
     }
 }
 
@@ -644,59 +717,99 @@ fn underwater(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
             );
         }
     }
-    // The glass: a dome of tinted panels over the field, held up by ribs. The
-    // camera sits under it, so it reads as a roof rather than a wall.
-    let glass = Rgb::hex(0x2E8EA6);
+    // The glass: a clear dome over the field. Pale panes in a light frame, held
+    // up by ribs that follow the vault, so the sea above and the water beyond
+    // read through the roof instead of being painted over by it.
+    let glass = Rgb::hex(0xC8E6EE);
+    let frame = Rgb::hex(0x8FB2BA);
+    let eave_y = 32.0f32;
+    let eave_z = 30.0f32;
+    let crown_z = 54.0f32;
+    let strips = 8;
+    // The cross-section of the vault: y across the field, z up to the crown.
+    let curve = |t: f32| {
+        let y = -eave_y + 2.0 * eave_y * t;
+        (y, eave_z + (crown_z - eave_z) * 4.0 * t * (1.0 - t))
+    };
     let mut x = -24.0;
-    let mut i = 0;
+    let mut bay = 0;
     while x < 132.0 {
-        let tone = if i % 2 == 0 { glass } else { glass.scale(1.15) };
-        mesh.quad_shaded(
-            Vec3::new(x, -32.0, 46.0),
-            Vec3::new(x + 13.0, -32.0, 46.0),
-            Vec3::new(x + 13.0, 32.0, 46.0),
-            Vec3::new(x, 32.0, 46.0),
-            tone,
-            1.0,
-        );
-        // A rib, and a line of lights along it.
-        mesh.box_shaded(
-            Vec3::new(x, 0.0, 45.6),
-            Vec3::new(0.25, 32.0, 0.25),
-            0.0,
-            Rgb::hex(0x123642),
-            1.0,
-        );
-        mesh.box_shaded(
-            Vec3::new(x, 0.0, 45.2),
-            Vec3::new(0.5, 10.0, 0.15),
-            0.0,
-            Rgb::hex(0xF2E8C0),
-            1.0,
-        );
+        let tone = if bay % 2 == 0 { glass } else { glass.scale(0.94) };
+        for s in 0..strips {
+            let (y0, z0) = curve(s as f32 / strips as f32);
+            let (y1, z1) = curve((s + 1) as f32 / strips as f32);
+            mesh.quad_shaded(
+                Vec3::new(x, y0, z0),
+                Vec3::new(x + 13.0, y0, z0),
+                Vec3::new(x + 13.0, y1, z1),
+                Vec3::new(x, y1, z1),
+                tone,
+                1.0,
+            );
+        }
+        // A rib on the bay line, following the vault over the field.
+        let mut prev = curve(0.0);
+        for s in 1..=strips {
+            let cur = curve(s as f32 / strips as f32);
+            mesh.quad_shaded(
+                Vec3::new(x - 0.22, prev.0, prev.1 + 0.06),
+                Vec3::new(x + 0.22, prev.0, prev.1 + 0.06),
+                Vec3::new(x + 0.22, cur.0, cur.1 + 0.06),
+                Vec3::new(x - 0.22, cur.0, cur.1 + 0.06),
+                frame,
+                1.0,
+            );
+            prev = cur;
+        }
         x += 13.0;
-        i += 1;
+        bay += 1;
     }
-    // Walls of glass from the top of the bowl up to the roof.
+    // The lights down the crown of the vault: clear glass over a lit field.
+    mesh.quad_shaded(
+        Vec3::new(-24.0, -0.7, crown_z - 0.2),
+        Vec3::new(132.0, -0.7, crown_z - 0.2),
+        Vec3::new(132.0, 0.7, crown_z - 0.2),
+        Vec3::new(-24.0, 0.7, crown_z - 0.2),
+        Rgb::hex(0xF4F0DA),
+        1.0,
+    );
+    // Clear glass from the top of the bowl up to the eaves, with a mullion on
+    // every bay so the wall still reads as built.
     for side in [-1.0f32, 1.0] {
         mesh.quad_shaded(
-            Vec3::new(-24.0, side * 32.0, 9.0),
-            Vec3::new(132.0, side * 32.0, 9.0),
-            Vec3::new(132.0, side * 32.0, 46.0),
-            Vec3::new(-24.0, side * 32.0, 46.0),
-            glass.scale(0.85),
+            Vec3::new(-24.0, side * eave_y, 9.0),
+            Vec3::new(132.0, side * eave_y, 9.0),
+            Vec3::new(132.0, side * eave_y, eave_z),
+            Vec3::new(-24.0, side * eave_y, eave_z),
+            glass.scale(0.9),
             1.0,
         );
+        let mut mx = -24.0;
+        while mx <= 132.0 {
+            mesh.box_shaded(
+                Vec3::new(mx, side * eave_y, (9.0 + eave_z) * 0.5),
+                Vec3::new(0.18, 0.18, (eave_z - 9.0) * 0.5),
+                0.0,
+                frame,
+                1.0,
+            );
+            mx += 13.0;
+        }
     }
-    for (x, dir) in [(-24.0f32, 1.0f32), (132.0, -1.0)] {
-        mesh.quad_shaded(
-            Vec3::new(x, -32.0, 3.0),
-            Vec3::new(x, 32.0, 3.0),
-            Vec3::new(x, 32.0, 46.0),
-            Vec3::new(x, -32.0, 46.0),
-            glass.scale(if dir > 0.0 { 0.9 } else { 0.8 }),
-            1.0,
-        );
+    // The ends fill the arch: a pane per strip, from the floor to the vault.
+    for (x, tone) in [(-24.0f32, glass.scale(0.86)), (132.0, glass.scale(0.8))] {
+        for s in 0..strips {
+            let (y0, z0) = curve(s as f32 / strips as f32);
+            let (y1, z1) = curve((s + 1) as f32 / strips as f32);
+            mesh.quad_shaded(
+                Vec3::new(x, y0, 3.0),
+                Vec3::new(x, y1, 3.0),
+                Vec3::new(x, y1, z1),
+                Vec3::new(x, y0, z0),
+                tone,
+                1.0,
+            );
+        }
     }
 }
 
@@ -1092,6 +1205,42 @@ mod tests {
             a.tris[0].a != b.tris[0].a,
             "the school is not moving between frames"
         );
+    }
+
+    /// The field belongs to the players. Everything a ground brings with it —
+    /// trees, rocks, towers, water — sits outside the paint or above it, never
+    /// on it. The final is the one exception: its confetti hangs over the field
+    /// on purpose, so it is left out of the sweep.
+    #[test]
+    fn nothing_is_standing_on_the_field() {
+        use a7fl_core::field::{BACK_OF_LEFT_ENDZONE, BACK_OF_RIGHT_ENDZONE, FIELD_HALF_WIDTH};
+        let teams = league_teams();
+        for i in 0..COUNT {
+            let venue = Venue::from_index(i);
+            if matches!(venue.kind(), Kind::Championship) {
+                continue;
+            }
+            let b = Broadcast::with_venue(80, 45, [teams[0].clone(), teams[1].clone()], venue);
+            for tri in &b.stands().tris {
+                for p in [tri.a, tri.b, tri.c] {
+                    // Low enough to be standing on the turf, rather than a roof
+                    // or a light over it, and inside the paint.
+                    let on_the_paint = p.z > 0.25
+                        && p.z < 4.0
+                        && p.x > BACK_OF_LEFT_ENDZONE + 0.5
+                        && p.x < BACK_OF_RIGHT_ENDZONE - 0.5
+                        && p.y.abs() < FIELD_HALF_WIDTH - 1.3;
+                    assert!(
+                        !on_the_paint,
+                        "{} has something standing on the field at ({:.1}, {:.1}, {:.1})",
+                        venue.name(),
+                        p.x,
+                        p.y,
+                        p.z
+                    );
+                }
+            }
+        }
     }
 
     #[test]
