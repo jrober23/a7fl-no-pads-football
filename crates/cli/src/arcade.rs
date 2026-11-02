@@ -117,6 +117,18 @@ fn aim_step(aim_y: f32, stick_x: f32, dt: f32) -> f32 {
     (aim_y + stick_x * AIM_SWEEP * dt).clamp(-THROW_OFF_AIM_YARDS, THROW_OFF_AIM_YARDS)
 }
 
+/// The stick's horizontal axis turned into the world `y` that the throw-off lens
+/// shows as right.
+///
+/// The lens looks down the throwing team's direction, so screen right is world `+y`
+/// for one team and world `-y` for the other. The stick used to be applied raw, so
+/// for one of the two teams the marker walked away from the push: push left, aim
+/// right. The readout under the picture already knew which way the shot pointed,
+/// which is why it and the marker could disagree.
+fn aim_push(stick_x: f32, throw_dir: i8) -> f32 {
+    stick_x * throw_dir as f32
+}
+
 /// The aim in the words the player sees it in: the marker is on the field, this
 /// is the readout under the picture.
 fn aim_readout(throw_dir: i8, aim_y: f32) -> String {
@@ -762,7 +774,8 @@ impl Arcade {
                 }
                 // The line is set before the arm comes back and locked there.
                 if !charging {
-                    aim_y = aim_step(aim_y, input.stick.x, frame_dt as f32);
+                    let push = aim_push(input.stick.x, sim.setup.throwing_direction());
+                    aim_y = aim_step(aim_y, push, frame_dt as f32);
                 }
             }
 
@@ -1926,6 +1939,33 @@ mod tests {
         assert!(close(up, Vec2::new(-1.0, 0.0)), "sky up -> {:?}", up);
         let right = stick_to_world(Vec2::new(1.0, 0.0), false, CameraMode::SkyCam, -1);
         assert!(close(right, Vec2::new(0.0, -1.0)), "sky right -> {:?}", right);
+    }
+
+    /// The bug the pad player found: one of the two teams aimed the other way,
+    /// because the marker was pushed in world y while the lens looks down the
+    /// throwing team's direction.
+    #[test]
+    fn pushing_right_aims_right_whichever_team_is_throwing() {
+        for throw_dir in [1i8, -1] {
+            // A right push, and the direction the shot is looking.
+            let push = aim_push(1.0, throw_dir);
+            let aim = aim_step(0.0, push, 0.1);
+            // On screen, `across` is what the readout prints and what the marker
+            // travels: it has to grow for a right push on both teams.
+            let across = throw_dir as f32 * aim;
+            assert!(across > 0.0, "throw_dir {throw_dir}: right push aimed {across}");
+            assert_eq!(
+                aim_readout(throw_dir, aim),
+                "3 YARDS RIGHT",
+                "throw_dir {throw_dir}"
+            );
+            // And left is left.
+            let back = aim_step(aim, aim_push(-1.0, throw_dir), 0.1);
+            assert!(
+                (throw_dir as f32 * back).abs() < 1.0,
+                "throw_dir {throw_dir}: left push did not come back"
+            );
+        }
     }
 
     #[test]
