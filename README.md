@@ -108,7 +108,7 @@ On defense the same pad does different work:
 | D-pad or left stick | Move the defender you are on |
 | A / South, Space or Enter | Tackle: go and wrap up the ball carrier |
 | B / East, X | Switch to the next defender, nearest the ball first |
-| X / West, Z | Swat the pass down, while the ball is in the air |
+| X / West, Z | Dive tackle: a lunging hit from a half-yard further out. With the ball in the air the same button is the bat-down |
 | Y / North, C | Intercept: go and take the ball away |
 | RT / ZR, Left Shift | Change camera |
 | Start, Esc | Pause |
@@ -170,21 +170,24 @@ A takes the call. Then you take one of the seven yourself: B walks the pad aroun
 defense, nearest the ball first, and the stick moves whoever you are on.
 
 A throw-off is three gunners against one returner, as the rules say. The thrower is
-not a coverage man: once the ball is away he leaves the picture, and the pad can only
-take one of the three chasing it.
+not a coverage man: once the ball is away he leaves the picture, and the pad takes one
+of the three chasing it. B walks it round them, the way it walks round the seven on a
+scrimmage snap.
 
-A is the tackle. Get your man within reach of the carrier and press it and he gets
-the first shot at the wrap, with a step more reach than the coordinator's defenders.
-X and Y are the coverage buttons: swat the ball down, or go and take it away. They
-only work while the ball is in the air and your man is close enough to touch it, and
-he gets one look per throw — press them early and nothing happens, press them late
-and he has wasted his chance.
+A is the wrap-up. Get your man within reach of the carrier and press it and he gets
+the first shot at the tackle, with a step more reach than the coordinator's defenders.
+X is the dive: he throws himself at the carrier from further out, gets his hands out
+further still, and holds on less — the button for catching a man from behind, and the
+one that leaves him on the turf when it misses. Y goes and takes the ball away. With
+the ball in the air X is the bat-down instead: he dives at it and knocks it down. X
+and Y only work while the ball is up and your man is close enough to touch it, and he
+gets one look per throw.
 
 ### Cameras
 
 RT (Left Shift on the keyboard) cycles the shot while the ball is live. On a throw-off
-it is X instead — the trigger is the throw itself there — or pick the shot from the
-pause menu:
+it does the same while you are covering or returning; while you are throwing, the
+trigger is the throw itself, so pick the shot from the pause menu:
 
 * **Broadcast** — the high sideline camera the broadcast package uses, panning with
   the ball.

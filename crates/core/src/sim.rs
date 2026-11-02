@@ -23,6 +23,10 @@ use crate::rules::{PenaltyCall, PenaltyKind};
 use crate::team::{Attributes, Team};
 
 pub const TACKLE_RADIUS: f32 = 0.95;
+/// How far a diving defender throws himself at the man with the ball.
+pub const DIVE_LUNGE: f32 = 1.05;
+/// How long a dive keeps the longer reach, in seconds.
+pub const DIVE_WINDOW: f32 = 0.45;
 
 /// How long the wrap takes: the arms go on him, the feet drive, and the two of
 /// them go to the turf. Contact is not the end of the play. A tackle that
@@ -214,6 +218,8 @@ pub struct SimPlayer {
     pub down: bool,
     pub stun: f32,
     pub tackle_cooldown: f32,
+    /// How long a dive still has its hands out, in seconds.
+    pub dive_t: f32,
     pub engaged: Option<usize>,
     pub pressure: f32,
     pub beaten: f32,
@@ -296,6 +302,8 @@ pub struct DefControl {
     pub tackle: bool,
     /// One frame of the swat button: knock the ball down.
     pub swat: bool,
+    /// One frame of the dive button: a lunging tackle from further out.
+    pub dive: bool,
     /// One frame of the pick button: go and take it away.
     pub intercept: bool,
 }
@@ -410,6 +418,7 @@ impl<'a> PlaySim<'a> {
                 down: false,
                 stun: 0.0,
                 tackle_cooldown: 0.0,
+                dive_t: 0.0,
                 engaged: None,
                 pressure: 0.0,
                 beaten: 0.0,
@@ -443,6 +452,7 @@ impl<'a> PlaySim<'a> {
                 down: false,
                 stun: 0.0,
                 tackle_cooldown: 0.0,
+                dive_t: 0.0,
                 engaged: None,
                 pressure: 0.0,
                 beaten: 0.0,
@@ -800,6 +810,7 @@ impl<'a> PlaySim<'a> {
         self.t += dt;
         for p in self.players.iter_mut() {
             p.tackle_cooldown = (p.tackle_cooldown - dt).max(0.0);
+            p.dive_t = (p.dive_t - dt).max(0.0);
             if p.stun > 0.0 {
                 p.stun = (p.stun - dt).max(0.0);
             }
@@ -1583,6 +1594,16 @@ impl<'a> PlaySim<'a> {
             if Some(i) == self.human_defender {
                 if let Some(ctl) = self.def_control {
                     let mag = ctl.move_dir.length().min(1.0);
+                    // A dive throws the body at the man with the ball: a yard of
+                    // ground his legs could not cover, and a longer reach for the
+                    // tackle worked out below.
+                    if ctl.dive && self.players[i].dive_t <= 0.0 {
+                        self.players[i].dive_t = DIVE_WINDOW;
+                        if let Some(c) = carrier {
+                            let to = self.players[c].pos - self.players[i].pos;
+                            self.players[i].pos = self.players[i].pos + to.clamp_len(DIVE_LUNGE);
+                        }
+                    }
                     if mag > 0.18 {
                         let target = self.players[i].pos + ctl.move_dir.normalize_or_zero() * 4.0;
                         let spd = self.speed_cap(i) * (0.6 + 0.4 * mag);
@@ -1869,8 +1890,13 @@ impl<'a> PlaySim<'a> {
             if self.players[d].down || self.players[d].stun > 0.0 || self.players[d].tackle_cooldown > 0.0 {
                 continue;
             }
+            // A diving defender gets his hands out further than a man on his feet.
             let reach = if Some(d) == self.human_defender {
-                TACKLE_RADIUS * 1.3
+                if self.players[d].dive_t > 0.0 {
+                    TACKLE_RADIUS * 2.1
+                } else {
+                    TACKLE_RADIUS * 1.3
+                }
             } else {
                 TACKLE_RADIUS
             };
@@ -1896,6 +1922,10 @@ impl<'a> PlaySim<'a> {
             let mut p = 0.30
                 + (defender_attrs.tackle_factor() - carrier_attrs.break_tackle_factor()) * 0.55
                 + (closing * 0.02).min(0.15);
+            // A dive reaches further and holds on less: it is a lunge, not a wrap.
+            if Some(d) == self.human_defender && self.players[d].dive_t > 0.0 {
+                p = (p - 0.12).max(0.05);
+            }
             // A man in the air cannot be wrapped up: the attempt goes under him and
             // he is left grasping at the turf.
             if self.carrier_moves.is_hurdling() {
@@ -2180,7 +2210,7 @@ impl<'a> PlaySim<'a> {
         // automatic contest rolls his way; he has to be near the ball and he has
         // to be there at the right time, and he gets one look at it.
         if let (Some(d), Some(ctl)) = (self.human_defender, self.def_control) {
-            if (ctl.intercept || ctl.swat)
+            if (ctl.intercept || ctl.swat || ctl.dive)
                 && !self.pass_contacted
                 && !self.players[d].down
                 && progress > 0.10
@@ -2212,7 +2242,7 @@ impl<'a> PlaySim<'a> {
                             return;
                         }
                     }
-                    if ctl.swat {
+                    if ctl.swat || ctl.dive {
                         let bat = (0.16 + cov * 0.20 + hands * 0.10) * close;
                         if self.rng.chance(bat) {
                             let desc =
@@ -3116,6 +3146,61 @@ mod tests {
             }
         }
         assert!(down, "pressing tackle never produced a tackle");
+    }
+
+    #[test]
+    fn a_dive_reaches_a_man_a_wrap_up_cannot() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_run())
+            .expect("no run play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 17);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        for _ in 0..90 {
+            sim.step(FIXED_DT);
+            if sim.carrier.is_some() {
+                break;
+            }
+        }
+        let carrier = sim.carrier.expect("nobody took the handoff");
+        sim.set_human_defender(Some(7));
+        // Past the end of a wrap-up, inside a dive's reach once it lunges.
+        let gap = DIVE_LUNGE + TACKLE_RADIUS * 1.6;
+        sim.players[carrier].pos = Vec2::new(20.0, 0.0);
+        sim.players[carrier].vel = Vec2::ZERO;
+        sim.players[7].pos = Vec2::new(20.0 + gap, 0.0);
+        sim.players[7].stun = 0.0;
+        sim.players[7].tackle_cooldown = 0.0;
+        sim.players[7].dive_t = 0.0;
+        sim.set_def_control(Some(DefControl { tackle: true, ..Default::default() }));
+        sim.step(FIXED_DT);
+        assert!(
+            sim.wrap.is_none() && sim.players[7].stun == 0.0,
+            "a wrap-up reached {gap} yards"
+        );
+        let mut reached = false;
+        for _ in 0..40 {
+            if sim.result.is_some() {
+                break;
+            }
+            sim.players[carrier].pos = Vec2::new(20.0, 0.0);
+            sim.players[carrier].vel = Vec2::ZERO;
+            sim.players[7].pos = Vec2::new(20.0 + gap, 0.0);
+            sim.players[7].stun = 0.0;
+            sim.players[7].tackle_cooldown = 0.0;
+            sim.players[7].dive_t = 0.0;
+            sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+            sim.step(FIXED_DT);
+            if sim.wrap.is_some() || sim.players[7].stun > 0.0 || sim.result.is_some() {
+                reached = true;
+                break;
+            }
+        }
+        assert!(reached, "a dive from {gap} yards got nowhere");
     }
 
     #[test]

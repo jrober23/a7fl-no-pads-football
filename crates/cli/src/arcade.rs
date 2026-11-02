@@ -716,6 +716,8 @@ impl Arcade {
         let mut aim_y = 0.0f32;
         // The throw button has been up since this throw-off started.
         let mut armed = false;
+        // Which of your men the switch button has walked to.
+        let mut cover_pick = 0usize;
         // When the ball died, so the picture can hold on the tackle before the card.
         let mut dead_at: Option<Instant> = None;
 
@@ -736,8 +738,11 @@ impl Arcade {
                 acc = 0.0;
                 continue;
             }
-            // X, not the trigger: on a throw-off the trigger is the throw itself.
-            if input.pressed.x {
+            // The trigger cycles the lens while you are covering or returning.
+            // While you are throwing it is the throw itself, so the camera lives
+            // in the pause menu instead -- X is the dive now.
+            let throwing = sim.phase == ThrowPhase::Presnap && sim.human_thrower;
+            if input.pressed.throw && !throwing {
                 self.cam = (self.cam + 1) % CAMS.len();
             }
             // The same screen mapping as a scrimmage snap, pointed the way this
@@ -780,9 +785,21 @@ impl Arcade {
             }
 
             // Whoever is yours: the returner while you are receiving, otherwise
-            // the man on your team nearest the ball once it is in the air.
-            let mine = human_man(sim, my_team);
+            // one of the three men in coverage, and B walks the pad round them.
+            if input.pressed.b && sim.setup.throwing_team == my_team {
+                cover_pick = cover_pick.wrapping_add(1);
+            }
+            let mine = human_man(sim, my_team, cover_pick);
             sim.set_human(mine, stick);
+            // On the cover: A wraps him up, X dives at him from further out.
+            if sim.phase == ThrowPhase::Return && sim.setup.throwing_team == my_team {
+                if input.pressed.a {
+                    sim.call_tackle(false);
+                }
+                if input.pressed.x {
+                    sim.call_tackle(true);
+                }
+            }
 
             // Fair catch: the receiving player calls it while the ball is in the
             // air and takes it where it comes down, instead of running it out.
@@ -830,7 +847,7 @@ impl Arcade {
                 let lines = vec![
                     header.to_string(),
                     throw_off_line(self, sim, my_team, aim_y, charging),
-                    throw_off_controls(self, sim, my_team),
+                    throw_off_controls(self, sim, my_team, cover_pick),
                 ];
                 if !self.view.show(&mut frame, &lines) {
                     self.quit = true;
@@ -1620,6 +1637,39 @@ fn drive(
     }
 }
 
+/// Where the audible's cursor goes for one push of the stick.
+///
+/// The plays are a grid and the formations are the column beside it, exactly as on
+/// the sideline sheet: left off the first card walks back into the formations,
+/// right walks into the plays, and up and down stay in whichever column the cursor
+/// is in. It used to be that left and right changed formation, which left the
+/// second and third card of every row unreachable -- the only plays an audible
+/// could ever call were the first of each row.
+fn audible_nav(
+    in_plays: bool,
+    pick: usize,
+    len: usize,
+    form: usize,
+    forms: usize,
+    dir: Dir,
+) -> (bool, usize, usize) {
+    let forms = forms.max(1);
+    if in_plays && len > 0 {
+        if dir == Dir::Left && pick.min(len - 1) % callsheet::COLS == 0 {
+            return (false, pick.min(len - 1), form);
+        }
+        return (true, callsheet::step_in(len, pick, dir), form);
+    }
+    match dir {
+        Dir::Up => (false, 0, (form + forms - 1) % forms),
+        Dir::Down => (false, 0, (form + 1) % forms),
+        // Into the plays on the first card: the formations column is where the
+        // set is chosen, and the highlight is not drawn there.
+        Dir::Right if len > 0 => (true, 0, form),
+        _ => (false, pick.min(len.max(1) - 1), form),
+    }
+}
+
 /// The audible is the same layered sheet as the sideline call sheet, opened at the
 /// line with the snap already waiting on the button.
 enum Audible {
@@ -1665,15 +1715,20 @@ fn audible_sheet(
         let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
         callsheet::draw_layered(&mut frame, book, &forms, form, pick, in_plays, flip);
         let play = &book[list[pick]];
+        let help = if in_plays {
+            "  [STICK] PLAY   [LEFT] FORMATIONS   [A] CALL IT   [Y] FLIP   [B] BACK"
+        } else {
+            "  [STICK] FORMATION   [RIGHT] INTO THE PLAYS   [A] CALL IT   [Y] FLIP   [B] BACK"
+        };
         let lines = vec![
             format!(
-                "  AUDIBLE - {} - {}   {}",
+                "  AUDIBLE - {} - {}   {}   {} PLAYS IN THIS SET",
                 play.name,
                 play.formation.label(),
-                if flip { "FLIPPED" } else { "AS DRAWN" }
+                if flip { "FLIPPED" } else { "AS DRAWN" },
+                list.len()
             ),
-            "  [STICK] PLAY   [LEFT/RIGHT] FORMATION   [A] CALL IT   [Y] FLIP   [B] BACK"
-                .to_string(),
+            help.to_string(),
         ];
         if !view.show(&mut frame, &lines) {
             return Audible::Quit;
@@ -1686,22 +1741,11 @@ fn audible_sheet(
             flip = !flip;
         }
         if let Some(dir) = nav.step(input.stick, dt) {
-            match dir {
-                Dir::Left | Dir::Right => {
-                    let n = forms.len();
-                    form = if dir == Dir::Left {
-                        (form + n - 1) % n
-                    } else {
-                        (form + 1) % n
-                    };
-                    pick = 0;
-                    in_plays = true;
-                }
-                Dir::Up | Dir::Down => {
-                    in_plays = true;
-                    pick = callsheet::step_in(list.len(), pick, dir);
-                }
-            }
+            let (inside, next_pick, next_form) =
+                audible_nav(in_plays, pick, list.len(), form, forms.len(), dir);
+            in_plays = inside;
+            pick = next_pick;
+            form = next_form;
         }
         if input.pressed.a {
             let mut called = book[list[pick]].clone();
@@ -1752,7 +1796,7 @@ fn drive_defense(
         let view_mode = CAMS[*cam % CAMS.len()];
         let stick = stick_to_world(input.stick, flip_y, view_mode, sim.setup.direction);
 
-        // B walks the pad round the seven. A is the tackle, X the swat, Y the pick.
+        // B walks the pad round the seven. A wraps up, X dives at him, Y picks.
         if input.pressed.b && now.duration_since(switched) >= Duration::from_millis(120) {
             sim.cycle_defender();
             switched = now;
@@ -1760,7 +1804,8 @@ fn drive_defense(
         sim.set_def_control(Some(DefControl {
             move_dir: stick,
             tackle: input.pressed.a,
-            swat: input.pressed.x,
+            dive: input.pressed.x,
+            swat: false,
             intercept: input.pressed.y,
         }));
 
@@ -1798,7 +1843,7 @@ fn drive_defense(
                     broadcast.teams[sim.setup.offense_team].abbr
                 ),
                 format!("  YOU: {role} {who}   [B] SWITCH DEFENDER"),
-                "  [A] TACKLE   [X] SWAT   [Y] INTERCEPT   [RT] CAMERA   [START] PAUSE"
+                "  [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RT] CAMERA   [START] PAUSE"
                     .to_string(),
             ];
             if let Some(flag) = &sim.flag {
@@ -1845,28 +1890,34 @@ fn role_tag(role: DefRole) -> &'static str {
 /// Which man on your team you are driving during a throw-off: the returner while
 /// you are receiving, and otherwise the man nearest the ball once it is in the
 /// air — which is how you get downfield to make the tackle.
-fn human_man(sim: &ThrowOffSim, my_team: usize) -> Option<usize> {
-    let returner = sim.players.iter().position(|p| p.role == ThrowRole::Returner)?;
-    if sim.players[returner].team == my_team {
-        return Some(returner);
+fn human_men(sim: &ThrowOffSim, my_team: usize) -> Vec<usize> {
+    let returner = sim.players.iter().position(|p| p.role == ThrowRole::Returner);
+    if let Some(r) = returner {
+        if sim.players[r].team == my_team {
+            return vec![r];
+        }
     }
     if sim.phase == ThrowPhase::Presnap {
+        return Vec::new();
+    }
+    // Only the three gunners are yours: the thrower has thrown it and is not a
+    // coverage man, so putting the pad on him handed the player a man who cannot
+    // make a tackle.
+    (0..sim.players.len())
+        .filter(|&i| {
+            let p = &sim.players[i];
+            p.team == my_team && !p.down && p.role == ThrowRole::Gunner
+        })
+        .collect()
+}
+
+/// The man the pad is on, walking round [`human_men`] with the switch button.
+fn human_man(sim: &ThrowOffSim, my_team: usize, pick: usize) -> Option<usize> {
+    let men = human_men(sim, my_team);
+    if men.is_empty() {
         return None;
     }
-    sim.players
-        .iter()
-        .enumerate()
-        // Only the three gunners are yours to steer: the thrower has thrown it and
-        // is not a coverage man, so putting the pad on him handed the player a man
-        // who cannot make a tackle.
-        .filter(|(_, p)| p.team == my_team && !p.down && p.role == ThrowRole::Gunner)
-        .min_by(|a, b| {
-            a.1.pos
-                .dist(sim.ball)
-                .partial_cmp(&b.1.pos.dist(sim.ball))
-                .unwrap()
-        })
-        .map(|(i, _)| i)
+    Some(men[pick % men.len()])
 }
 
 fn throw_off_line(
@@ -1908,13 +1959,28 @@ fn throw_off_line(
     }
 }
 
-fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> String {
-    let job = if sim.setup.throwing_team == my_team {
-        "COVER IT"
-    } else {
-        "RETURN IT"
-    };
-    let fair = if sim.setup.receiving_team == my_team && sim.phase == ThrowPhase::Flight {
+fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: usize) -> String {
+    let cam = cam_name(CAMS[arcade.cam % CAMS.len()]);
+    if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
+        return format!(
+            "  THROW   AIM WITH STICK   HOLD [A] TO LOAD   [START] PAUSE   CAMERA LIVES IN THERE"
+        );
+    }
+    if sim.setup.throwing_team == my_team {
+        let men = human_men(sim, my_team);
+        let who = men
+            .get(pick % men.len().max(1))
+            .map(|&i| {
+                arcade.game.teams[sim.players[i].team].roster[sim.players[i].roster]
+                    .last_name()
+                    .to_string()
+            })
+            .unwrap_or_else(|| "NOBODY".to_string());
+        return format!(
+            "  COVER   YOU: {who:<11} MOVE   [A] TACKLE   [X] DIVE   [B] SWITCH   [RT] {cam}   [START] PAUSE"
+        );
+    }
+    let fair = if sim.phase == ThrowPhase::Flight {
         if sim.fair_catch {
             "   FAIR CATCH CALLED"
         } else {
@@ -1924,10 +1990,8 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize) -> Str
         ""
     };
     format!(
-        "{:<9} {} BALL   MOVE WITH STICK   [X] {}{fair}   [START] PAUSE",
-        job,
+        "  RETURN IT   {} BALL   MOVE WITH STICK{fair}   [RT] {cam}   [START] PAUSE",
         arcade.game.teams[sim.setup.receiving_team].abbr,
-        cam_name(CAMS[arcade.cam % CAMS.len()])
     )
 }
 
@@ -1937,6 +2001,33 @@ mod tests {
 
     fn close(a: Vec2, b: Vec2) -> bool {
         (a - b).length() < 1e-5
+    }
+
+    #[test]
+    fn the_audible_can_reach_every_card_in_a_row() {
+        // The bug: left and right changed formation, so only the first card of
+        // each row could ever be called.
+        let len = 6;
+        let (mut in_plays, mut pick, mut form) = (true, 0usize, 0usize);
+        for want in [1usize, 2] {
+            let (inside, p, f) = audible_nav(in_plays, pick, len, form, 3, Dir::Right);
+            in_plays = inside;
+            pick = p;
+            form = f;
+            assert!(inside && form == 0, "right off a card went to card {p} of set {f}");
+            assert_eq!(pick, want, "right did not walk along the row");
+        }
+        // Down is the next row of the same column, not the next formation.
+        let (inside, p, f) = audible_nav(in_plays, pick, len, form, 3, Dir::Down);
+        assert!(inside && p == 5 && f == 0, "down went to card {p} of set {f}");
+        // Left off the first column is the way out to the formations.
+        let (inside, ..) = audible_nav(true, 3, len, 1, 3, Dir::Left);
+        assert!(!inside, "left off the row did not reach the formations");
+        // The formations still walk, and right comes back in on the first card.
+        let (inside, _, f) = audible_nav(false, 0, len, 1, 3, Dir::Down);
+        assert!(!inside && f == 2, "down in the formations went to {f}");
+        let (inside, p, _) = audible_nav(false, 4, len, 1, 3, Dir::Right);
+        assert!(inside && p == 0, "right into the plays landed on {p}");
     }
 
     #[test]

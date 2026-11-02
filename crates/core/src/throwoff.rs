@@ -217,6 +217,8 @@ pub struct ThrowOffSim<'a> {
     pub human_dir: Vec2,
     /// A human is throwing this one, so the AI must not launch it for him.
     pub human_thrower: bool,
+    /// A tackle the man on the pad asked for, and whether he dived for it.
+    human_hit: Option<bool>,
     /// The returner has called a fair catch: he takes the ball where it comes
     /// down and does not run it out.
     pub fair_catch: bool,
@@ -316,6 +318,7 @@ impl<'a> ThrowOffSim<'a> {
             catch_t: None,
             violation: None,
             loose_t: 0.0,
+            human_hit: None,
             tackle: None,
         }
     }
@@ -332,6 +335,14 @@ impl<'a> ThrowOffSim<'a> {
         self.events
             .push(format!("{} signals for a fair catch.", self.name(returner)));
         true
+    }
+
+    /// Ask the man on the pad for a tackle: a wrap-up, or a dive from further
+    /// out. Only during the return, and only for a man in coverage.
+    pub fn call_tackle(&mut self, dive: bool) {
+        if self.phase == ThrowPhase::Return {
+            self.human_hit = Some(dive);
+        }
     }
 
     /// Hand a man to the human to steer, or take him back.
@@ -832,6 +843,56 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
+        // The man on the pad gets his own shot, and he has to ask for it: A wraps
+        // him up from arm's length, X dives in from further out.
+        if let Some(dive) = self.human_hit.take() {
+            if let Some(h) = self.human {
+                let (team, role, down, dist) = {
+                    let p = &self.players[h];
+                    (p.team, p.role, p.down, p.pos.dist(pos))
+                };
+                let reach = if dive { 2.2 } else { 1.15 };
+                if team == self.setup.throwing_team
+                    && role == ThrowRole::Gunner
+                    && !down
+                    && dist <= reach
+                {
+                    let defender = self.attrs(h).tackle_factor();
+                    let returner_skill = self.attrs(returner).break_tackle_factor();
+                    let mut chance = clamp(0.36 + (defender - returner_skill) * 0.5, 0.1, 0.9);
+                    if dive {
+                        // Getting there is easy; holding on is not.
+                        chance = (chance - 0.12).max(0.08);
+                    }
+                    if self.rng.chance(chance) {
+                        let in_own_endzone = if dir > 0 {
+                            pos.x <= 0.0
+                        } else {
+                            pos.x >= FIELD_LENGTH
+                        };
+                        let yards = (pos.x - self.setup.spot()).abs();
+                        let away = pos - self.players[h].pos;
+                        if away.length() > 0.05 {
+                            self.players[returner].heading = away.y.atan2(away.x);
+                        }
+                        self.tackle = Some(TackleBeat {
+                            returner,
+                            gunner: h,
+                            t: 0.0,
+                            spot: pos.x,
+                            safety: in_own_endzone,
+                            yards,
+                        });
+                        return;
+                    }
+                    // He got there and did not hold on: he is on the turf.
+                    self.players[h].down = true;
+                    self.events
+                        .push(format!("{} dives at him and misses.", self.name(h)));
+                }
+            }
+        }
+
         // Tackles.
         for g in 1..4 {
             if self.players[g].down {
@@ -1233,6 +1294,46 @@ mod tests {
         sim.launch_with(0.8, -9.0);
         let flight = sim.flight.expect("the throw should be in the air");
         assert!((flight.to.y + 9.0).abs() < 1e-3, "landed at y={}", flight.to.y);
+    }
+
+    #[test]
+    fn a_diving_gunner_reaches_a_return_a_wrap_up_cannot() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        sim.launch_with(0.7, 0.0);
+        let mut guard = 0;
+        while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 900 {
+            if let Some(spot) = sim.landing_spot() {
+                sim.players[4].pos = spot;
+            }
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(
+            sim.phase,
+            ThrowPhase::Return,
+            "nobody caught it: {:?}",
+            sim.result.as_ref().map(|r| &r.outcome)
+        );
+        sim.set_human(Some(1), Vec2::ZERO);
+        // Eighteen feet is past arm's length and inside a dive: the reach is 1.15
+        // for a wrap-up and 2.2 for the dive.
+        sim.players[1].pos = sim.players[4].pos + Vec2::new(1.8, 0.0);
+        sim.call_tackle(false);
+        sim.step(1.0 / 60.0);
+        assert!(
+            !sim.tackle_in_progress() && !sim.players[1].down,
+            "a wrap-up reached from 1.8 yards"
+        );
+        sim.players[1].down = false;
+        sim.players[1].pos = sim.players[4].pos + Vec2::new(1.8, 0.0);
+        sim.call_tackle(true);
+        sim.step(1.0 / 60.0);
+        assert!(
+            sim.tackle_in_progress() || sim.players[1].down,
+            "the dive never got there"
+        );
     }
 
     /// A return that ends in a tackle is not called the instant the hands close:
