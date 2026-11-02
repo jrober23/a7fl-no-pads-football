@@ -3008,8 +3008,9 @@ impl<'a> PlaySim<'a> {
     ///
     /// The formation is rebuilt, but the men are not placed on their new spots:
     /// they keep the ground they were standing on and walk across to the flipped
-    /// alignment, which is what a flip looks like from the sideline. The two
-    /// guards do not move at all, because a flip does not change their side.
+    /// alignment, which is what a flip looks like from the sideline. The guards do
+    /// not move because a flip does not change their side, and neither do the two
+    /// wide men: they take each other's job from the sideline they are already on.
     pub fn flip_play(&mut self) {
         if self.phase != Phase::PreSnap {
             return;
@@ -3681,6 +3682,7 @@ mod tests {
         let s = setup(35.0, 1, 10.0, 5);
         let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
         let before: Vec<Vec2> = (0..7).map(|i| sim.players[i].pos).collect();
+        let routes_before: Vec<Vec<Vec2>> = (0..7).map(|i| sim.players[i].route.clone()).collect();
         sim.flip_play();
         assert!(sim.play.flip, "the flip was not kept");
         // Nobody is placed on his new spot: everybody is still standing where he
@@ -3707,7 +3709,7 @@ mod tests {
         for i in 0..7 {
             let role = OffRole::ALL[sim.players[i].role_index];
             let now = sim.players[i].pos;
-            if role.is_line() {
+            if role.keeps_side() {
                 assert!(
                     (now - before[i]).length() < 0.05,
                     "{role:?} moved on a flip: {now:?} from {:?}",
@@ -3722,12 +3724,31 @@ mod tests {
                 before[i]
             );
         }
-        // The routes are mirrored too, not just the alignments.
-        assert!(
-            sim.players[5].route.iter().all(|p| p.y < s.ball_y),
-            "the wide left route did not mirror: {:?}",
-            sim.players[5].route
-        );
+        // The routes are mirrored, and the outside men swapped: what the wide
+        // left runs now is the mirror of the job the wide right had, taken from
+        // his own feet, and the wide right has the other one. Neither of them
+        // moved a step to do it.
+        let find = |role: OffRole| {
+            (0..7)
+                .find(|&i| OffRole::ALL[sim.players[i].role_index] == role)
+                .expect("a wide man is missing")
+        };
+        let shape = |route: &[Vec2]| -> Vec<Vec2> {
+            if route.is_empty() {
+                return Vec::new();
+            }
+            route.iter().map(|p| *p - route[0]).collect()
+        };
+        let (l, r) = (find(OffRole::WideL), find(OffRole::WideR));
+        let left_now = shape(&sim.players[l].route);
+        let right_was = shape(&routes_before[r]);
+        assert_eq!(left_now.len(), right_was.len(), "the wide jobs did not swap");
+        for (now, was) in left_now.iter().zip(right_was.iter()) {
+            assert!(
+                (now.x - was.x).abs() < 1e-3 && (now.y + was.y).abs() < 1e-3,
+                "the wide left did not take the other job: {now:?} from {was:?}"
+            );
+        }
     }
 
     #[test]

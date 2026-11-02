@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.7-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.8-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -143,11 +143,12 @@ The first choice is the formation, which is what turns twenty-four designs into
 something you can read rather than a wall of cards. Up and down move between
 formations, A (or right) goes into the plays of the one you are on, the stick moves
 between those plays, and A calls the one you are on. B goes back out to the
-formations. Y flips the call to the other side of the formation, and the cards show
-it flipped, routes and all. Calling it that way does not put anybody down in a new
-place: the men who have to change sides run across the formation to their new spots,
-and the two men on the line stay where they were, because a flip moves the skill
-players and leaves the guards alone.
+formations. Y flips the call to the other side of the design, and the cards show it
+flipped, routes and all. Calling it that way does not put anybody down in a new
+place: the two outside receivers keep their sidelines and trade jobs, so the deep
+route that belonged to one man is run by the man across from him. The insides -- the
+tight end and the back -- walk across to their mirrored spots, and the two men on
+the line do not move at all.
 
 The sheet always opens in the formation column, so the first push of the stick is a
 formational choice. It used to open wherever the previous call had left the cursor,
@@ -319,9 +320,11 @@ standing a yard into the backfield is not a foul, and neither is being across wh
 the ball goes. Once the ball is live a defender goes wherever he likes, because the
 man with the ball is not going to wait.
 
-A flip is a jog now, not a slide. Y turns the men who have to change sides, they
-run to their mirrored spots at a pace a person runs, and they square their
-shoulders to the line when they get there. The men on the ball do not move.
+A flip is a jog now, not a slide. Y turns the men inside who have to change sides,
+they run to their mirrored spots at a pace a person runs, and they square their
+shoulders to the line when they get there. Nobody outside moves a step: the two wide
+men keep their sidelines and take each other's assignment, and the men on the ball
+do not move at all.
 
 A run has no power meter: the meter weighs a throw, and a running play has no throw
 in it. The face buttons are the carrier's moves from the snap, with nothing to wind

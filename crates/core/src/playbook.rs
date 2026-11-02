@@ -39,6 +39,23 @@ impl OffRole {
         matches!(self, OffRole::Lg | OffRole::Rg)
     }
 
+    /// True when a flip leaves him standing where he is. The guards are on the
+    /// side of the ball they are on, and the two wide men already have a
+    /// sideline each: sending them across the field was a man running eighty
+    /// yards to do the job the man opposite him could do from where he stood.
+    pub fn keeps_side(self) -> bool {
+        matches!(self, OffRole::Lg | OffRole::Rg | OffRole::WideL | OffRole::WideR)
+    }
+
+    /// The man on the other side of the ball, for the jobs that change hands.
+    pub fn opposite_side(self) -> Option<OffRole> {
+        match self {
+            OffRole::WideL => Some(OffRole::WideR),
+            OffRole::WideR => Some(OffRole::WideL),
+            _ => None,
+        }
+    }
+
     pub fn index(self) -> usize {
         match self {
             OffRole::Qb => 0,
@@ -276,7 +293,7 @@ pub struct Play {
 impl Play {
     pub fn alignment(&self, role: OffRole) -> Vec2 {
         let a = self.formation.alignment(role);
-        if self.flip && !role.is_line() {
+        if self.flip && !role.keeps_side() {
             Vec2::new(a.x, -a.y)
         } else {
             a
@@ -285,9 +302,10 @@ impl Play {
 
     /// The same design run to the other side.
     ///
-    /// Mirroring the alignment is what puts the two wide receivers on the other
-    /// side of the ball; mirroring the waypoints is what keeps a corner route a
-    /// corner route instead of quietly turning it into a post. Everything that
+    /// Mirroring the waypoints is what keeps a corner route a corner route
+    /// instead of quietly turning it into a post, and the two wide receivers
+    /// take each other's mirrored job rather than changing sides: the design
+    /// moves, the men do not. Everything that
     /// reads a play -- the diagrams, the routes, the blocking aims -- reads the
     /// flipped copy, so a flip can never advertise one thing and run another.
     pub fn flipped(&self) -> Play {
@@ -302,9 +320,14 @@ impl Play {
             // it would be moving a guard for no reason.
             .map(|(role, a)| {
                 if role.is_line() {
-                    (*role, a.clone())
-                } else {
-                    (*role, mirror_assign(a))
+                    return (*role, a.clone());
+                }
+                // The two wide men do not run across the formation to reach the
+                // other side of it: they keep the ground they are standing on
+                // and take each other's job, mirrored.
+                match role.opposite_side().and_then(|o| self.assignment(o)) {
+                    Some(other) => (*role, mirror_assign(other)),
+                    None => (*role, mirror_assign(a)),
                 }
             })
             .collect();
@@ -1248,7 +1271,7 @@ mod tests {
     }
 
     #[test]
-    fn a_flipped_play_mirrors_every_alignment_and_flips_back() {
+    fn a_flipped_play_keeps_the_outside_men_where_they_are() {
         for p in playbook() {
             let f = p.flipped();
             assert_eq!(f.flip, !p.flip, "{} did not flip", p.name);
@@ -1256,12 +1279,36 @@ mod tests {
                 let a = p.alignment(role);
                 let b = f.alignment(role);
                 assert!((a.x - b.x).abs() < 1e-6, "{} {role:?} moved upfield", p.name);
-                if role.is_line() {
-                    // The men on the line stay on the side they lined up on.
+                if role.keeps_side() {
+                    // The men on the line and the men on the sidelines stay on
+                    // the side they lined up on. The insides are the ones who
+                    // change sides.
                     assert!((a.y - b.y).abs() < 1e-6, "{} {role:?} moved on a flip", p.name);
                 } else {
                     assert!((a.y + b.y).abs() < 1e-6, "{} {role:?} did not mirror", p.name);
                 }
+            }
+            // The outside men do not change sides: they take each other's job,
+            // mirrored, from where they are already standing.
+            let left_was = waypoints(p.assignment(OffRole::WideL).expect("no wide left job"));
+            let right_was = waypoints(p.assignment(OffRole::WideR).expect("no wide right job"));
+            let left_now = waypoints(f.assignment(OffRole::WideL).expect("wide left lost his job"));
+            let right_now = waypoints(f.assignment(OffRole::WideR).expect("wide right lost his job"));
+            assert_eq!(left_now.len(), right_was.len(), "{}: the jobs did not swap", p.name);
+            assert_eq!(right_now.len(), left_was.len(), "{}: the jobs did not swap", p.name);
+            for (now, was) in left_now.iter().zip(right_was.iter()) {
+                assert!(
+                    (now.x - was.x).abs() < 1e-4 && (now.y + was.y).abs() < 1e-4,
+                    "{}: the wide left did not take the other job: {now:?} from {was:?}",
+                    p.name
+                );
+            }
+            for (now, was) in right_now.iter().zip(left_was.iter()) {
+                assert!(
+                    (now.x - was.x).abs() < 1e-4 && (now.y + was.y).abs() < 1e-4,
+                    "{}: the wide right did not take the other job: {now:?} from {was:?}",
+                    p.name
+                );
             }
             // Flipping twice is the play that was drawn, not a mirrored copy of a
             // mirrored copy that has quietly drifted.
@@ -1271,7 +1318,28 @@ mod tests {
                 let a = back.alignment(role);
                 let b = p.alignment(role);
                 assert!((a.y - b.y).abs() < 1e-4, "{} {role:?} did not come back", p.name);
+                let got = waypoints(back.assignment(role).expect("no job"));
+                let want = waypoints(p.assignment(role).expect("no job"));
+                assert_eq!(got.len(), want.len(), "{} {role:?} came back different", p.name);
+                for (g, w) in got.iter().zip(want.iter()) {
+                    assert!(
+                        (g.x - w.x).abs() < 1e-4 && (g.y - w.y).abs() < 1e-4,
+                        "{} {role:?} came back different",
+                        p.name
+                    );
+                }
             }
+        }
+    }
+
+    /// The waypoints an assignment runs, for comparing a job with its mirror.
+    fn waypoints(a: &Assign) -> Vec<Vec2> {
+        match a {
+            Assign::Route { points, .. }
+            | Assign::Fake { points, .. }
+            | Assign::Carry { points }
+            | Assign::QbCarry { points } => points.clone(),
+            _ => Vec::new(),
         }
     }
 
