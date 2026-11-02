@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.3-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.4-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -633,11 +633,13 @@ are given over to tall windows, so the building reads as glass with a night behi
 it rather than as a sealed box.
 
 The practice field is the league's ground in the suburbs. A street runs behind each
-sideline and behind each end, with a row of houses on the far side of it, a second
-row behind that, streetlights on the kerb, back-yard pines over the roofs, and the
-town itself low on the sky beyond — so the shot down the field ends in lit windows
-and rooflines rather than in a black band. None of it is inside the boards: the
-paint still belongs to the players.
+sideline and behind each end — asphalt, a kerb down each edge and a dashed centre
+line — with two rows of houses on the far side of it, each one fronted by a
+driveway, streetlights on the kerb, back-yard pines over the roofs, and grass
+running out past the houses to a blue horizon, with the town itself low on the sky
+beyond. The shot down the field ends in lit windows, rooflines and ground rather
+than in a black band. None of it is inside the boards: the paint still belongs to
+the players.
 
 The sixteen clubs each have their own park, and each one is its city: Boston's
 harbour and brick rowhouses, Chicago's stacks and steel, Miami's palms and pastel

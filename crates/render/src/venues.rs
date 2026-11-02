@@ -123,7 +123,7 @@ impl Venue {
     /// distant scenery fades into the weather of its own ground.
     pub fn sky(&self) -> [Rgb; 3] {
         match self.kind() {
-            Kind::Practice => [Rgb::hex(0x0A1428), Rgb::hex(0x243044), Rgb::hex(0xA08D74)],
+            Kind::Practice => [Rgb::hex(0x0A1A33), Rgb::hex(0x2A4C7C), Rgb::hex(0x8FB4D6)],
             Kind::ClosedPractice => [Rgb::hex(0x0B0F15), Rgb::hex(0x1A222D), Rgb::hex(0x3C4654)],
             Kind::Home(k) => cities()
                 .get(k)
@@ -143,6 +143,11 @@ impl Venue {
         let mut light = Lighting::default();
         light.fog = sky[2];
         match self.kind() {
+            // The suburb is close enough to see: the houses keep their colour and
+            // only the town on the horizon fades into the blue.
+            Kind::Practice => {
+                light.fog_density = 0.004;
+            }
             Kind::Underwater => {
                 light.ambient = 0.62;
                 light.fog_density = 0.013;
@@ -533,6 +538,51 @@ fn streetlight(mesh: &mut Mesh, at: Vec3, arm: Vec3) {
     mesh.box_shaded(head, Vec3::new(0.55, 0.32, 0.16), 0.0, Rgb::hex(0xF6DEA2), 1.0);
 }
 
+/// A straight street: asphalt, a kerb down each edge, and a dashed centre line
+/// down the middle. `along_x` runs it along the field, otherwise across it.
+fn road(mesh: &mut Mesh, along_x: bool, fixed: f32, from: f32, to: f32, half_width: f32) {
+    let p = |s: f32, b: f32, z: f32| {
+        if along_x {
+            Vec3::new(s, fixed + b, z)
+        } else {
+            Vec3::new(fixed + b, s, z)
+        }
+    };
+    mesh.quad_shaded(
+        p(from, -half_width, 0.006),
+        p(to, -half_width, 0.006),
+        p(to, half_width, 0.006),
+        p(from, half_width, 0.006),
+        Rgb::hex(0x24282E),
+        1.0,
+    );
+    // Kerbs, so the street has an edge instead of fading into the lawn.
+    for edge in [-1.0f32, 1.0] {
+        mesh.quad_shaded(
+            p(from, edge * half_width, 0.007),
+            p(to, edge * half_width, 0.007),
+            p(to, edge * (half_width + 0.8), 0.007),
+            p(from, edge * (half_width + 0.8), 0.007),
+            Rgb::hex(0x5E6266),
+            1.0,
+        );
+    }
+    // A dashed centre line.
+    let mut s = from;
+    while s < to {
+        let e = (s + 3.0).min(to);
+        mesh.quad_shaded(
+            p(s, -0.18, 0.008),
+            p(e, -0.18, 0.008),
+            p(e, 0.18, 0.008),
+            p(s, 0.18, 0.008),
+            Rgb::hex(0xB4A98E),
+            1.0,
+        );
+        s += 7.0;
+    }
+}
+
 fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     // The ground sits in the suburbs: a street behind each sideline and behind
     // each end, houses beyond them with the lights on, streetlights on the kerb,
@@ -553,17 +603,30 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     ];
     let pick = |rand: &mut dyn FnMut() -> f32, n: usize| (rand() * n as f32) as usize % n;
 
+    // The ground the neighbourhood stands on: grass out past the houses in every
+    // direction, so the shot over the rooflines lands on a suburb and not on the
+    // sky. It is laid outside the boards, in four bands around the field.
+    let lawn = Rgb::hex(0x24331F);
+    for (x0, x1, y0, y1) in [
+        (-520.0, 600.0, 26.5, 520.0),
+        (-520.0, 600.0, -520.0, -26.5),
+        (-520.0, -14.5, -26.5, 26.5),
+        (114.5, 600.0, -26.5, 26.5),
+    ] {
+        mesh.quad_shaded(
+            Vec3::new(x0, y0, 0.002),
+            Vec3::new(x1, y0, 0.002),
+            Vec3::new(x1, y1, 0.002),
+            Vec3::new(x0, y1, 0.002),
+            lawn,
+            1.0,
+        );
+    }
+
     // The two side streets, and the houses along them. Everything on the +y side
     // sits outside the broadcast lens, which stands at y = 32.
     for side in [-1.0f32, 1.0] {
-        mesh.quad_shaded(
-            Vec3::new(-56.0, side * 38.0, 0.006),
-            Vec3::new(166.0, side * 38.0, 0.006),
-            Vec3::new(166.0, side * 45.0, 0.006),
-            Vec3::new(-56.0, side * 45.0, 0.006),
-            Rgb::hex(0x24282E),
-            1.0,
-        );
+        road(mesh, true, side * 41.5, -90.0, 200.0, 3.5);
         let mut x = -48.0;
         while x < 158.0 {
             let w = 4.0 + rand() * 2.4;
@@ -573,6 +636,16 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
             let wall = walls[pick(rand, walls.len())];
             let roof = roofs[pick(rand, roofs.len())];
             house(mesh, at, Vec3::new(w, d, h), Vec3::new(0.0, -side, 0.0), wall, roof, rand);
+            // A driveway from the kerb up to the front of the house.
+            let near = at.y - side * d;
+            mesh.quad_shaded(
+                Vec3::new(at.x - 1.3, near, 0.009),
+                Vec3::new(at.x + 1.3, near, 0.009),
+                Vec3::new(at.x + 1.3, side * 45.0, 0.009),
+                Vec3::new(at.x - 1.3, side * 45.0, 0.009),
+                Rgb::hex(0x6A6A66),
+                1.0,
+            );
             x += w * 2.0 + 4.0 + rand() * 4.0;
         }
         let mut lx = -44.0;
@@ -597,14 +670,7 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     // behind the first, and the rooftops of the neighbourhood past both. The
     // left row keeps the middle clear for the scoreboard.
     for (face, line) in [(1.0f32, -26.0f32), (-1.0, 126.0)] {
-        mesh.quad_shaded(
-            Vec3::new(line + face * 2.0, -54.0, 0.006),
-            Vec3::new(line + face * 9.0, -54.0, 0.006),
-            Vec3::new(line + face * 9.0, 62.0, 0.006),
-            Vec3::new(line + face * 2.0, 62.0, 0.006),
-            Rgb::hex(0x24282E),
-            1.0,
-        );
+        road(mesh, false, line + face * 5.5, -90.0, 90.0, 3.5);
         for row in 0..2 {
             let back = row as f32 * 16.0;
             let mut y = -46.0;
