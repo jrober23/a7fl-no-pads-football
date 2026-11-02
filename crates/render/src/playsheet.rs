@@ -17,22 +17,22 @@ pub const ROWS: usize = 2;
 /// Plays on screen at once: one set of the call sheet.
 pub const PER_PAGE: usize = COLS * ROWS;
 
-const BACKDROP: Rgb = Rgb::hex(0x0B0F16);
-const HEADER: Rgb = Rgb::hex(0x121A26);
-const CARD: Rgb = Rgb::hex(0x16202C);
-const CARD_ON: Rgb = Rgb::hex(0x22303F);
-const EDGE: Rgb = Rgb::hex(0x2C3540);
-const TURF: Rgb = Rgb::hex(0x1B3B24);
-const TURF_LINE: Rgb = Rgb::hex(0x2E5A36);
-const LOS: Rgb = Rgb::hex(0xBFC8D4);
-const INK: Rgb = Rgb::hex(0xF4F6F8);
-const CARRY: Rgb = Rgb::hex(0xF2C14E);
-const BLOCK: Rgb = Rgb::hex(0x74838F);
-const MUTED: Rgb = Rgb::hex(0xA9B3BF);
-const ACCENT: Rgb = Rgb::hex(0xFFC440);
+pub(crate) const BACKDROP: Rgb = Rgb::hex(0x0B0F16);
+pub(crate) const HEADER: Rgb = Rgb::hex(0x121A26);
+pub(crate) const CARD: Rgb = Rgb::hex(0x16202C);
+pub(crate) const CARD_ON: Rgb = Rgb::hex(0x22303F);
+pub(crate) const EDGE: Rgb = Rgb::hex(0x2C3540);
+pub(crate) const TURF: Rgb = Rgb::hex(0x1B3B24);
+pub(crate) const TURF_LINE: Rgb = Rgb::hex(0x2E5A36);
+pub(crate) const LOS: Rgb = Rgb::hex(0xBFC8D4);
+pub(crate) const INK: Rgb = Rgb::hex(0xF4F6F8);
+pub(crate) const CARRY: Rgb = Rgb::hex(0xF2C14E);
+pub(crate) const BLOCK: Rgb = Rgb::hex(0x74838F);
+pub(crate) const MUTED: Rgb = Rgb::hex(0xA9B3BF);
+pub(crate) const ACCENT: Rgb = Rgb::hex(0xFFC440);
 
-const MARGIN: i32 = 11;
-const GAP: i32 = 6;
+pub(crate) const MARGIN: i32 = 11;
+pub(crate) const GAP: i32 = 6;
 const TOP: i32 = 26;
 /// Left clear for the client's text bar, which is laid over the bottom of the
 /// frame after this draws.

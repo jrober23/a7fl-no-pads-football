@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.16.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.17.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -58,7 +58,7 @@ Controls:
 
 | Input | On the call sheet | At the line and during the play |
 | --- | --- | --- |
-| D-pad or left stick | Move between the formations; once you are in one, move between its plays | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
+| D-pad or left stick | Up and down move between the formations; right (or A) goes into the plays of one, and left comes back out | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
 | A / South | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, or spin once you are running |
 | B / East | Back out to the formations | Hold to wind up, release to throw to B; once you are running, hurdle |
 | X / West | — | Open the audible; once the ball is live, throw to X, or dive as a runner |
@@ -68,7 +68,7 @@ Controls:
 
 | Keyboard | On the call sheet | At the line and during the play |
 | --- | --- | --- |
-| Arrows or WASD | Move between formations, then between plays | Move the quarterback; aim the pass |
+| Arrows or WASD | Up and down move between formations; right goes into the plays, left comes back out | Move the quarterback; aim the pass |
 | Space or Enter | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, or spin |
 | X | Back out to the formations | Open the audible; then throw to B, or hurdle as a runner |
 | Z | — | Flip the call; then throw to X, or dive as a runner |
@@ -88,6 +88,16 @@ On defense the same pad does different work:
 | RT / ZR, Left Shift | Change camera |
 | Start, Esc | Pause |
 
+### Choosing your team
+
+The first screen is the kickoff card, and it asks which of the two teams is yours:
+push the stick to swap the highlight, A to kick off. The team you pick is the one you
+run for the rest of the game, both ways; the other is the computer's, and its calls
+are its own. Every screen that carries the score carries `YOU: NEW` (or whichever
+team you took), so there is never a snap where you are guessing which shirt you are
+in. Pick the throwing side and you throw the opening throw-off and then defend it;
+pick the receiving side and you run it back and take the field on offense.
+
 ### Calling plays
 
 The call sheet is a file, not a list. The formations run down the left — Pistol,
@@ -104,6 +114,11 @@ between those plays, and A calls the one you are on. B goes back out to the
 formations. Y flips the call to the other side of the formation, and the cards show
 it flipped, routes and all.
 
+The sheet always opens in the formation column, so the first push of the stick is a
+formational choice. It used to open wherever the previous call had left the cursor,
+which meant that after the first snap the stick was already inside the plays and the
+formations could not be reached again without finding B.
+
 ### At the line
 
 The ball does not snap itself. You are on the line for as long as you like, looking
@@ -114,10 +129,24 @@ side. A calls it and the team re-lines up. B leaves the play that was already ca
 
 ### Playing defense
 
-The game is not offense-only. When the other team has the ball you call the defense
-from its own sheet — coverage, front, and who blitzes — and then you take one of the
-seven yourself. B walks the pad around the defense, nearest the ball first, and the
-stick moves whoever you are on.
+The game is not offense-only. When the other team has the ball you call the defense,
+and its sheet is layered the way the offensive one is. The **fronts** run down the
+left — Wide 9, Tight 5, Over 3 — each with the technique numbers the two edges are
+playing and what the line is doing with the run (contain, squeeze or spill), and the
+cards to the right are the calls in that front. Every card is a diagram of the
+defense it calls: the seven aligned from the same front the snap will use, the
+rushers' arrows at the quarterback, man lines to the receivers they have, and the
+ground each zone defender owns. The lines under the picture spell it out — front,
+coverage, rush count, and a job for all seven, from `EDG 9 CONTAIN` to `SAF DEEP
+MIDDLE`.
+
+Up and down pick the front, A or right goes into its calls, left comes back out, and
+A takes the call. Then you take one of the seven yourself: B walks the pad around the
+defense, nearest the ball first, and the stick moves whoever you are on.
+
+A throw-off is three gunners against one returner, as the rules say. The thrower is
+not a coverage man: once the ball is away he leaves the picture, and the pad can only
+take one of the three chasing it.
 
 A is the tackle. Get your man within reach of the carrier and press it and he gets
 the first shot at the wrap, with a step more reach than the coordinator's defenders.
@@ -442,7 +471,7 @@ crates/core     a7fl_core   — no dependencies
   field.rs      canonical field geometry (100 yards + two 10-yard end zones, 37.5 wide)
   rules.rs      penalty catalog and enforcement
   team.rs       attributes, appearance, uniforms, the ten-team league
-  playbook.rs   22 offensive plays, 6 formations, 9 defensive calls
+  playbook.rs   22 offensive plays, 6 formations, 9 defensive calls in 3 fronts
   sim.rs        the 7-on-7 snap engine
   throwoff.rs   the throw-off engine
   stats.rs      box score, drives, per-player lines

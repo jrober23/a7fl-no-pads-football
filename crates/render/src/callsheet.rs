@@ -17,7 +17,7 @@ const SIDE: i32 = 132;
 const MARGIN: i32 = 11;
 const GAP: i32 = 6;
 /// Cards across in the play pane.
-const COLS: usize = 3;
+pub const COLS: usize = 3;
 
 /// Move a cursor inside one formation's plays, wrapping round the grid.
 pub fn step_in(len: usize, cursor: usize, dir: Dir) -> usize {

@@ -900,9 +900,63 @@ pub enum RunFit {
     Conservative,
 }
 
+/// The front a call lines up in: what the two edge players are doing with their
+/// hands down. It is the first thing a defense is named by, and the first thing a
+/// call sheet picks, so it is a real field on the call rather than a label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DefFront {
+    /// Both edges wide of the tackle box, rushing from outside in.
+    Wide,
+    /// Both edges head up on the guards, squeezing everything to the middle.
+    Tite,
+    /// One edge in the B gap, one wide: an unbalanced, spilling front.
+    Over,
+}
+
+impl DefFront {
+    pub const ALL: [DefFront; 3] = [DefFront::Wide, DefFront::Tite, DefFront::Over];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DefFront::Wide => "WIDE 9",
+            DefFront::Tite => "TITE 5",
+            DefFront::Over => "OVER 3",
+        }
+    }
+
+    /// The technique number a coach would give the edge on each side.
+    pub fn technique(self, role: DefRole) -> u8 {
+        match (self, role) {
+            (DefFront::Wide, _) => 9,
+            (DefFront::Tite, _) => 5,
+            (DefFront::Over, DefRole::EdgeL) => 3,
+            (DefFront::Over, _) => 9,
+        }
+    }
+
+    /// Both edge techniques, left first, as the sheet prints them.
+    pub fn techs(self) -> &'static str {
+        match self {
+            DefFront::Wide => "9 / 9",
+            DefFront::Tite => "5 / 5",
+            DefFront::Over => "3 / 9",
+        }
+    }
+
+    /// What the front is trying to do with the run, in one word.
+    pub fn line_call(self) -> &'static str {
+        match self {
+            DefFront::Wide => "CONTAIN",
+            DefFront::Tite => "SQUEEZE",
+            DefFront::Over => "SPILL",
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct DefCall {
     pub name: &'static str,
+    pub front: DefFront,
     pub coverage: Coverage,
     pub run_fit: RunFit,
     /// Defenders who rush the passer beyond the two edge players.
@@ -915,12 +969,66 @@ impl DefCall {
     pub fn rushers(&self) -> usize {
         2 + self.blitzers.len()
     }
+
+    /// What each of the seven is being asked to do, in the words on the card.
+    /// Derived from the same front, coverage and blitz list the snap is played
+    /// with, so the sheet cannot describe a defence the game does not run.
+    pub fn assignment(&self, role: DefRole) -> &'static str {
+        if self.blitzers.contains(&role) {
+            return "BLITZ";
+        }
+        match role {
+            DefRole::EdgeL | DefRole::EdgeR => match self.front {
+                DefFront::Wide => "9 CONTAIN",
+                DefFront::Tite => "5 SQUEEZE",
+                DefFront::Over => {
+                    if role == DefRole::EdgeL {
+                        "3 SPILL"
+                    } else {
+                        "9 CONTAIN"
+                    }
+                }
+            },
+            DefRole::Mike | DefRole::Will => match self.coverage {
+                Coverage::GoalLine => "FILL",
+                c if c.is_man() => "MAN",
+                _ => "HOOK",
+            },
+            DefRole::CbL | DefRole::CbR => {
+                if self.press {
+                    "PRESS"
+                } else if self.coverage.is_man() {
+                    "MAN"
+                } else {
+                    "ZONE"
+                }
+            }
+            DefRole::Safety => match self.coverage {
+                Coverage::Cover2 => "DEEP HALF",
+                Coverage::Cover3 => "DEEP MIDDLE",
+                Coverage::Cover4 => "DEEP QUARTER",
+                Coverage::GoalLine => "ALLEY",
+                _ => "FREE",
+            },
+        }
+    }
+
+    /// The read under the picture: front, coverage and how many are coming.
+    pub fn read(&self) -> String {
+        format!(
+            "{} - {} - {} RUSH",
+            self.front.label(),
+            self.coverage.label(),
+            self.rushers()
+        )
+    }
 }
 
 pub fn defensive_playbook() -> Vec<DefCall> {
     vec![
         DefCall {
             name: "COVER 1 MAN",
+            front: DefFront::Wide,
             coverage: Coverage::ManFree,
             run_fit: RunFit::Balanced,
             blitzers: vec![],
@@ -928,6 +1036,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "PRESS BAIL",
+            front: DefFront::Tite,
             coverage: Coverage::ManPress,
             run_fit: RunFit::Aggressive,
             blitzers: vec![],
@@ -935,6 +1044,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "COVER 2 ZONE",
+            front: DefFront::Wide,
             coverage: Coverage::Cover2,
             run_fit: RunFit::Balanced,
             blitzers: vec![],
@@ -942,6 +1052,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "COVER 3 ZONE",
+            front: DefFront::Tite,
             coverage: Coverage::Cover3,
             run_fit: RunFit::Conservative,
             blitzers: vec![],
@@ -949,6 +1060,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "COVER 4 ZONE",
+            front: DefFront::Wide,
             coverage: Coverage::Cover4,
             run_fit: RunFit::Conservative,
             blitzers: vec![],
@@ -956,6 +1068,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "MIKE BLITZ",
+            front: DefFront::Tite,
             coverage: Coverage::ManFree,
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike],
@@ -963,6 +1076,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "WILL BLITZ",
+            front: DefFront::Over,
             coverage: Coverage::ManFree,
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Will],
@@ -970,6 +1084,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "ALL OUT BLITZ",
+            front: DefFront::Over,
             coverage: Coverage::ManFree,
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike, DefRole::Will],
@@ -977,6 +1092,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
         },
         DefCall {
             name: "GOAL LINE BEAR",
+            front: DefFront::Over,
             coverage: Coverage::GoalLine,
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike],
@@ -987,21 +1103,36 @@ pub fn defensive_playbook() -> Vec<DefCall> {
 
 /// Defensive alignment relative to the line of scrimmage. `los` is the canonical
 /// spot and `direction` the offense's attack direction.
+///
+/// The front decides where the two edge players line up, which is the difference
+/// between a wide nine rushing from outside the tackle box and a tight five head
+/// up on the guard. It moves them on the field, so the card and the snap agree.
 pub fn defensive_alignment(
     role: DefRole,
-    coverage: Coverage,
+    call: &DefCall,
     los: f32,
     direction: i8,
     play_dir: i8,
 ) -> Vec2 {
     // Work in "offense forward" space then convert.
     let fwd = direction as f32;
+    let coverage = call.coverage;
     let to_field = |along: f32, lateral: f32| {
         Vec2::new(los + fwd * along, lateral + play_dir as f32 * 0.0)
     };
+    let (edge_l, edge_r) = match call.front {
+        // Measured against the base alignment the defense used before fronts
+        // existed (0.9 yards upfield, 1.7 either side): a wide nine is half a yard
+        // wider, a tight five is a quarter tighter, and the over front is the one
+        // deliberately unbalanced look. Bigger shifts looked better on the card and
+        // were measured to wipe out long touchdowns, so they are kept small.
+        DefFront::Wide => (to_field(0.8, -1.95), to_field(0.8, 1.95)),
+        DefFront::Tite => (to_field(0.9, -1.45), to_field(0.9, 1.45)),
+        DefFront::Over => (to_field(0.85, -1.35), to_field(0.8, 1.95)),
+    };
     match role {
-        DefRole::EdgeL => to_field(0.9, -1.7),
-        DefRole::EdgeR => to_field(0.9, 1.7),
+        DefRole::EdgeL => edge_l,
+        DefRole::EdgeR => edge_r,
         DefRole::Mike => to_field(4.5, -0.4),
         DefRole::Will => to_field(5.0, 2.4),
         DefRole::CbL => to_field(match coverage {
@@ -1029,19 +1160,39 @@ pub fn defensive_alignment(
 pub fn defender_positions(call: &DefCall, los: f32, direction: i8) -> Vec<(DefRole, Vec2)> {
     DefRole::ALL
         .iter()
-        .map(|&r| (r, defensive_alignment(r, call.coverage, los, direction, 0)))
+        .map(|&r| (r, defensive_alignment(r, call, los, direction, 0)))
+        .collect()
+}
+
+/// The fronts the book is built on, in the order a coach installs them.
+pub fn fronts_in(book: &[DefCall]) -> Vec<DefFront> {
+    DefFront::ALL
+        .iter()
+        .copied()
+        .filter(|f| book.iter().any(|d| d.front == *f))
+        .collect()
+}
+
+/// The calls in one front, in book order.
+pub fn def_calls_in(book: &[DefCall], front: DefFront) -> Vec<usize> {
+    book.iter()
+        .enumerate()
+        .filter(|(_, d)| d.front == front)
+        .map(|(i, _)| i)
         .collect()
 }
 
 /// Cheap description of an offensive personnel grouping for the play-call screen.
 pub fn personnel_label(formation: Formation) -> &'static str {
+    // Short enough to fit the formation column: the longer wording ran under the
+    // edge of the box and read as a rendering fault.
     match formation {
-        Formation::Pistol => "1 RB, 1 TE, 2 WR",
-        Formation::Bone => "2 RB, 1 TE, 1 WR",
-        Formation::Trips => "1 RB, 1 TE, 2 WR (trips)",
-        Formation::Doubles => "1 RB, 1 TE, 2 WR (doubles)",
-        Formation::Spread => "1 RB, 3 WR",
-        Formation::Empty => "4 WR",
+        Formation::Pistol => "1RB 1TE 2WR",
+        Formation::Bone => "2RB 1TE 1WR",
+        Formation::Trips => "TRIPS 1RB 2WR",
+        Formation::Doubles => "DBLS 1RB 2WR",
+        Formation::Spread => "1RB 3WR",
+        Formation::Empty => "4WR",
     }
 }
 
@@ -1140,6 +1291,57 @@ mod tests {
                 assert!(p.y.abs() < 18.75, "{f:?} {} off the field", role.label());
             }
         }
+    }
+
+    /// The sheet is only layered if every call sits in exactly one front, and a
+    /// card is only honest if every man on it has a job.
+    #[test]
+    fn every_front_has_calls_and_every_call_has_a_job_for_all_seven() {
+        let book = defensive_playbook();
+        let fronts = fronts_in(&book);
+        assert_eq!(fronts.len(), DefFront::ALL.len(), "one column per front");
+        let mut total = 0;
+        for f in fronts {
+            let calls = def_calls_in(&book, f);
+            assert!(calls.len() >= 3, "{f:?} only has {} calls", calls.len());
+            total += calls.len();
+            for i in calls {
+                for role in DefRole::ALL {
+                    assert!(
+                        !book[i].assignment(role).is_empty(),
+                        "{} has no job for {role:?}",
+                        book[i].name
+                    );
+                }
+            }
+        }
+        assert_eq!(total, book.len(), "a call belongs to one front and one front only");
+    }
+
+    #[test]
+    fn the_front_changes_where_the_edges_line_up() {
+        let los = 50.0;
+        let mut wide = defensive_playbook()[0].clone();
+        wide.front = DefFront::Wide;
+        let mut tite = wide.clone();
+        tite.front = DefFront::Tite;
+        let edge = |call: &DefCall, role| defensive_alignment(role, call, los, 1, 0);
+        assert!(
+            edge(&wide, DefRole::EdgeL).y.abs() > edge(&tite, DefRole::EdgeL).y.abs() + 0.3,
+            "a wide nine has to line up wider than a tight five: {:.2} vs {:.2}",
+            edge(&wide, DefRole::EdgeL).y,
+            edge(&tite, DefRole::EdgeL).y
+        );
+        // And the over front is deliberately unbalanced: one three, one nine.
+        let mut over = wide.clone();
+        over.front = DefFront::Over;
+        let (l, r) = (edge(&over, DefRole::EdgeL), edge(&over, DefRole::EdgeR));
+        assert!(
+            (l.y.abs() - r.y.abs()).abs() > 0.5,
+            "the over front has to be unbalanced: {:.1} vs {:.1}",
+            l.y,
+            r.y
+        );
     }
 
     #[test]

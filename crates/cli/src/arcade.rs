@@ -15,7 +15,8 @@ use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord}
 use a7fl_core::math::{Rng, Vec2, Vec3};
 use a7fl_core::moves::Kind;
 use a7fl_core::playbook::{
-    defensive_playbook, formations_in, playbook, plays_in, DefCall, Formation, Play,
+    def_calls_in, defensive_playbook, formations_in, fronts_in, playbook, plays_in, DefCall,
+    DefFront, DefRole, Formation, Play,
 };
 use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use a7fl_core::sim::{DefControl, Phase, PlaySim, QbControl};
@@ -23,6 +24,7 @@ use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase,
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
 use a7fl_render::callsheet;
+use a7fl_render::defsheet;
 use a7fl_render::playsheet::Dir;
 use a7fl_render::terminal;
 
@@ -331,6 +333,12 @@ impl Arcade {
             return None;
         }
         self.form = self.form.min(forms.len() - 1);
+        // Every visit starts in the formation column. It used to keep whichever
+        // column the last call ended in, so after the first snap the stick was
+        // already inside the plays and the formations could never be reached again
+        // without finding B.
+        self.in_plays = false;
+        self.flip = false;
         let mut nav = Nav::default();
         let mut last = Instant::now();
         self.view.reset();
@@ -377,7 +385,11 @@ impl Arcade {
                 self.in_plays = false;
             }
             if let Some(dir) = nav.step(input.stick, dt) {
-                if self.in_plays {
+                if self.in_plays && dir == Dir::Left && self.sheet_pick % callsheet::COLS == 0 {
+                    // Left off the first card is the way back to the formations, so
+                    // a player who wandered into the plays is not stuck there.
+                    self.in_plays = false;
+                } else if self.in_plays {
                     self.sheet_pick = callsheet::step_in(list.len(), self.sheet_pick, dir);
                 } else {
                     match dir {
@@ -552,52 +564,77 @@ impl Arcade {
             _ => return true,
         };
         let throwing = 1 - receiving;
-        // The opening throw-off is what tells us whose team this is: the player
-        // receives it, so that side is his for the rest of the game.
-        self.my_team = Some(receiving);
-        let lines = vec![
-            String::new(),
-            "  A7FL NO PADS FOOTBALL".to_string(),
-            String::new(),
-            format!(
-                "  {} AT {}",
-                self.game.teams[throwing].display_upper(),
-                self.game.teams[receiving].display_upper()
-            ),
-            String::new(),
-            format!(
-                "  TO OPEN: {} THROWS IT OFF FROM ITS OWN {} - {} RECEIVES",
-                self.game.teams[throwing].abbr, from_own as i32, self.game.teams[receiving].abbr
-            ),
-            format!(
-                "  YOU RUN {} - IT TAKES THE FIELD FIRST",
-                self.game.teams[receiving].abbr
-            ),
-            String::new(),
-            "  THROW-OFF: STICK AIMS ACROSS THE FIELD, HOLD A TO LOAD POWER, LET GO TO THROW"
-                .to_string(),
-            "  RETURN: STICK RUNS, [X] CHANGES CAMERA, [START] PAUSES".to_string(),
-            String::new(),
-            "  [A] START THE GAME".to_string(),
-        ];
-        if !self.view.page(&lines) {
-            return false;
-        }
+        // Which side is the player's, and which is the computer's. The client used
+        // to hand him the receiving team without asking, which is how a player ends
+        // up on defense not knowing whose shirt he is wearing.
+        let mut pick = receiving;
+        let mut nav = Nav::default();
+        let mut last = Instant::now();
+        self.view.reset();
         loop {
-            let input = self.wait(Duration::from_millis(24));
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f32().min(0.1);
+            last = now;
+            let names = [
+                self.game.teams[0].display_upper(),
+                self.game.teams[1].display_upper(),
+            ];
+            let lines = vec![
+                String::new(),
+                "  A7FL NO PADS FOOTBALL".to_string(),
+                String::new(),
+                format!("  {} AT {}", names[throwing], names[receiving]),
+                String::new(),
+                format!(
+                    "  {} {:<12} {}",
+                    if pick == 0 { ">" } else { " " },
+                    names[0],
+                    if pick == 0 { "YOU" } else { "THE COMPUTER" }
+                ),
+                format!(
+                    "  {} {:<12} {}",
+                    if pick == 1 { ">" } else { " " },
+                    names[1],
+                    if pick == 1 { "YOU" } else { "THE COMPUTER" }
+                ),
+                String::new(),
+                format!(
+                    "  TO OPEN: {} THROWS IT OFF FROM ITS OWN {}",
+                    self.game.teams[throwing].abbr, from_own as i32
+                ),
+                if pick == throwing {
+                    "  YOU THROW THE FIRST ONE OFF, THEN DEFEND THE RETURN".to_string()
+                } else {
+                    "  YOU RECEIVE THE FIRST ONE AND TAKE THE FIELD ON OFFENSE".to_string()
+                },
+                String::new(),
+                "  THROW-OFF: STICK AIMS, HOLD A TO LOAD POWER, LET GO TO THROW".to_string(),
+                "  RETURN: STICK RUNS, [X] CHANGES CAMERA, [START] PAUSES".to_string(),
+                String::new(),
+                "  [STICK] CHOOSE YOUR TEAM   [A] KICK OFF".to_string(),
+            ];
+            if !self.view.page(&lines) {
+                self.quit = true;
+                return false;
+            }
+            let input = self.input();
             if input.pressed.start {
                 if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
                     self.quit = true;
                     return false;
                 }
-                if !self.view.page(&lines) {
-                    return false;
-                }
+                last = Instant::now();
                 continue;
             }
+            // Two sides, so any push of the stick swaps them.
+            if nav.step(input.stick, dt).is_some() {
+                pick = 1 - pick;
+            }
             if input.pressed.a {
+                self.my_team = Some(pick);
                 return true;
             }
+            std::thread::sleep(Duration::from_millis(24));
         }
     }
 
@@ -929,23 +966,114 @@ impl Arcade {
     /// The defensive call sheet. One list is enough here: the player is picking a
     /// front and a coverage, not a file of plays.
     fn def_sheet(&mut self) -> Option<DefCall> {
-        let options: Vec<String> = self
-            .defbook
-            .iter()
-            .map(|d| format!("{:<15} {:<10} {} RUSHERS", d.name, d.coverage.label(), d.rushers()))
-            .collect();
-        match self.ask(
-            "DEFENSIVE CALL",
-            &["Pick the call, then take one of the seven yourself and go make a play."],
-            &options,
-            self.def_pick,
-        ) {
-            Some(i) => {
-                self.def_pick = i;
-                Some(self.defbook[i].clone())
-            }
-            None => None,
+        let fronts = fronts_in(&self.defbook);
+        if fronts.is_empty() {
+            return None;
         }
+        let start = self.def_pick.min(self.defbook.len() - 1);
+        let mut front = fronts
+            .iter()
+            .position(|f| *f == self.defbook[start].front)
+            .unwrap_or(0);
+        let mut pick = def_calls_in(&self.defbook, fronts[front])
+            .iter()
+            .position(|&i| i == start)
+            .unwrap_or(0);
+        // The sheet opens in the front column, the way the offensive one does.
+        let mut in_calls = false;
+        let mut nav = Nav::default();
+        let mut last = Instant::now();
+        self.view.reset();
+        loop {
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f32().min(0.1);
+            last = now;
+            let list = def_calls_in(&self.defbook, fronts[front]);
+            pick = pick.min(list.len().saturating_sub(1));
+
+            let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
+            defsheet::draw_layered(&mut frame, &self.defbook, &fronts, front, pick, in_calls);
+            let lines = self.def_sheet_lines(fronts[front], &list, pick, in_calls);
+            if !self.view.show(&mut frame, &lines) {
+                self.quit = true;
+                return None;
+            }
+            let input = self.input();
+            if input.pressed.start {
+                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                    self.quit = true;
+                    return None;
+                }
+                last = Instant::now();
+                continue;
+            }
+            if input.pressed.b {
+                in_calls = false;
+            }
+            if let Some(dir) = nav.step(input.stick, dt) {
+                if in_calls && dir == Dir::Left && pick % defsheet::COLS == 0 {
+                    in_calls = false;
+                } else if in_calls {
+                    pick = callsheet::step_in(list.len(), pick, dir);
+                } else {
+                    match dir {
+                        Dir::Up => {
+                            front = (front + fronts.len() - 1) % fronts.len();
+                            pick = 0;
+                        }
+                        Dir::Down => {
+                            front = (front + 1) % fronts.len();
+                            pick = 0;
+                        }
+                        Dir::Right => in_calls = true,
+                        Dir::Left => {}
+                    }
+                }
+            }
+            if input.pressed.a {
+                if in_calls {
+                    let index = list[pick];
+                    self.def_pick = index;
+                    return Some(self.defbook[index].clone());
+                }
+                in_calls = true;
+            }
+            std::thread::sleep(Duration::from_millis(8));
+        }
+    }
+
+    /// The lines under the defensive sheet: the call, its front and techniques,
+    /// and what each of the seven has been told to do.
+    fn def_sheet_lines(
+        &self,
+        front: DefFront,
+        list: &[usize],
+        pick: usize,
+        in_calls: bool,
+    ) -> Vec<String> {
+        let fallback = &self.defbook[0];
+        let call = list.get(pick).map(|&i| &self.defbook[i]).unwrap_or(fallback);
+        let jobs: Vec<String> = DefRole::ALL
+            .iter()
+            .map(|r| format!("{} {}", role_tag(*r), call.assignment(*r)))
+            .collect();
+        let mut lines = vec![
+            self.header(),
+            format!(
+                "  {:<14} {:<9} {:<14} {} RUSH",
+                call.name,
+                call.coverage.label(),
+                format!("{} {}", front.techs(), front.line_call()),
+                call.rushers()
+            ),
+            format!("  {}", jobs.join("   ")),
+        ];
+        lines.push(if in_calls {
+            "  [STICK] CALL   [A] TAKE IT   [B] BACK TO FRONTS   [START] PAUSE".to_string()
+        } else {
+            "  [STICK] FRONT   [A]/[RIGHT] INTO THE CALLS   [START] PAUSE".to_string()
+        });
+        lines
     }
 
     // ------------------------------------------------------------------
@@ -953,12 +1081,19 @@ impl Arcade {
     // ------------------------------------------------------------------
 
     fn header(&self) -> String {
+        // Whose team this is, on every screen that carries the score, so a player
+        // never has to guess which shirt he is in.
+        let mine = self
+            .my_team
+            .map(|t| format!("   YOU: {}", self.game.teams[t].abbr))
+            .unwrap_or_default();
         format!(
-            "{} {} - {} {}   {} {}   {}   BALL ON {}",
+            "{} {} - {} {}{}   {} {}   {}   BALL ON {}",
             self.game.teams[0].abbr,
             self.game.score[0],
             self.game.teams[1].abbr,
             self.game.score[1],
+            mine,
             self.game.quarter_text(),
             self.game.clock_text(),
             self.game.down_and_distance(),
@@ -1674,6 +1809,17 @@ fn drive_defense(
     }
 }
 
+/// The three letters a defender's job line starts with on the call sheet.
+fn role_tag(role: DefRole) -> &'static str {
+    match role {
+        DefRole::EdgeL | DefRole::EdgeR => "EDG",
+        DefRole::Mike => "MIK",
+        DefRole::Will => "WIL",
+        DefRole::CbL | DefRole::CbR => "CB",
+        DefRole::Safety => "SAF",
+    }
+}
+
 /// Which man on your team you are driving during a throw-off: the returner while
 /// you are receiving, and otherwise the man nearest the ball once it is in the
 /// air — which is how you get downfield to make the tackle.
@@ -1688,7 +1834,10 @@ fn human_man(sim: &ThrowOffSim, my_team: usize) -> Option<usize> {
     sim.players
         .iter()
         .enumerate()
-        .filter(|(_, p)| p.team == my_team && !p.down)
+        // Only the three gunners are yours to steer: the thrower has thrown it and
+        // is not a coverage man, so putting the pad on him handed the player a man
+        // who cannot make a tackle.
+        .filter(|(_, p)| p.team == my_team && !p.down && p.role == ThrowRole::Gunner)
         .min_by(|a, b| {
             a.1.pos
                 .dist(sim.ball)

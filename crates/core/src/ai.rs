@@ -291,7 +291,12 @@ pub fn down_and_distance(g: &GameState) -> String {
 
 /// Human-readable read of the defensive call for the pre-snap overlay.
 pub fn defense_read(def: &DefCall) -> String {
-    format!("{} · {} rush", def.coverage.label(), def.rushers())
+    format!(
+        "{} · {} · {} rush",
+        def.front.label(),
+        def.coverage.label(),
+        def.rushers()
+    )
 }
 
 /// Convenience for the broadcast ticker: what just happened.

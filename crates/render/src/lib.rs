@@ -14,6 +14,7 @@
 pub mod broadcast;
 pub mod callsheet;
 pub mod capture;
+pub mod defsheet;
 pub mod fieldtex;
 pub mod font;
 pub mod hud;

@@ -423,7 +423,7 @@ impl<'a> PlaySim<'a> {
             });
         }
         for role in DefRole::ALL {
-            let a = defensive_alignment(role, dcall.coverage, setup.los, setup.direction, play.run_side);
+            let a = defensive_alignment(role, dcall, setup.los, setup.direction, play.run_side);
             let pos = Vec2::new(
                 a.x,
                 clamp(setup.ball_y + a.y, -FIELD_HALF_WIDTH + 0.8, FIELD_HALF_WIDTH - 0.8),
@@ -569,7 +569,7 @@ impl<'a> PlaySim<'a> {
             let role = DefRole::ALL[self.players[i].role_index];
             let a = defensive_alignment(
                 role,
-                self.def.coverage,
+                &self.def,
                 self.setup.los,
                 self.setup.direction,
                 self.play.run_side,

@@ -355,6 +355,11 @@ impl Broadcast {
         let players = sim
             .players
             .iter()
+            // The thrower is not a coverage man. The rules send three gunners
+            // downfield against one returner, and leaving the thrower standing
+            // there in the same colours made the throw-off read as four men
+            // chasing one. He has done his job when the ball leaves his hand.
+            .filter(|p| p.role != ThrowRole::Thrower || sim.phase == ThrowPhase::Presnap)
             .map(|p| RenderPlayer {
                 team: p.team,
                 roster: p.roster,
@@ -1136,6 +1141,23 @@ mod tests {
     use a7fl_core::playbook::{defensive_playbook, playbook};
     use a7fl_core::sim::SnapSetup;
     use a7fl_core::team::league_teams;
+
+    /// Three gunners, one returner, and the thrower gone from the coverage.
+    #[test]
+    fn the_throw_off_shot_shows_three_gunners_and_no_thrower() {
+        let teams = league_teams();
+        let setup = a7fl_core::throwoff::ThrowOffSetup::normal();
+        let mut sim = ThrowOffSim::new(&setup, &teams[0], &teams[1]);
+        let (presnap, _) = Broadcast::throw_off_players(&sim);
+        assert_eq!(presnap.len(), 5, "the thrower is on the field until he throws");
+        while sim.phase == ThrowPhase::Presnap {
+            sim.step(1.0 / 60.0);
+        }
+        let (players, _) = Broadcast::throw_off_players(&sim);
+        assert_eq!(players.len(), 4, "three gunners and one returner");
+        let in_throwing_kit = players.iter().filter(|p| p.team == setup.throwing_team).count();
+        assert_eq!(in_throwing_kit, 3, "the thrower has left the picture");
+    }
 
     #[test]
     fn the_live_frame_puts_the_teams_on_the_turf() {

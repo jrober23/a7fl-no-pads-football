@@ -942,6 +942,61 @@ mod tests {
         (t[0].clone(), t[1].clone())
     }
 
+    /// The rulebook's throw-off is three gunners against one returner. The thrower
+    /// is on the field to throw it, not to cover the return.
+    #[test]
+    fn the_throw_off_fields_three_against_one() {
+        let (a, b) = teams();
+        for seed in 0..24u64 {
+            let setup = ThrowOffSetup { seed, ..ThrowOffSetup::normal() };
+            let sim = ThrowOffSim::new(&setup, &a, &b);
+            let throwing = sim.players.iter().filter(|p| p.team == setup.throwing_team).count();
+            let receiving = sim.players.iter().filter(|p| p.team == setup.receiving_team).count();
+            assert_eq!(throwing, 4, "thrower plus three gunners, seed {seed}");
+            assert_eq!(receiving, 1, "one returner, seed {seed}");
+            assert_eq!(
+                sim.players.iter().filter(|p| p.role == ThrowRole::Gunner).count(),
+                3,
+                "the coverage unit is three men, seed {seed}"
+            );
+        }
+    }
+
+    /// And nobody else joins the chase once the ball is in the returner's hands.
+    #[test]
+    fn a_fourth_man_never_joins_the_chase() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { seed: 12, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let thrower_spot = sim.players[0].pos;
+        let mut return_frames = 0;
+        while sim.result.is_none() && sim.t < 30.0 {
+            sim.step(1.0 / 60.0);
+            if sim.phase != ThrowPhase::Return {
+                continue;
+            }
+            return_frames += 1;
+            let returner = sim
+                .players
+                .iter()
+                .find(|p| p.role == ThrowRole::Returner)
+                .map(|p| p.pos)
+                .expect("no returner");
+            let near = sim
+                .players
+                .iter()
+                .filter(|p| p.team == setup.throwing_team && p.pos.dist(returner) < 9.0)
+                .count();
+            assert!(near <= 3, "a fourth throwing-team man is in on the tackle");
+            // The thrower stays where he threw it: he is not a coverage man.
+            assert!(
+                sim.players[0].pos.dist(thrower_spot) < 1.0,
+                "the thrower left his spot and joined the coverage"
+            );
+        }
+        assert!(return_frames > 0, "the ball was never returned: {:?}", sim.result);
+    }
+
     #[test]
     fn throw_off_spots_are_on_the_35() {
         let mut s = ThrowOffSetup::normal();
