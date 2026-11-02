@@ -68,6 +68,8 @@ pub struct Head<'a> {
     pub player: &'a Player,
     pub skin: Rgb,
     pub accent: Rgb,
+    /// The balaclava, in club colour. Every man wears one.
+    pub mask: Option<Rgb>,
 }
 
 impl<'a> Head<'a> {
@@ -242,8 +244,98 @@ impl<'a> Head<'a> {
             Vec3::new(hr * 0.62, hr * 0.66, hr * 0.30),
             if fine { 4 } else { 2 },
             if fine { 10 } else { 6 },
-            skin.scale(0.88),
+            self.mask.unwrap_or_else(|| skin.scale(0.88)),
         );
+
+        // ---------------- balaclava ----------------
+        // The same surface as the skull, pushed out a few millimetres, with an
+        // aperture left for the eyes and the brows. Cloth over the nose, mouth,
+        // jaw and neck; nothing else changes underneath.
+        if let Some(cloth) = self.mask {
+            let m_rings = if portrait { rings } else if fine { 9 } else { 5 };
+            let off = hr * 0.032;
+            let s = |u: f32, v: f32| {
+                let p = self.point(u, v);
+                // The cloth follows the nose underneath: a ridge down the middle
+                // of the face, so the mask is a face and not a sock pulled over
+                // one. The nose itself is not built while the mask is on.
+                let nose = 0.070 * gauss(v - 0.520, 0.085) * gauss(u, 0.26);
+                p + self.outward(p) * (off + hr * nose)
+            };
+            let d = 0.006f32;
+            let normal = |u: f32, v: f32| -> Vec3 {
+                let p = self.point(u, v);
+                let du = self.point(u + d, v) - self.point(u - d, v);
+                let dv = self.point(u, v + d) - self.point(u, v - d);
+                let mut n = du.cross(dv).normalize_or_zero();
+                if n.length() < 0.5 {
+                    n = (p - c).normalize_or_zero();
+                }
+                if n.dot(p - c) < 0.0 {
+                    n = n * -1.0;
+                }
+                n
+            };
+            for r in 0..m_rings {
+                let v0 = 0.012 + 0.988 * r as f32 / m_rings as f32;
+                let v1 = 0.012 + 0.988 * (r + 1) as f32 / m_rings as f32;
+                for seg in 0..segs {
+                    let u0 = seg as f32 / segs as f32 * std::f32::consts::TAU;
+                    let u1 = (seg + 1) as f32 / segs as f32 * std::f32::consts::TAU;
+                    let mu = ((u0 + u1) * 0.5 + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI;
+                    let mv = (v0 + v1) * 0.5;
+                    let ex = mu / 0.76;
+                    let ey = (mv - 0.632) / 0.064;
+                    if ex * ex + ey * ey < 1.0 {
+                        continue;
+                    }
+                    mesh.quad_curved(
+                        s(u0, v0),
+                        normal(u0, v0),
+                        s(u1, v0),
+                        normal(u1, v0),
+                        s(u1, v1),
+                        normal(u1, v1),
+                        s(u0, v1),
+                        normal(u0, v1),
+                        cloth,
+                        1.06,
+                    );
+                }
+            }
+            // Close the crown, so the top of the mask is not a hole from above.
+            let top = c + Vec3::new(0.0, 0.0, hr * 1.018);
+            let ring: Vec<Vec3> = (0..segs)
+                .map(|i| s(i as f32 / segs as f32 * std::f32::consts::TAU, 1.0))
+                .collect();
+            for i in 0..segs {
+                let j = (i + 1) % segs;
+                mesh.tri_curved(
+                    ring[i],
+                    Vec3::new(0.0, 0.0, 1.0),
+                    ring[j],
+                    Vec3::new(0.0, 0.0, 1.0),
+                    top,
+                    Vec3::new(0.0, 0.0, 1.0),
+                    cloth,
+                    1.06,
+                );
+            }
+            // The edge of the aperture, so the opening is cloth with a thickness
+            // rather than a hole cut in paper.
+            let rim: Vec<(Vec3, f32)> = (0..=16)
+                .map(|i| {
+                    let t = i as f32 / 16.0 * std::f32::consts::TAU;
+                    (
+                        s(0.76 * t.cos(), 0.632 + 0.064 * t.sin()),
+                        hr * 0.024,
+                    )
+                })
+                .collect();
+            mesh.tube(&rim, if fine { 5 } else { 3 }, cloth.scale(0.82), false);
+        }
 
         // ---------------- eyes ----------------
         let eye_v = 0.617;
@@ -316,7 +408,8 @@ impl<'a> Head<'a> {
         }
 
         // ---------------- nose ----------------
-        if fine {
+        // Covered by the balaclava, which carries its shape instead.
+        if fine && self.mask.is_none() {
             let bridge = self.point(0.0, 0.665);
             let mid = self.point(0.0, 0.560);
             let lower = self.point(0.0, 0.480);
@@ -363,7 +456,7 @@ impl<'a> Head<'a> {
         }
 
         // ---------------- mouth ----------------
-        if fine {
+        if fine && self.mask.is_none() {
             let mouth_v = 0.352;
             let mut lip_tube = |v: f32, r: f32, color: Rgb, dark: f32| {
                 let mut pts = Vec::new();
@@ -434,7 +527,7 @@ impl<'a> Head<'a> {
 
         // ---------------- beard ----------------
         let beard = self.player.beard.clamp(0.0, 1.0);
-        if beard > 0.15 && fine {
+        if beard > 0.15 && fine && self.mask.is_none() {
             let hair_color = self.player.hair_color;
             // One shell over the whole jaw: from the sideburn, down the cheek,
             // round the chin and back up. Built as straps it reads as a mask.
@@ -481,7 +574,7 @@ impl<'a> Head<'a> {
         }
 
         // ---------------- hair ----------------
-        if self.player.hair != HairStyle::Bald {
+        if self.mask.is_none() && self.player.hair != HairStyle::Bald {
             let hair_color = self.player.hair_color;
             let (front_back, side_drop, thick) = match self.player.hair {
                 HairStyle::Buzz => (0.845, 0.045, 0.030),
@@ -595,7 +688,7 @@ impl<'a> Head<'a> {
 
         // A headband, on the men the sheets give one to. It wraps the forehead
         // over the hair, so it is a band of cloth and not a stripe painted on.
-        if self.player.id % 3 == 0 {
+        if self.mask.is_none() && self.player.id % 3 == 0 {
             let band = if self.player.id % 2 == 0 { self.accent } else { Rgb::hex(0xEDEAE0) };
             let v0 = 0.672;
             let v1 = 0.706;

@@ -737,6 +737,18 @@ fn paint_number(
     }
 }
 
+/// Which men wear the long undershirt sleeves, and which wear tights. A stable
+/// draw, so a roster is dressed the same way on every replay.
+pub fn wears_sleeves(player: &Player, seed: u32) -> bool {
+    let h = (player.id as u32).wrapping_mul(0x9E37_79B1) ^ seed.wrapping_mul(0x85EB_CA6B);
+    (h >> 7) % 3 == 1
+}
+
+pub fn wears_tights(player: &Player, seed: u32) -> bool {
+    let h = (player.id as u32).wrapping_mul(0xC2B2_AE35) ^ seed.wrapping_mul(0x27D4_EB2F);
+    (h >> 11) % 3 == 2
+}
+
 pub fn build_mesh(player: &Player, uniform: &Uniform, pose: &Pose, team_skin_seed: u32) -> Mesh {
     build_mesh_at(player, uniform, pose, team_skin_seed, Detail::Full)
 }
@@ -764,6 +776,13 @@ pub fn build_mesh_at(
     let shorts = uniform.shorts;
     let socks = uniform.socks;
     let shoes = uniform.shoes;
+    // Undershirt sleeves and tights are dealt out per man rather than per team:
+    // a stable draw off his id, so the same roster is dressed the same way in
+    // every replay of every play.
+    let sleeved = wears_sleeves(player, team_skin_seed);
+    let legginged = wears_tights(player, team_skin_seed);
+    let arm_skin = if sleeved { Rgb::hex(0xF2F4F6) } else { skin };
+    let leg_skin = if legginged { shorts.scale(0.80) } else { skin };
 
     let speed = pose.speed.clamp(0.0, 1.0);
     // A walk becomes a run with pace, and everything settles when he stops.
@@ -892,7 +911,7 @@ pub fn build_mesh_at(
                 detail.rings(),
             ),
             sides,
-            skin,
+            leg_skin,
             true,
         );
         if detail.fine() {
@@ -902,7 +921,7 @@ pub fn build_mesh_at(
                 Vec3::new(knee_r * 1.02, knee_r * 0.92, knee_r * 1.00),
                 2,
                 6,
-                skin,
+                leg_skin,
             );
             // A knee sleeve on some men, the way the sheets show them: a band of
             // sock over the joint, sat just above the kneecap.
@@ -930,7 +949,7 @@ pub fn build_mesh_at(
                 detail.rings(),
             ),
             sides,
-            skin,
+            leg_skin,
             false,
         );
         mesh.tube(
@@ -1252,7 +1271,7 @@ pub fn build_mesh_at(
                 detail.rings(),
             ),
             sides,
-            skin,
+            arm_skin,
             true,
         );
         // A cap on the point of the elbow, where the surface turns hardest.
@@ -1262,7 +1281,7 @@ pub fn build_mesh_at(
                 Vec3::new(0.052 * bulk, 0.052 * bulk, 0.048 * bulk),
                 2,
                 8,
-                skin,
+                arm_skin,
             );
         }
         // Wristband, in the trim colour. It is the one piece of kit on a bare
@@ -1340,7 +1359,7 @@ pub fn build_mesh_at(
             (neck_base + head_dir * (head_r * 1.02), 0.038 * bulk),
         ],
         sides,
-        skin,
+        jersey,
         false,
     );
     // Sternocleidomastoid: the cord up the side of the neck. Without it the head
@@ -1358,6 +1377,7 @@ pub fn build_mesh_at(
         player,
         skin,
         accent,
+        mask: Some(jersey),
     }
     .build(&mut mesh, detail.quality());
 
@@ -1685,16 +1705,61 @@ mod tests {
         // profiles adds the rings that stop a leg reading as a stack of plates,
         // and that is worth paying for. The close tier only ever covers the men
         // within seven yards of the lens — at most two — so it can carry the face.
+        // The balaclava is a second sheet over the skull; it costs about five
+        // hundred faces on the near tiers, and it is the one piece of kit every
+        // man wears, so it is paid for rather than trimmed.
         assert!(
-            full.tris.len() < 5400,
+            full.tris.len() < 5800,
             "the figure is too heavy to draw seven times a frame: {} tris",
             full.tris.len()
         );
         assert!(
-            close.tris.len() < 9000,
+            close.tris.len() < 9600,
             "the close figure is too heavy to draw twice: {} tris",
             close.tris.len()
         );
+    }
+
+    /// Every man wears a balaclava in club colour, and the face shows in the
+    /// aperture rather than the mask being a second skin over it.
+    #[test]
+    fn every_head_wears_a_balaclava() {
+        let teams = a7fl_core::team::league_teams();
+        let player = &teams[0].roster[0];
+        let uniform = &teams[0].home;
+        let pose = Pose::default();
+        let mesh = build_mesh(player, uniform, &pose, 0);
+        let (_, _, _, _, z_min, z_max) = bounds(&mesh);
+        let h = z_max - z_min;
+        let cloth = mesh
+            .tris
+            .iter()
+            .filter(|t| t.color == uniform.jersey && t.a.z > z_min + h * 0.93)
+            .count();
+        assert!(cloth > 40, "the head is bare: {cloth} cloth faces on it");
+        let face = mesh
+            .tris
+            .iter()
+            .filter(|t| t.color == player.skin.rgb() && t.a.z > z_min + h * 0.93)
+            .count();
+        assert!(face > 4, "no face showing through the aperture: {face}");
+    }
+
+    /// Sleeves and tights are a draw, not a team uniform: some men have them and
+    /// some do not, and it is the same men every time the roster is dressed.
+    #[test]
+    fn sleeves_and_tights_are_dealt_out_but_not_to_everybody() {
+        let teams = a7fl_core::team::league_teams();
+        for team in &teams {
+            let n = team.roster.len();
+            let sleeves = team.roster.iter().filter(|p| wears_sleeves(p, 0)).count();
+            let tights = team.roster.iter().filter(|p| wears_tights(p, 0)).count();
+            assert!(sleeves > 0 && sleeves < n, "{} sleeves {sleeves}/{n}", team.abbr);
+            assert!(tights > 0 && tights < n, "{} tights {tights}/{n}", team.abbr);
+        }
+        let first: Vec<bool> = teams[0].roster.iter().map(|p| wears_sleeves(p, 0)).collect();
+        let again: Vec<bool> = teams[0].roster.iter().map(|p| wears_sleeves(p, 0)).collect();
+        assert_eq!(first, again, "the dressing room is not deterministic");
     }
 
     /// The head is a face: a modelled surface with eyes, a nose, a mouth and

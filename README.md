@@ -42,18 +42,22 @@ the deltoid through a bicep swell, an elbow pinch and a forearm flare into a
 gloved fist; the legs are lofted the same way with a quadriceps sweep, a knee and
 a calf that swells and tapers into the sock. The jersey goes over the top of the
 shoulder and is cut inside the deltoid, so the sleeve cap is cloth and the arm is
-bare beneath it, which is the kit the league actually wears.
+bare beneath it — except on the men dealt a long white undershirt, whose sleeves
+run from the cap to the wristband. Every head wears a balaclava in club colour,
+built as a second sheet over the skull with an aperture cut for the brows and
+eyes: cloth over the nose, mouth, jaw and neck, hair and beard underneath it.
+Tights are dealt out the same way, per man and stable across replays.
 
 The silhouette is deliberately the one on the A7FL character sheets: shoulders
 and arms carrying the width, a waist you can see, a small head, and a stance with
 the feet wider than the hips. The kit carries the number front and back, trim at
 the armhole, the shorts hem and the sock cuff, gloves, and — depending on the man
-— a headband, a knee sleeve and a beard. Skin tone, hair, build and height all
+— a headband, a knee sleeve, tights and a beard. Skin tone, hair, build and height all
 come off the roster, so the same seven never look like seven copies.
 
-At 640x360 the closest figures are about 3,500 triangles each; further out they
-are built at a lower level, because eyes and a bicep are worth nothing at a pixel
-and a half.
+The full figure is about 5,100 triangles and the close-up build about 8,400;
+further out they are built at a lower level, because eyes and a bicep are worth
+nothing at a pixel and a half.
 
 ## Playing with a controller
 
