@@ -57,6 +57,9 @@ pub const FLIP_TURN_RATE: f32 = 9.0;
 /// wrap-up radius is nearly a yard, which had a defender standing at the line
 /// flagged the instant he leaned across it: this is shoulder to shoulder.
 pub const PRESNAP_TOUCH: f32 = 0.62;
+/// How far beyond the line a man has to be when the ball goes to be offside:
+/// a step over, not a shoulder.
+pub const SNAP_OFFSIDE: f32 = 0.3;
 /// How long the quarterback's arm is out on a pump fake before he can use it
 /// again.
 pub const PUMP_TIME: f32 = 0.55;
@@ -1138,8 +1141,9 @@ impl<'a> PlaySim<'a> {
     /// whistled the moment it happens rather than at the snap.
     fn check_presnap_encroachment(&mut self) {
         let Some(d) = self.human_defender else { return };
-        // You cannot foul from your own side of the ball.
-        if (self.players[d].pos.x - self.los) * self.dirf() <= 0.12 {
+        // You cannot foul from your own side of the ball, and the defence lines
+        // up beyond the line: standing over it on his side is not being across.
+        if (self.players[d].pos.x - self.los) * self.dirf() >= -0.12 {
             return;
         }
         let touched = (0..7).any(|i| {
@@ -1148,6 +1152,28 @@ impl<'a> PlaySim<'a> {
         if touched {
             self.call_encroachment(d);
         }
+    }
+
+    /// A man was past the line when the ball went: five yards and the down again.
+    fn call_offsides(&mut self, i: usize, side: FoulTeam) {
+        let name = self.name_of(i);
+        let spot = self.players[i].pos.x;
+        let kind = match side {
+            FoulTeam::Offense => PenaltyKind::FalseStart,
+            FoulTeam::Defense => PenaltyKind::OffsideDefense,
+        };
+        let mut call = PenaltyCall::new(kind, spot).with_player(self.roster_index(i));
+        call.against = side;
+        self.flag = Some(call);
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("{name} is past the line when the ball goes"),
+        });
+        self.finish(
+            PlayOutcome::Penalty,
+            self.los,
+            format!("{name} is across at the snap: offside, five yards."),
+        );
     }
 
     /// Book the foul: five yards, replay the down, and no snap. The defence is
@@ -1172,8 +1198,29 @@ impl<'a> PlaySim<'a> {
     }
 
     fn snap(&mut self) {
-        // Being across the line at the snap is not a foul by itself: the whistle
-        // is for contact, and that is checked while he is walking, not here.
+        // The ball is hiked, so being past the line is a foul now. Depth was legal
+        // while the men were set, and a hand on somebody is the encroachment that
+        // is checked as he walks; the snap is what makes standing across it offside.
+        let mut across = None;
+        for i in 0..14 {
+            let p = &self.players[i];
+            if p.down {
+                continue;
+            }
+            // The defence lines up beyond the line as a matter of course, so it is
+            // offside when it is on the offence's side of it. The offence is the
+            // other way round.
+            let along = (p.pos.x - self.los) * self.dirf();
+            let over = if i < 7 { along > SNAP_OFFSIDE } else { along < -SNAP_OFFSIDE };
+            if over {
+                across = Some((i, if i < 7 { FoulTeam::Offense } else { FoulTeam::Defense }));
+                break;
+            }
+        }
+        if let Some((i, side)) = across {
+            self.call_offsides(i, side);
+            return;
+        }
         self.phase = match self.play.family {
             PlayFamily::QuickPass | PlayFamily::DropbackPass | PlayFamily::Screen => Phase::Dropback,
             PlayFamily::PlayAction => Phase::Dropback,
@@ -2983,6 +3030,12 @@ impl<'a> PlaySim<'a> {
     /// Put everybody where the current call lines them up, cutting short any
     /// shift that is still in progress.
     pub fn finish_shift(&mut self) {
+        // Nothing to finish unless a flip is being walked: the ground a man
+        // walked to before the snap is where he snaps from, and re-drawing the
+        // formation here put every defender back on his mark as the ball went.
+        if self.shift.is_none() {
+            return;
+        }
         self.shift = None;
         self.shift_t = 0.0;
         let upfield = self.dirf().atan2(0.0);
@@ -3767,31 +3820,60 @@ mod tests {
     }
 
     #[test]
-    fn leaning_across_the_line_is_not_encroachment_but_contact_is() {
+    fn a_man_past_the_line_at_the_snap_is_offside() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(40.0, 1, 10.0, 73);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        // A receiver steps a yard past the ball before it is hiked.
+        sim.players[4].pos.x = s.los + s.direction as f32;
+        sim.request_snap();
+        let r = sim.result.clone().expect("a man past the line snapped with no flag");
+        let call = r.penalty.clone().expect("a penalty with no call");
+        assert_eq!(call.kind, crate::rules::PenaltyKind::FalseStart);
+        assert_eq!(call.against, crate::rules::FoulTeam::Offense);
+        assert_eq!(r.yards, 0.0, "an offside is not a play");
+        assert_eq!(sim.phase, Phase::Dead, "the ball went anyway");
+    }
+
+    #[test]
+    fn leaning_across_the_line_is_legal_until_the_snap() {
         let (off, def) = teams();
         let book = playbook();
         let dcall = defensive_playbook()[0].clone();
         let s = setup(40.0, 1, 10.0, 72);
 
-        // A yard into the backfield, with nobody near him: depth is not a foul,
-        // and the ball still goes when it is asked for.
+        // A yard into the backfield, with nobody near him: depth is legal while
+        // the men are set, and it is the snap that makes it offside.
         let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
         sim.set_human_defender(Some(7));
-        sim.players[7].pos = Vec2::new(s.los + s.direction as f32, s.ball_y + 20.0);
+        sim.players[7].pos = Vec2::new(s.los - s.direction as f32, s.ball_y + 20.0);
         for _ in 0..6 {
             sim.step(FIXED_DT);
         }
         assert!(sim.result.is_none(), "leaning across the line drew a flag");
         sim.request_snap();
-        assert!(sim.result.is_none(), "being across at the snap drew a flag");
-        assert_ne!(sim.phase, Phase::Dead, "the ball was whistled dead before it went");
+        let r = sim.result.clone().expect("across at the snap was not offside");
+        let call = r.penalty.clone().expect("a penalty with no call");
+        assert_eq!(call.kind, crate::rules::PenaltyKind::OffsideDefense);
+        assert_eq!(call.against, crate::rules::FoulTeam::Defense);
+        assert_eq!(sim.phase, Phase::Dead, "the ball went with a man offside");
+    }
 
-        // A hand on a man while across the line, and the flag is on the ground.
+    #[test]
+    fn a_hand_on_a_man_across_the_line_is_encroachment() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(40.0, 1, 10.0, 74);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        sim.set_human_defender(Some(7));
         let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
         sim.set_human_defender(Some(7));
         // On top of the man over the ball, a step across the line.
         let man = sim.players[1].pos;
-        sim.players[7].pos = Vec2::new(s.los + s.direction as f32 * 0.35, man.y);
+        sim.players[7].pos = Vec2::new(s.los - s.direction as f32 * 0.35, man.y);
         sim.step(FIXED_DT);
         let r = sim
             .result

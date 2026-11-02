@@ -147,10 +147,10 @@ mod backend {
                 // The right bumper is the defensive check, not a second throw.
                 held.throw = gamepad.is_pressed(Button::RightTrigger2);
                 held.select = gamepad.is_pressed(Button::Select);
-                // Left trigger held is the play preview, the left bumper is the
-                // dummy count, and the right bumper is the defensive check. The
-                // right trigger stays the throw.
-                held.preview = gamepad.is_pressed(Button::LeftTrigger2);
+                // The right trigger is the preview at the line and the throw once
+                // the ball is out; the left bumper is the dummy count and the right
+                // bumper is the defensive check.
+                held.preview = gamepad.is_pressed(Button::RightTrigger2);
                 held.dummy = gamepad.is_pressed(Button::LeftTrigger);
                 held.shoulder = gamepad.is_pressed(Button::RightTrigger);
                 held.start = gamepad.is_pressed(Button::Start);

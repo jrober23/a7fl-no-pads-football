@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.6-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.7-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -89,9 +89,9 @@ Controls:
 | X / West | — | Open the audible over the field; once the ball is live, throw to X, or dive as a runner |
 | Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or stiff-arm as a runner (slide as a quarterback) |
 | Select / Minus | — | Change camera |
-| LT / ZL | — | Hold for the play preview: the shot lifts over the route tree until you let go |
+| RT / ZR | — | Hold for the play preview: the shot lifts over the route tree until you let go |
 | LB / L1 | — | Dummy count at the line: bark the snap count and try to draw a defender across |
-| RB / ZR | — | On defense, check to another call: three at a time, over the field |
+| RB / R1 | — | On defense, check to another call: three at a time, over the field |
 | Start | — | Pause: resume, camera, quit |
 
 | Keyboard | On the call sheet | At the line and during the play |
@@ -186,7 +186,9 @@ Up and down pick the front, A or right goes into its calls, left comes back out,
 A takes the call. Then you take one of the seven yourself: B walks the pad around the
 defense, nearest the ball first, and the stick moves whoever you are on.
 
-A throw-off is three gunners against one returner, as the rules say. The thrower is
+A throw-off is three gunners against one returner, as the rules say. All four face
+the ball: the throwing side looks downfield at the returner, and the returner looks
+back at the men coming for him. The thrower is
 not a coverage man: once the ball is away he leaves the picture, and the pad takes one
 of the three chasing it. B walks it round them, the way it walks round the seven on a
 scrimmage snap.
@@ -287,10 +289,16 @@ sheet ended the whole game.
 
 The line of scrimmage is a place to work now, not a menu to get through.
 
-Holding LT at the line is the play preview: the shot lifts over the whole route
-tree and the routes are drawn heavier, with a bigger bar at the end of each one.
-Let go and the picture drops back behind the ball. It is the same drawing that is
-always on the grass before the snap, only readable at a glance.
+Holding RT at the line is the play preview: the shot lifts over the whole route
+tree and the routes are drawn on the grass, heavier, with a bigger bar at the end
+of each one. Let go and the picture drops back behind the ball and the drawing goes
+with it — the call is not left lying open for the defence to read.
+
+The line is live otherwise. You may walk a defender anywhere before the snap,
+including across it; a hand on an offensive player while you are across is
+encroachment and is whistled on the spot. Standing across when the ball is hiked is
+offside, five yards, and the same goes for an offensive man who is past the line
+when it goes.
 
 LB is the dummy count. The quarterback barks the count and the men on the ball
 either bite or they do not: a defender who jumps is five yards and the down is

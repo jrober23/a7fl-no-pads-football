@@ -253,6 +253,16 @@ impl<'a> ThrowOffSim<'a> {
             .take(3)
             .map(|(i, _)| i)
             .collect();
+        // Everybody faces the ball: the throwing side looks downfield at the
+        // returner, and the returner looks back at the men coming for him. All
+        // four men used to be built facing +x, so on the half of the field where
+        // the throw goes the other way one side stood with its back to the play.
+        let downfield = if setup.receive_direction > 0 {
+            std::f32::consts::PI
+        } else {
+            0.0
+        };
+        let back = std::f32::consts::PI - downfield;
         let mut players = vec![ThrowPlayer {
             team: setup.throwing_team,
             roster: thrower,
@@ -261,7 +271,7 @@ impl<'a> ThrowOffSim<'a> {
             vel: Vec2::ZERO,
             down: false,
             run_phase: 0.0,
-            heading: 0.0,
+            heading: downfield,
             wrap: 0.0,
             tackled: 0.0,
         }];
@@ -275,7 +285,7 @@ impl<'a> ThrowOffSim<'a> {
                 vel: Vec2::ZERO,
                 down: false,
                 run_phase: 0.0,
-                heading: 0.0,
+                heading: downfield,
                 wrap: 0.0,
                 tackled: 0.0,
             });
@@ -290,7 +300,7 @@ impl<'a> ThrowOffSim<'a> {
             vel: Vec2::ZERO,
             down: false,
             run_phase: 0.0,
-            heading: 0.0,
+            heading: back,
             wrap: 0.0,
             tackled: 0.0,
         });

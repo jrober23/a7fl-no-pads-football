@@ -564,10 +564,10 @@ impl Broadcast {
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
         self.paint_lines(&mut frame, &camera, sim.los, dir, sim.setup.to_go);
-        // Before the snap the call is drawn on the grass: every route the play
-        // runs, so the throw can be read before the ball goes.
-        if sim.phase == a7fl_core::sim::Phase::PreSnap {
-            self.paint_routes(&mut frame, &camera, sim, sim.previewing());
+        // The call is only on the grass while the preview is held. Drawn all the
+        // time it was a call sheet lying open for whoever is on the other side.
+        if sim.previewing() {
+            self.paint_routes(&mut frame, &camera, sim, true);
         }
         self.draw_bodies(&mut frame, &camera, &players);
         if let Some(flag) = &sim.flag {
