@@ -38,10 +38,12 @@ fn panel() -> Rgb {
 
 /// What the player picked in exhibition: the two clubs and the side he runs.
 pub struct Kickoff {
-    pub home: usize,
-    pub away: usize,
-    /// 0 for the home side, 1 for the away side.
-    pub mine: usize,
+    /// The club the player picked.
+    pub yours: usize,
+    /// The computer's club, filled in by the menu.
+    pub theirs: usize,
+    /// True when the player takes the opening throw-off.
+    pub receive: bool,
 }
 
 enum Start {
@@ -351,10 +353,19 @@ fn ids_in(all: &[Club], division: Division) -> Vec<usize> {
 
 fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
     let all = clubs();
-    let home = pick_team(view, pad, &all, None, "HOME TEAM")?;
-    let away = pick_team(view, pad, &all, Some(home), "AWAY TEAM")?;
-    let mine = pick_side(view, pad, &all, home, away)?;
-    Some(Kickoff { home, away, mine })
+    let yours = pick_team(view, pad, &all, None, "YOUR TEAM")?;
+    let theirs = opponent_of(&all, yours);
+    let receive = coin_flip(view, pad, &all, yours, theirs)?;
+    Some(Kickoff { yours, theirs, receive })
+}
+
+/// The other side of the toss. The player picks one club, so the computer gets
+/// the next club in the same division: a divisional game, without a second
+/// screen to get through before the coin is in the air.
+fn opponent_of(all: &[Club], yours: usize) -> usize {
+    let list = ids_in(all, all[yours].division);
+    let at = list.iter().position(|&i| i == yours).unwrap_or(0);
+    list[(at + 1) % list.len()]
 }
 
 /// The carousel: the division along the top, the club in the middle, its city
@@ -446,16 +457,65 @@ fn pick_team(
     }
 }
 
-/// Which of the two clubs the player runs. The marker slides; START kicks off.
-fn pick_side(
+// ---------------------------------------------------------------------------
+// Coin toss
+// ---------------------------------------------------------------------------
+
+/// A toss has to be made in the moment, not decided before the player sits down.
+fn coin_seed() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() ^ d.subsec_nanos() as u64)
+        .unwrap_or(0xA7F1)
+}
+
+fn coin(frame: &mut Frame, cx: i32, cy: i32, width: i32, heads: bool, landed: bool) {
+    let h = 92;
+    let w = width.max(10);
+    let gold = Rgb::new(214, 168, 60);
+    let rim = Rgb::new(150, 112, 36);
+    let inner = Rgb::new(178, 138, 48);
+    frame.rounded_rect(cx - w / 2 - 5, cy - h / 2 - 5, w + 10, h + 10, w / 2 + 5, rim);
+    frame.rounded_rect(cx - w / 2, cy - h / 2, w, h, w / 2, gold);
+    if w > 26 {
+        frame.rounded_rect(cx - w / 2 + 7, cy - h / 2 + 7, w - 14, h - 14, (w - 14) / 2, inner);
+    }
+    if w > 34 {
+        let face = if heads { "H" } else { "T" };
+        let scale = ((h as usize) / 16).max(1);
+        let tw = text_width(face, scale);
+        frame.text_shadowed(
+            cx - tw / 2,
+            cy - (7 * scale as i32) / 2,
+            face,
+            scale,
+            if landed { paper() } else { Rgb::new(255, 236, 178) },
+            1,
+        );
+    }
+}
+
+/// Call it, watch it come down, and let the winner say throw or receive.
+/// Returns true when the player receives the opening throw-off.
+fn coin_flip(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     all: &[Club],
-    home: usize,
-    away: usize,
-) -> Option<usize> {
-    let mut side = 0usize;
-    let mut mark = 176.0f32;
+    yours: usize,
+    theirs: usize,
+) -> Option<bool> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Step {
+        Call,
+        Flip,
+        Won,
+        Lost,
+        Choose,
+    }
+    let mut step = Step::Call;
+    let mut pick = 0usize;
+    let mut t = 0.0f32;
+    let mut heads = true;
     let mut nav = Repeat::default();
     let mut last = Instant::now();
     view.reset();
@@ -464,46 +524,135 @@ fn pick_side(
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
-        if input.pressed.b {
-            return None;
-        }
-        if let d = nav.step(input.stick.x, dt) {
-            if d != 0 {
-                side = if d > 0 { 1 } else { 0 };
+        match step {
+            Step::Call => {
+                if let d = nav.step(input.stick.x, dt) {
+                    if d != 0 {
+                        pick = if d > 0 { 1 } else { 0 };
+                    }
+                }
+                if input.pressed.b {
+                    return None;
+                }
+                if input.pressed.a {
+                    t = 0.0;
+                    step = Step::Flip;
+                }
+            }
+            Step::Flip => {
+                t += dt;
+                if t >= 1.05 {
+                    t = 0.0;
+                    heads = coin_seed() % 2 == 0;
+                    let called_heads = pick == 0;
+                    step = if heads == called_heads { Step::Won } else { Step::Lost };
+                }
+            }
+            Step::Won => {
+                t += dt;
+                if input.pressed.a && t > 0.3 {
+                    pick = 0;
+                    step = Step::Choose;
+                }
+            }
+            Step::Lost => {
+                t += dt;
+                if t > 1.5 || input.pressed.a {
+                    // The computer won the toss: it takes the ball.
+                    return Some(false);
+                }
+            }
+            Step::Choose => {
+                if let d = nav.step(input.stick.x, dt) {
+                    if d != 0 {
+                        pick = if d > 0 { 1 } else { 0 };
+                    }
+                }
+                if input.pressed.a {
+                    return Some(pick == 1);
+                }
             }
         }
-        if input.pressed.x {
-            side = 1 - side;
-        }
-        let want = if side == 0 { 176.0 } else { 464.0 };
-        mark += (want - mark) * (dt * 14.0).min(1.0);
 
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
         night(&mut frame);
-        centered(&mut frame, 22, "WHICH SIDE DO YOU RUN", 2, accent());
-        badge(&mut frame, 176, 150, 108, &all[home], side == 0);
-        badge(&mut frame, 464, 150, 108, &all[away], side == 1);
-        centered_in(&mut frame, 176, 246, &all[home].city.to_uppercase(), 2, paper());
-        centered_in(&mut frame, 176, 266, &all[home].name.to_uppercase(), 1, all[home].accent);
-        centered_in(&mut frame, 464, 246, &all[away].city.to_uppercase(), 2, paper());
-        centered_in(&mut frame, 464, 266, &all[away].name.to_uppercase(), 1, all[away].accent);
-        // The marker under the side the controller is on.
-        frame.fill_rect(176 - 62, 292, 124, 4, Rgb::new(30, 48, 76));
-        frame.fill_rect(464 - 62, 292, 124, 4, Rgb::new(30, 48, 76));
-        frame.fill_rect(mark as i32 - 62, 292, 124, 4, accent());
+        centered(&mut frame, 18, "COIN TOSS", 3, accent());
         centered(
             &mut frame,
-            306,
-            if side == 0 { "YOU ARE THE HOME SIDE" } else { "YOU ARE THE AWAY SIDE" },
+            56,
+            &format!(
+                "{} AT {}",
+                all[yours].full_name().to_uppercase(),
+                all[theirs].full_name().to_uppercase()
+            ),
             1,
-            paper(),
+            dim(),
         );
-        footer(&mut frame, "[LEFT/RIGHT] SIDE   [START] KICK OFF   [B] BACK");
+
+        let (show_heads, width, landed) = match step {
+            Step::Call => (pick == 0, 118, false),
+            Step::Flip => {
+                let spin = (t * 13.0).cos().abs();
+                (heads || ((t * 13.0) as i32 % 2 == 0), (34.0 + 84.0 * spin) as i32, false)
+            }
+            Step::Won | Step::Choose => (heads, 118, true),
+            Step::Lost => (heads, 118, true),
+        };
+        coin(&mut frame, 320, 148, width, show_heads, landed);
+
+        match step {
+            Step::Call => {
+                centered(&mut frame, 224, "CALL IT", 1, paper());
+                let opts = ["HEADS", "TAILS"];
+                for (i, label) in opts.iter().enumerate() {
+                    let x = 190 + i as i32 * 150;
+                    let on = i == pick;
+                    if on {
+                        frame.fill_rect(x - 24, 240, 118, 22, panel());
+                        frame.fill_rect(x - 24, 260, 118, 2, accent());
+                    }
+                    centered_in(&mut frame, x + 35, 244, label, 2, if on { paper() } else { dim() });
+                }
+                footer(&mut frame, "[LEFT/RIGHT] CALL   [A] FLIP   [B] BACK");
+            }
+            Step::Flip => {
+                centered(&mut frame, 224, "IN THE AIR", 2, paper());
+                footer(&mut frame, "WAITING ON THE COIN");
+            }
+            Step::Won => {
+                centered(&mut frame, 214, if heads { "HEADS" } else { "TAILS" }, 2, accent());
+                centered(&mut frame, 240, "YOU CALLED IT. YOU WON THE TOSS.", 1, paper());
+                footer(&mut frame, "[A] CHOOSE");
+            }
+            Step::Lost => {
+                centered(&mut frame, 214, if heads { "HEADS" } else { "TAILS" }, 2, dim());
+                centered(&mut frame, 240, "YOU LOST THE TOSS", 1, paper());
+                centered(
+                    &mut frame,
+                    258,
+                    &format!("{} WILL RECEIVE", all[theirs].full_name().to_uppercase()),
+                    1,
+                    all[theirs].accent,
+                );
+                footer(&mut frame, "THE COMPUTER TAKES THE BALL");
+            }
+            Step::Choose => {
+                centered(&mut frame, 214, "THROW OR RECEIVE", 1, paper());
+                let opts = ["THROW IT OFF", "RECEIVE IT"];
+                for (i, label) in opts.iter().enumerate() {
+                    let x = 176 + i as i32 * 176;
+                    let on = i == pick;
+                    if on {
+                        frame.fill_rect(x - 40, 238, 160, 22, panel());
+                        frame.fill_rect(x - 40, 258, 160, 2, accent());
+                    }
+                    centered_in(&mut frame, x + 38, 242, label, 2, if on { paper() } else { dim() });
+                }
+                footer(&mut frame, "[LEFT/RIGHT] CHOOSE   [A] KICK OFF");
+            }
+        }
         if !view.show(&mut frame, &[]) {
             return None;
-        }
-        if input.pressed.a || input.pressed.start {
-            return Some(side);
         }
         beat();
     }
@@ -529,6 +678,16 @@ mod tests {
                 "{} is taller than the shield",
                 club.abbr
             );
+        }
+    }
+
+    #[test]
+    fn the_computer_gets_the_next_club_in_the_division() {
+        let all = clubs();
+        for yours in 0..all.len() {
+            let theirs = opponent_of(&all, yours);
+            assert_ne!(theirs, yours, "the computer cannot be the club you picked");
+            assert_eq!(all[theirs].division, all[yours].division, "not a divisional game");
         }
     }
 

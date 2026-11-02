@@ -171,6 +171,21 @@ pub struct GameState {
 }
 
 impl GameState {
+    /// Set the side that takes the opening throw-off. The toss happens on the
+    /// front end now, so the game is told the answer rather than drawing it.
+    pub fn set_opening_receiver(&mut self, team: usize) {
+        let receiving = team.min(1);
+        self.first_half_receiver = receiving;
+        self.possession = receiving;
+        self.phase = GamePhase::ThrowOff { receiving, from_own: THROW_OFF_SPOT_YARD_LINE };
+        self.commentary.clear();
+        self.commentary.push(format!(
+            "{} takes the opening throw-off.",
+            self.teams[receiving].full_name()
+        ));
+        self.refresh_direction();
+    }
+
     pub fn new(home: Team, away: Team, seed: u64) -> Self {
         let box_score = BoxScore::new(&home, &away);
         let mut rng = Rng::new(seed);
@@ -1128,6 +1143,22 @@ impl GameState {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_opening_receiver_can_be_set_from_the_toss() {
+        let teams = crate::team::league_teams();
+        let mut g = GameState::new(teams[0].clone(), teams[1].clone(), 9);
+        g.set_opening_receiver(1);
+        assert_eq!(g.first_half_receiver, 1);
+        assert_eq!(g.possession, 1);
+        assert!(matches!(g.phase, GamePhase::ThrowOff { receiving: 1, .. }));
+        assert!(g.commentary[0].contains("throw-off"), "{:?}", g.commentary);
+        // And the other way, because the toss can go either way.
+        g.set_opening_receiver(0);
+        assert_eq!(g.first_half_receiver, 0);
+        assert!(matches!(g.phase, GamePhase::ThrowOff { receiving: 0, .. }));
+        assert_eq!(g.commentary.len(), 1, "the old toss line was left behind");
+    }
     use super::*;
     use crate::team::league_teams;
 

@@ -822,8 +822,9 @@ fn cmd_arcade(args: &[String]) {
         match menu::run(&mut view, pad.as_mut(), &mut settings) {
             Some(kick) => {
                 let teams = league_teams();
-                game = GameState::new(teams[kick.home].clone(), teams[kick.away].clone(), seed);
-                mine = Some(kick.mine);
+                game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
+                game.set_opening_receiver(if kick.receive { 0 } else { 1 });
+                mine = Some(0);
             }
             None => return,
         }

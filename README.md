@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.19.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.19.1-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -133,11 +133,17 @@ The league is sixteen clubs in four divisions â€” North, South, East and West â€
 the picker rolls them like a carousel: the badge in the middle, the city and the
 nickname underneath it, the clubs either side waiting their turn. Up and down change
 division, left and right roll through the four clubs in it, A takes the card you are
-on. You pick the home side, then the away side, and then a third screen asks which of
-the two you want to run: the marker slides to that side of the ball and START kicks
-off. The side you take is yours for the whole game, both ways, and the scoreboard
-carries `YOU:` against it so there is never a snap where you are guessing which
-shirt you are in.
+on.
+
+One pick is the whole selection. The computer takes the next club in the same
+division, so exhibition is always a divisional game, and the club you take is yours
+for the whole game, both ways; the scoreboard carries `YOU:` against it, so there is
+never a snap where you are guessing which shirt you are in.
+
+Then the toss. Call heads or tails and watch the coin come down. Win it and you
+choose whether to throw the opening throw-off or receive it; lose it and the computer
+takes the ball. Either way the next thing you see is the throw-off, not another
+screen.
 
 The cities are real; every nickname, mark and colour set is invented for this game,
 so nothing on a jersey belongs to a club somebody already owns.

@@ -607,6 +607,11 @@ impl Arcade {
     /// player straight into a throw-off that was already in the air, so this holds
     /// the kickoff until he has seen the matchup and knows what the pad does.
     fn kickoff_card(&mut self) -> bool {
+        // The menu picked the club and tossed for the ball, so there is nothing
+        // left to ask. A scripted run (`--home`/`--away`) still gets the card.
+        if self.my_team.is_some() {
+            return true;
+        }
         let (receiving, from_own) = match self.game.phase {
             GamePhase::ThrowOff { receiving, from_own } => (receiving, from_own),
             _ => return true,
