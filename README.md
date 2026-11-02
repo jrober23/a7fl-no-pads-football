@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.17.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -33,6 +33,27 @@ cargo run -- film --seed 4  # render broadcast stills + a highlight GIF into out
 
 `sim` and `play` accept `--home N` / `--away N` to pick teams by index
 (`teams` prints them in order); `film` also takes `--out DIR`.
+
+## The players
+
+Every figure is lofted rather than assembled out of boxes. The torso is a
+seven-band loft with a chest, ribs and a waist; the arm is one smooth surface from
+the deltoid through a bicep swell, an elbow pinch and a forearm flare into a
+gloved fist; the legs are lofted the same way with a quadriceps sweep, a knee and
+a calf that swells and tapers into the sock. The jersey goes over the top of the
+shoulder and is cut inside the deltoid, so the sleeve cap is cloth and the arm is
+bare beneath it, which is the kit the league actually wears.
+
+The silhouette is deliberately the one on the A7FL character sheets: shoulders
+and arms carrying the width, a waist you can see, a small head, and a stance with
+the feet wider than the hips. The kit carries the number front and back, trim at
+the armhole, the shorts hem and the sock cuff, gloves, and — depending on the man
+— a headband, a knee sleeve and a beard. Skin tone, hair, build and height all
+come off the roster, so the same seven never look like seven copies.
+
+At 640x360 the closest figures are about 3,500 triangles each; further out they
+are built at a lower level, because eyes and a bicep are worth nothing at a pixel
+and a half.
 
 ## Playing with a controller
 

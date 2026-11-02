@@ -249,6 +249,106 @@ impl Mesh {
         }
     }
 
+    /// A smooth tube through a chain of `(point, radius)` rings, capped at both
+    /// ends.
+    ///
+    /// `cylinder` is one ring pair, so a limb built from three of them is three
+    /// tubes with a ring of disagreeing normals at every joint — the stepped,
+    /// ballooned arm that reads as a toy however good the silhouette is. This
+    /// lofts one surface through the whole chain: the frame is carried down the
+    /// tube so it does not twist, each ring is mitered between the segments on
+    /// either side of it, and the normals run along the limb, so the highlight is
+    /// a line down the arm rather than a ring at every joint.
+    pub fn tube(&mut self, points: &[(Vec3, f32)], sides: usize, color: Rgb, cap_ends: bool) {
+        if points.len() < 2 {
+            return;
+        }
+        let sides = sides.max(3);
+        let mut tangents: Vec<Vec3> = Vec::with_capacity(points.len());
+        for i in 0..points.len() {
+            let prev = if i > 0 {
+                (points[i].0 - points[i - 1].0).normalize_or_zero()
+            } else {
+                Vec3::ZERO
+            };
+            let next = if i + 1 < points.len() {
+                (points[i + 1].0 - points[i].0).normalize_or_zero()
+            } else {
+                Vec3::ZERO
+            };
+            let t = if i == 0 {
+                next
+            } else if i + 1 == points.len() {
+                prev
+            } else {
+                (prev + next).normalize_or_zero()
+            };
+            tangents.push(t);
+        }
+        // Carry one perpendicular across the chain instead of rebuilding it from
+        // a fixed helper at every ring: two rings with independently chosen frames
+        // are stitched with a twist in the surface between them.
+        let mut u = {
+            let t = tangents[0];
+            let helper = if t.z.abs() > 0.9 {
+                Vec3::new(1.0, 0.0, 0.0)
+            } else {
+                Vec3::new(0.0, 0.0, 1.0)
+            };
+            t.cross(helper).normalize_or_zero()
+        };
+        let mut rings: Vec<Vec<(Vec3, Vec3)>> = Vec::with_capacity(points.len());
+        for (i, (center, radius)) in points.iter().enumerate() {
+            let t = tangents[i];
+            let carried = u - t * u.dot(t);
+            u = if carried.length() > 0.5 {
+                carried.normalize_or_zero()
+            } else {
+                let helper = if t.z.abs() > 0.9 {
+                    Vec3::new(1.0, 0.0, 0.0)
+                } else {
+                    Vec3::new(0.0, 0.0, 1.0)
+                };
+                t.cross(helper).normalize_or_zero()
+            };
+            let v = t.cross(u).normalize_or_zero();
+            let mut ring = Vec::with_capacity(sides);
+            for k in 0..sides {
+                let a = k as f32 / sides as f32 * std::f32::consts::TAU;
+                let n = (u * a.cos() + v * a.sin()).normalize_or_zero();
+                ring.push((*center + n * *radius, n));
+            }
+            rings.push(ring);
+        }
+        for i in 0..rings.len() - 1 {
+            for k in 0..sides {
+                let k1 = (k + 1) % sides;
+                let (p0, n0) = rings[i][k];
+                let (p1, n1) = rings[i][k1];
+                let (q0, m0) = rings[i + 1][k];
+                let (q1, m1) = rings[i + 1][k1];
+                self.quad_curved(p0, n0, p1, n1, q1, m1, q0, m0, color, 1.0);
+            }
+        }
+        if cap_ends {
+            for (i, sign) in [(0usize, -1.0f32), (rings.len() - 1, 1.0)] {
+                let c = points[i].0;
+                let t = tangents[i] * sign;
+                for k in 0..sides {
+                    let k1 = (k + 1) % sides;
+                    let a = rings[i][k].0;
+                    let b = rings[i][k1].0;
+                    // Wind each cap so its front face points out of the tube.
+                    if sign > 0.0 {
+                        self.tri_curved(c, t, b, t, a, t, color, 0.92);
+                    } else {
+                        self.tri_curved(c, t, a, t, b, t, color, 0.82);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn sphere(&mut self, center: Vec3, radius: Vec3, rings: usize, segments: usize, color: Rgb) {
         let rings = rings.max(2);
         let segments = segments.max(3);
