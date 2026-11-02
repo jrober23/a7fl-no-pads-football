@@ -260,12 +260,39 @@ pub struct Play {
     /// Depth of the quarterback's drop, in yards.
     pub drop: f32,
     pub run_side: i8,
+    /// True when the design runs to the other side of the formation than it was
+    /// drawn: what the audible's flip toggle sets.
+    pub flip: bool,
     pub assignments: Vec<(OffRole, Assign)>,
 }
 
 impl Play {
     pub fn alignment(&self, role: OffRole) -> Vec2 {
-        self.formation.alignment(role)
+        let a = self.formation.alignment(role);
+        if self.flip {
+            Vec2::new(a.x, -a.y)
+        } else {
+            a
+        }
+    }
+
+    /// The same design run to the other side.
+    ///
+    /// Mirroring the alignment is what puts the two wide receivers on the other
+    /// side of the ball; mirroring the waypoints is what keeps a corner route a
+    /// corner route instead of quietly turning it into a post. Everything that
+    /// reads a play -- the diagrams, the routes, the blocking aims -- reads the
+    /// flipped copy, so a flip can never advertise one thing and run another.
+    pub fn flipped(&self) -> Play {
+        let mut out = self.clone();
+        out.flip = !self.flip;
+        out.run_side = -self.run_side;
+        out.assignments = self
+            .assignments
+            .iter()
+            .map(|(role, a)| (*role, mirror_assign(a)))
+            .collect();
+        out
     }
 
     pub fn assignment(&self, role: OffRole) -> Option<&Assign> {
@@ -349,8 +376,56 @@ fn play(
         formation,
         drop,
         run_side,
+        flip: false,
         assignments: assignments.to_vec(),
     }
+}
+
+/// Mirror an assignment across the middle of the field: `y` is the across-field
+/// axis, so negating it is the whole of a left-to-right flip.
+fn mirror_assign(a: &Assign) -> Assign {
+    let m = |p: &Vec2| Vec2::new(p.x, -p.y);
+    match a {
+        Assign::Route { points, depth } => Assign::Route {
+            points: points.iter().map(m).collect(),
+            depth: *depth,
+        },
+        Assign::Fake { aim, points, depth } => Assign::Fake {
+            aim: m(aim),
+            points: points.iter().map(m).collect(),
+            depth: *depth,
+        },
+        Assign::Carry { points } => Assign::Carry { points: points.iter().map(m).collect() },
+        Assign::QbCarry { points } => Assign::QbCarry { points: points.iter().map(m).collect() },
+        Assign::RunBlock { aim, seal } => Assign::RunBlock { aim: m(aim), seal: *seal },
+        Assign::ScreenBlock { aim } => Assign::ScreenBlock { aim: m(aim) },
+        Assign::PassBlock { slide, max_depth } => Assign::PassBlock {
+            slide: -*slide,
+            max_depth: *max_depth,
+        },
+    }
+}
+
+/// The formations a book uses, in the order they first appear: the first layer
+/// of the call sheet.
+pub fn formations_in(book: &[Play]) -> Vec<Formation> {
+    let mut out: Vec<Formation> = Vec::new();
+    for p in book {
+        if !out.contains(&p.formation) {
+            out.push(p.formation);
+        }
+    }
+    out
+}
+
+/// The plays a formation can run, by index into the book: the second layer of
+/// the call sheet, and the set an audible is allowed to choose from.
+pub fn plays_in(book: &[Play], formation: Formation) -> Vec<usize> {
+    book.iter()
+        .enumerate()
+        .filter(|(_, p)| p.formation == formation)
+        .map(|(i, _)| i)
+        .collect()
 }
 
 /// The full A7FL playbook. `l` in the mirrored designs is the role's side sign.
@@ -1001,6 +1076,43 @@ mod tests {
                     .filter(|(_, a)| a.route_depth().is_some())
                     .count();
                 assert!(routes >= 2, "{} has no real routes", p.name);
+            }
+        }
+    }
+
+    #[test]
+    fn a_flipped_play_mirrors_every_alignment_and_flips_back() {
+        for p in playbook() {
+            let f = p.flipped();
+            assert_eq!(f.flip, !p.flip, "{} did not flip", p.name);
+            for role in OffRole::ALL {
+                let a = p.alignment(role);
+                let b = f.alignment(role);
+                assert!((a.x - b.x).abs() < 1e-6, "{} {role:?} moved upfield", p.name);
+                assert!((a.y + b.y).abs() < 1e-6, "{} {role:?} did not mirror", p.name);
+            }
+            // Flipping twice is the play that was drawn, not a mirrored copy of a
+            // mirrored copy that has quietly drifted.
+            let back = f.flipped();
+            assert_eq!(back.flip, p.flip);
+            for role in OffRole::ALL {
+                let a = back.alignment(role);
+                let b = p.alignment(role);
+                assert!((a.y - b.y).abs() < 1e-4, "{} {role:?} did not come back", p.name);
+            }
+        }
+    }
+
+    #[test]
+    fn every_formation_has_plays_an_audible_can_reach() {
+        let book = playbook();
+        let formations = formations_in(&book);
+        assert!(formations.len() >= 4, "only {} formations", formations.len());
+        for f in formations {
+            let plays = plays_in(&book, f);
+            assert!(plays.len() >= 2, "{f:?} has {} plays to audible to", plays.len());
+            for i in plays {
+                assert_eq!(book[i].formation, f);
             }
         }
     }

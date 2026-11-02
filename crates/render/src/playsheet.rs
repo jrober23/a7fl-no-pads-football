@@ -6,7 +6,7 @@
 //! The client highlights one with the d-pad and snaps it with the A button.
 
 use a7fl_core::math::{Rgb, Vec2};
-use a7fl_core::playbook::{Assign, OffRole, Play};
+use a7fl_core::playbook::{personnel_label, Assign, Formation, OffRole, Play};
 
 use crate::raster::Frame;
 
@@ -279,6 +279,65 @@ impl Board {
             (px.round() as i32).clamp(self.x as i32 + 2, (self.x + self.w) as i32 - 3),
             (py.round() as i32).clamp(self.top as i32 + 2, self.bottom as i32 - 3),
         )
+    }
+}
+
+/// The formation column of the layered sheet: the first thing a player picks.
+///
+/// Drawn here rather than in the client so the whole sheet is one picture on one
+/// canvas, and so the column and the cards share a palette.
+pub fn draw_panel(
+    frame: &mut Frame,
+    formations: &[Formation],
+    form_pick: usize,
+    in_plays: bool,
+    flipped: bool,
+) {
+    let w = frame.w as i32;
+    frame.clear(BACKDROP);
+    frame.fill_rect(0, 0, w, 22, HEADER);
+    frame.fill_rect(0, 22, w, 1, EDGE);
+    frame.text(MARGIN, 4, "CALL SHEET", 2, INK);
+    if flipped {
+        let tw = ("FLIPPED".chars().count() * 6) as i32;
+        frame.text(w - MARGIN - tw, 8, "FLIPPED", 1, ACCENT);
+    }
+
+    let x = MARGIN;
+    let box_w = 118;
+    let top = 30;
+    let row_h = 30;
+    let rows = formations.len() as i32;
+    frame.rounded_rect(x, top - 8, box_w, rows * row_h + 14, 4, EDGE);
+    for (i, f) in formations.iter().enumerate() {
+        let y = top + i as i32 * row_h;
+        let on = i == form_pick;
+        if on {
+            frame.rounded_rect(x + 3, y - 3, box_w - 6, row_h - 4, 3, CARD_ON);
+        }
+        let mark = if on && in_plays { ">" } else if on { "*" } else { " " };
+        let color = if on { ACCENT } else { MUTED };
+        frame.text(x + 7, y + 1, &format!("{mark} {}", f.label()), 1, color);
+        frame.text(x + 16, y + 12, personnel_label(*f), 1, MUTED);
+    }
+}
+
+/// One card of the layered sheet. The flip is drawn, not implied: a card that
+/// runs right has to show the routes going right.
+pub fn draw_play_card(
+    frame: &mut Frame,
+    play: &Play,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    selected: bool,
+    flipped: bool,
+) {
+    let card = if flipped { play.flipped() } else { play.clone() };
+    draw_card(frame, &card, x, y, w, h, selected);
+    if flipped {
+        frame.text(x + w - 26, y + 5, "FLIP", 1, ACCENT);
     }
 }
 

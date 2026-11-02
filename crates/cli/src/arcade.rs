@@ -2,10 +2,10 @@
 //!
 //! The field is drawn by the same software renderer the broadcast package uses:
 //! a real window when the machine has a display, ANSI colour blocks when it does
-//! not. The quarterbacks are yours: pick a play from the call sheet, then move the
-//! quarterback with the stick and throw to whichever receiver you have locked on.
-//! Everything else — defense, clock, downs, the rulebook — runs as it does in
-//! `sim`.
+//! not. The side is yours: call a play from the layered call sheet, snap it yourself
+//! at the line, audible out of it if the look is wrong, and then take the field on
+//! defense when the other team has the ball. The clock, the downs and the rulebook
+//! run as they do in `sim`.
 
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
@@ -14,13 +14,16 @@ use a7fl_core::ai;
 use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
 use a7fl_core::math::{Rng, Vec2, Vec3};
 use a7fl_core::moves::Kind;
-use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
+use a7fl_core::playbook::{
+    defensive_playbook, formations_in, playbook, plays_in, DefCall, Formation, Play,
+};
 use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
-use a7fl_core::sim::{PlaySim, QbControl};
+use a7fl_core::sim::{DefControl, Phase, PlaySim, QbControl};
 use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
 use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
-use a7fl_render::playsheet::{self, Dir};
+use a7fl_render::callsheet;
+use a7fl_render::playsheet::Dir;
 use a7fl_render::terminal;
 
 use crate::pad::{self, Input, Pad};
@@ -195,9 +198,17 @@ pub struct Arcade {
     broadcast: Broadcast,
     book: Vec<Play>,
     defbook: Vec<DefCall>,
-    pick: usize,
-    /// The team the player is running. He is always the offense, so this is
-    /// whichever side of a throw-off he is on.
+    /// Which formation the call sheet is sitting on, and which play inside it.
+    form: usize,
+    sheet_pick: usize,
+    /// True while the stick is driving the play cards rather than the formations.
+    in_plays: bool,
+    /// Run the called play to the other side of the formation.
+    flip: bool,
+    /// The defensive call the player used last, kept as the default.
+    def_pick: usize,
+    /// The team the player is running. He is on that side of the ball both ways,
+    /// so this is whichever side of the opening throw-off he is on.
     my_team: Option<usize>,
     /// Which of `CAMS` the picture is coming from.
     cam: usize,
@@ -219,7 +230,11 @@ impl Arcade {
             broadcast,
             book,
             defbook,
-            pick: 0,
+            form: 0,
+            sheet_pick: 0,
+            in_plays: false,
+            flip: false,
+            def_pick: 0,
             my_team: None,
             cam: 0,
             quit: false,
@@ -261,18 +276,35 @@ impl Arcade {
                 Action::ChooseConversion => {
                     // Pick the try, then go back round: a conversion is a snap
                     // like any other, so it gets called and played, not rolled.
-                    let two = self.choose_points();
+                    // Whose try it is decides who picks it: once the player can
+                    // play defence, the other lot scoring is his business to stop,
+                    // not his to call.
+                    let mine = self.my_team.unwrap_or(self.game.possession);
+                    let two = if self.game.possession == mine {
+                        self.choose_points()
+                    } else {
+                        self.game.conversion_forced_two()
+                    };
                     self.game.set_conversion(two);
                 }
                 Action::CallPlay { fourth_down } => {
+                    let mine = self.my_team.unwrap_or(self.game.possession);
+                    if self.game.possession != mine {
+                        // Their ball. Call a defence, then go and play one of the
+                        // seven instead of watching the coordinator do it.
+                        if let Some(def) = self.def_sheet() {
+                            self.run_defense_snap(def);
+                        }
+                        continue;
+                    }
                     if fourth_down && self.ask_throw_off() {
                         if !self.play_throw_off(true) {
                             break;
                         }
                         continue;
                     }
-                    if self.call_sheet() {
-                        self.run_snap();
+                    if let Some(play) = self.call_sheet() {
+                        self.run_snap(play);
                     }
                 }
             }
@@ -286,60 +318,125 @@ impl Arcade {
     // Play calling
     // ------------------------------------------------------------------
 
-    /// The call sheet: one set of plays as diagrams, highlighted with the d-pad.
-    /// Returns true when a play has been chosen.
-    fn call_sheet(&mut self) -> bool {
+    /// The call sheet, layered the way a coach's file is: the formations down the
+    /// left, the plays of the highlighted formation on the cards.
+    ///
+    /// It used to be one list of twenty-four plays paged eight at a time, which is
+    /// not a playbook anybody can read at the line. The first choice is now the
+    /// formation and the second is a play inside it, and the flip toggle runs that
+    /// play to the other side without a second card for it.
+    fn call_sheet(&mut self) -> Option<Play> {
+        let forms = formations_in(&self.book);
+        if forms.is_empty() {
+            return None;
+        }
+        self.form = self.form.min(forms.len() - 1);
         let mut nav = Nav::default();
+        let mut last = Instant::now();
+        self.view.reset();
         loop {
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f32().min(0.1);
+            last = now;
+
+            let forms = formations_in(&self.book);
+            let list = plays_in(&self.book, forms[self.form]);
+            self.sheet_pick = self.sheet_pick.min(list.len().saturating_sub(1));
+
             let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
-            playsheet::draw(&mut frame, &self.book, self.pick);
-            let lines = self.call_sheet_lines();
+            callsheet::draw_layered(
+                &mut frame,
+                &self.book,
+                &forms,
+                self.form,
+                self.sheet_pick,
+                self.in_plays,
+                self.flip,
+            );
+            let lines = self.call_sheet_lines(&forms, &list);
             if !self.view.show(&mut frame, &lines) {
                 self.quit = true;
-                return false;
+                return None;
             }
-            let input = self.wait(Duration::from_millis(16));
+            let input = self.input();
             if input.pressed.start {
                 // The call sheet is where a player spends most of the game, so this
                 // is the door to the camera setting and to quitting, not an instant
                 // exit the way it used to be.
                 if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
                     self.quit = true;
-                    return false;
+                    return None;
                 }
+                last = Instant::now();
                 continue;
             }
             if input.pressed.y {
-                // "Ask the coach": let the AI call it.
-                let mut rng = Rng::new(self.game.seed ^ 0x51CE);
-                self.pick = rng.index(self.book.len());
+                self.flip = !self.flip;
             }
-            if let Some(dir) = nav.step(input.stick, 0.016) {
-                self.pick = playsheet::step(self.book.len(), self.pick, dir);
+            if input.pressed.b {
+                self.in_plays = false;
+            }
+            if let Some(dir) = nav.step(input.stick, dt) {
+                if self.in_plays {
+                    self.sheet_pick = callsheet::step_in(list.len(), self.sheet_pick, dir);
+                } else {
+                    match dir {
+                        Dir::Up => {
+                            self.form = (self.form + forms.len() - 1) % forms.len();
+                            self.sheet_pick = 0;
+                        }
+                        Dir::Down => {
+                            self.form = (self.form + 1) % forms.len();
+                            self.sheet_pick = 0;
+                        }
+                        Dir::Right => self.in_plays = true,
+                        Dir::Left => {}
+                    }
+                }
             }
             if input.pressed.a {
-                return true;
+                if self.in_plays {
+                    let mut play = self.book[list[self.sheet_pick]].clone();
+                    if self.flip {
+                        play = play.flipped();
+                    }
+                    self.flip = false;
+                    return Some(play);
+                }
+                self.in_plays = true;
             }
+            std::thread::sleep(Duration::from_millis(8));
         }
     }
 
-    fn call_sheet_lines(&self) -> Vec<String> {
-        let play = &self.book[self.pick];
-        let pages = (self.book.len() + playsheet::PER_PAGE - 1) / playsheet::PER_PAGE;
+    fn call_sheet_lines(&self, forms: &[Formation], list: &[usize]) -> Vec<String> {
+        let fallback = &self.book[0];
+        let play = list.get(self.sheet_pick).map(|&i| &self.book[i]).unwrap_or(fallback);
+        let side = if self.flip { "FLIPPED" } else { "AS DRAWN" };
         let mut lines = vec![
             self.header(),
             format!(
-                "  {:<16} {} / {}        PLAY {} OF {}   SET {} OF {}",
+                "  {:<16} {}   {}   PLAY {} OF {} IN {}   {} FORMATIONS",
                 play.name,
                 play.family.label(),
-                play.formation.label(),
-                self.pick + 1,
-                self.book.len(),
-                playsheet::page_of(self.pick) + 1,
-                pages
+                side,
+                self.sheet_pick + 1,
+                list.len(),
+                forms.get(self.form).map(|f| f.label()).unwrap_or(""),
+                forms.len()
             ),
-            "  DPAD / STICK: HIGHLIGHT   [A] SNAP   [Y] ASK COACH   [START] PAUSE".to_string(),
         ];
+        if self.in_plays {
+            lines.push(
+                "  [STICK] PLAY   [A] CALL IT   [B] BACK TO FORMATIONS   [Y] FLIP   [START] PAUSE"
+                    .to_string(),
+            );
+        } else {
+            lines.push(
+                "  [STICK] FORMATION   [A]/[RIGHT] INTO THE PLAYS   [Y] FLIP   [START] PAUSE"
+                    .to_string(),
+            );
+        }
         if let Some(last) = self.game.recent_plays(1).pop() {
             lines.push(format!("  Last: {last}"));
         }
@@ -455,6 +552,9 @@ impl Arcade {
             _ => return true,
         };
         let throwing = 1 - receiving;
+        // The opening throw-off is what tells us whose team this is: the player
+        // receives it, so that side is his for the rest of the game.
+        self.my_team = Some(receiving);
         let lines = vec![
             String::new(),
             "  A7FL NO PADS FOOTBALL".to_string(),
@@ -698,20 +798,15 @@ impl Arcade {
     // The snap itself
     // ------------------------------------------------------------------
 
-    fn run_snap(&mut self) {
-        // Playing an offensive snap is what tells us whose team this is.
-        self.my_team = Some(self.game.possession);
-        let play = self.book[self.pick].clone();
+    fn run_snap(&mut self, play: Play) {
+        // Playing a snap is what tells us whose team this is, the first time.
+        if self.my_team.is_none() {
+            self.my_team = Some(self.game.possession);
+        }
         let def = self.cpu_defense();
         let header = self.header();
-        let play_line = format!(
-            "{} - {} - {} shows {}",
-            play.name,
-            play.formation.label(),
-            self.game.teams[self.game.defense()].abbr,
-            def.name
-        );
         let off_abbr = self.game.teams[self.game.offense()].abbr.clone();
+        let book: &[Play] = &self.book;
 
         // Borrow the fields separately: the game owns the snap, the rest of the
         // struct drives the picture and reads the controls.
@@ -724,6 +819,8 @@ impl Arcade {
         let flip_y = self.flip_y;
 
         let record = game.snap_with(play, def, |sim| {
+            // No automatic snap on offense: the ball goes when the player says so.
+            sim.await_snap(true);
             let finished = drive(
                 sim,
                 broadcast,
@@ -732,8 +829,8 @@ impl Arcade {
                 flip_y,
                 cam,
                 &header,
-                &play_line,
                 &off_abbr,
+                book,
             );
             if !finished {
                 *quit = true;
@@ -741,15 +838,45 @@ impl Arcade {
         });
 
         if let Some(record) = record {
-            match &record {
-                // A flag gets its own card, read out once the ball is dead.
-                PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
-                    self.penalty_card(r);
-                }
-                _ => {
-                    let text = record.description().to_string();
-                    self.show_result(&text, None);
-                }
+            self.report(record);
+        }
+    }
+
+    /// Their ball: call a defence, then put the pad on one of the seven.
+    fn run_defense_snap(&mut self, def: DefCall) {
+        let play = self.cpu_offense();
+        let header = self.header();
+        let game = &mut self.game;
+        let broadcast = &mut self.broadcast;
+        let view = &mut self.view;
+        let pad = &mut self.pad;
+        let quit = &mut self.quit;
+        let cam = &mut self.cam;
+        let flip_y = self.flip_y;
+
+        let record = game.snap_with(play, def, |sim| {
+            sim.set_human_defender(sim.nearest_defender());
+            let finished = drive_defense(sim, broadcast, view, pad.as_mut(), flip_y, cam, &header);
+            if !finished {
+                *quit = true;
+            }
+        });
+
+        if let Some(record) = record {
+            self.report(record);
+        }
+    }
+
+    /// The card after a snap: a flag gets its own read-out, everything else the
+    /// score.
+    fn report(&mut self, record: PlayRecord) {
+        match &record {
+            PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
+                self.penalty_card(r);
+            }
+            _ => {
+                let text = record.description().to_string();
+                self.show_result(&text, None);
             }
         }
     }
@@ -774,6 +901,51 @@ impl Arcade {
         }
         let mut rng = Rng::new(self.game.seed ^ 0xD37E_C0DE);
         book[rng.index(book.len())].clone()
+    }
+
+    /// What the computer runs at a player who is playing defence: down and distance
+    /// first, then a coin toss, so a third and long is not a draw play.
+    fn cpu_offense(&self) -> Play {
+        let situation = ai::Situation::from_game(&self.game);
+        let mut rng = Rng::new(self.game.seed ^ 0x0FFE_115E);
+        let want_pass = if situation.down >= 3 && situation.to_go > 4.0 {
+            true
+        } else if situation.yards_to_goal <= 3.0 || situation.to_go <= 2.0 {
+            false
+        } else {
+            rng.chance(0.55)
+        };
+        let pool: Vec<&Play> = self
+            .book
+            .iter()
+            .filter(|p| p.family.is_pass() == want_pass)
+            .collect();
+        if pool.is_empty() {
+            return self.book[rng.index(self.book.len())].clone();
+        }
+        pool[rng.index(pool.len())].clone()
+    }
+
+    /// The defensive call sheet. One list is enough here: the player is picking a
+    /// front and a coverage, not a file of plays.
+    fn def_sheet(&mut self) -> Option<DefCall> {
+        let options: Vec<String> = self
+            .defbook
+            .iter()
+            .map(|d| format!("{:<15} {:<10} {} RUSHERS", d.name, d.coverage.label(), d.rushers()))
+            .collect();
+        match self.ask(
+            "DEFENSIVE CALL",
+            &["Pick the call, then take one of the seven yourself and go make a play."],
+            &options,
+            self.def_pick,
+        ) {
+            Some(i) => {
+                self.def_pick = i;
+                Some(self.defbook[i].clone())
+            }
+            None => None,
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1022,8 +1194,8 @@ fn drive(
     flip_y: bool,
     cam: &mut usize,
     header: &str,
-    play_line: &str,
     off_abbr: &str,
+    book: &[Play],
 ) -> bool {
     let mut acc = 0.0f64;
     let mut last = Instant::now();
@@ -1060,10 +1232,32 @@ fn drive(
         }
         let view_mode = CAMS[*cam % CAMS.len()];
 
+        // Before the snap the pad belongs to the line, not to the quarterback: A
+        // goes, X opens the audible, Y flips the call.
+        if sim.phase == Phase::PreSnap {
+            if input.pressed.y {
+                sim.flip_play();
+            }
+            if input.pressed.x {
+                match audible_sheet(view, pad.as_deref_mut(), book, &sim.play) {
+                    Audible::Picked(play) => sim.call_play(play),
+                    Audible::Back => {}
+                    Audible::Quit => return false,
+                }
+                last = Instant::now();
+                acc = 0.0;
+                continue;
+            }
+            if input.pressed.a {
+                sim.request_snap();
+            }
+        }
+        let presnap = sim.phase == Phase::PreSnap;
+
         // Once the ball is in a runner's hands and there is no pass to throw, the
         // face buttons are his move set rather than the receivers'.
-        let running = sim.face_buttons_are_moves();
-        let targets = if running {
+        let running = !presnap && sim.face_buttons_are_moves();
+        let targets = if running || presnap {
             Vec::new()
         } else {
             sim.eligible_targets()
@@ -1189,7 +1383,17 @@ fn drive(
             };
 
             let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
-            let mut lines = vec![header.to_string(), play_line.to_string()];
+            // The call is read off the sim, not off the sheet that was chosen a
+            // minute ago: an audible changes the play, and the overlay has to say so.
+            let call = format!(
+                "{} - {}{} - {} shows {}",
+                sim.play.name,
+                sim.play.formation.label(),
+                if sim.play.flip { " (FLIPPED)" } else { "" },
+                broadcast.teams[sim.setup.defense_team].abbr,
+                sim.def.name
+            );
+            let mut lines = vec![header.to_string(), call];
 
             if running {
                 // The moves, and which one is in flight right now.
@@ -1215,10 +1419,17 @@ fn drive(
                 }
                 lines.push(row);
             }
-            lines.push(format!(
-                "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] PAUSE",
-                cam_name(view_mode)
-            ));
+            if presnap {
+                lines.push(format!(
+                    "  AT THE LINE   [A] SNAP   [X] AUDIBLE   [Y] FLIP   [RT] {}   [START] PAUSE",
+                    cam_name(view_mode)
+                ));
+            } else {
+                lines.push(format!(
+                    "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   AIM WITH STICK   [RT] {}   [START] PAUSE",
+                    cam_name(view_mode)
+                ));
+            }
             // A live-ball foul does not stop anything: the flag is on the ground and
             // the ball moves when the play is over.
             if let Some(flag) = &sim.flag {
@@ -1240,6 +1451,217 @@ fn drive(
         if sim.result.is_some() {
             // The ball is dead; the picture is not. Hold the shot while the hit
             // finishes and the players get up, then let the card come up.
+            let since = *dead_at.get_or_insert(now);
+            let waited = since.elapsed();
+            if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// The audible is the same layered sheet as the sideline call sheet, opened at the
+/// line with the snap already waiting on the button.
+enum Audible {
+    Picked(Play),
+    Back,
+    Quit,
+}
+
+fn audible_sheet(
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    book: &[Play],
+    current: &Play,
+) -> Audible {
+    let forms = formations_in(book);
+    if forms.is_empty() {
+        return Audible::Back;
+    }
+    let mut form = forms
+        .iter()
+        .position(|f| *f == current.formation)
+        .unwrap_or(0);
+    let mut pick = plays_in(book, forms[form])
+        .iter()
+        .position(|&i| book[i].name == current.name)
+        .unwrap_or(0);
+    let mut in_plays = true;
+    let mut flip = current.flip;
+    let mut nav = Nav::default();
+    let mut last = Instant::now();
+    // A button still held from the line must not pick the first card.
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+
+        let list = plays_in(book, forms[form]);
+        if list.is_empty() {
+            return Audible::Back;
+        }
+        pick = pick.min(list.len() - 1);
+        let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
+        callsheet::draw_layered(&mut frame, book, &forms, form, pick, in_plays, flip);
+        let play = &book[list[pick]];
+        let lines = vec![
+            format!(
+                "  AUDIBLE - {} - {}   {}",
+                play.name,
+                play.formation.label(),
+                if flip { "FLIPPED" } else { "AS DRAWN" }
+            ),
+            "  [STICK] PLAY   [LEFT/RIGHT] FORMATION   [A] CALL IT   [Y] FLIP   [B] BACK"
+                .to_string(),
+        ];
+        if !view.show(&mut frame, &lines) {
+            return Audible::Quit;
+        }
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.start || input.pressed.b {
+            return Audible::Back;
+        }
+        if input.pressed.y {
+            flip = !flip;
+        }
+        if let Some(dir) = nav.step(input.stick, dt) {
+            match dir {
+                Dir::Left | Dir::Right => {
+                    let n = forms.len();
+                    form = if dir == Dir::Left {
+                        (form + n - 1) % n
+                    } else {
+                        (form + 1) % n
+                    };
+                    pick = 0;
+                    in_plays = true;
+                }
+                Dir::Up | Dir::Down => {
+                    in_plays = true;
+                    pick = callsheet::step_in(list.len(), pick, dir);
+                }
+            }
+        }
+        if input.pressed.a {
+            let mut called = book[list[pick]].clone();
+            if flip != called.flip {
+                called = called.flipped();
+            }
+            return Audible::Picked(called);
+        }
+        std::thread::sleep(Duration::from_millis(8));
+    }
+}
+
+/// Run one snap with the pad on a defender. The offense is the computer's, and
+/// when the snap starts nobody is steering it.
+fn drive_defense(
+    sim: &mut PlaySim,
+    broadcast: &mut Broadcast,
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    flip_y: bool,
+    cam: &mut usize,
+    header: &str,
+) -> bool {
+    let mut acc = 0.0f64;
+    let mut last = Instant::now();
+    let mut drew = Instant::now() - FRAME;
+    let mut dead_at: Option<Instant> = None;
+    let mut switched = Instant::now() - Duration::from_millis(400);
+
+    loop {
+        let now = Instant::now();
+        let frame_dt = now.duration_since(last).as_secs_f64();
+        acc += frame_dt;
+        last = now;
+
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.start {
+            if !pause_menu(view, pad.as_deref_mut(), cam) {
+                return false;
+            }
+            last = Instant::now();
+            acc = 0.0;
+            continue;
+        }
+        if input.pressed.throw {
+            *cam = (*cam + 1) % CAMS.len();
+        }
+        let view_mode = CAMS[*cam % CAMS.len()];
+        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.setup.direction);
+
+        // B walks the pad round the seven. A is the tackle, X the swat, Y the pick.
+        if input.pressed.b && now.duration_since(switched) >= Duration::from_millis(120) {
+            sim.cycle_defender();
+            switched = now;
+        }
+        sim.set_def_control(Some(DefControl {
+            move_dir: stick,
+            tackle: input.pressed.a,
+            swat: input.pressed.x,
+            intercept: input.pressed.y,
+        }));
+
+        while acc >= STEP as f64 && sim.result.is_none() {
+            sim.step(STEP);
+            acc -= STEP as f64;
+        }
+
+        if now.duration_since(drew) >= FRAME || sim.result.is_some() {
+            drew = now;
+            let ui = PassUi {
+                badges: Vec::new(),
+                guide: None,
+                power: None,
+                short: false,
+                needed: None,
+            };
+            let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
+            let role = sim.human_defender_role().map(|r| r.label()).unwrap_or("DEF");
+            let who = sim
+                .human_defender
+                .map(|i| {
+                    broadcast.teams[sim.setup.defense_team].roster[sim.players[i].player]
+                        .last_name()
+                        .to_string()
+                })
+                .unwrap_or_default();
+            let mut lines = vec![
+                header.to_string(),
+                format!(
+                    "  {} - {}{} - {} BALL",
+                    sim.play.name,
+                    sim.play.formation.label(),
+                    if sim.play.flip { " (FLIPPED)" } else { "" },
+                    broadcast.teams[sim.setup.offense_team].abbr
+                ),
+                format!("  YOU: {role} {who}   [B] SWITCH DEFENDER"),
+                "  [A] TACKLE   [X] SWAT   [Y] INTERCEPT   [RT] CAMERA   [START] PAUSE"
+                    .to_string(),
+            ];
+            if let Some(flag) = &sim.flag {
+                lines.push(format!(
+                    "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
+                    flag.kind.label().to_uppercase(),
+                    match flag.against {
+                        FoulTeam::Offense => "OFFENSE",
+                        FoulTeam::Defense => "DEFENSE",
+                    }
+                ));
+            }
+            if !view.show(&mut frame, &lines) {
+                return false;
+            }
+        }
+
+        if sim.result.is_some() {
+            // The ball is dead; the picture is not. Hold the shot while the hit
+            // finishes, then let the card come up.
             let since = *dead_at.get_or_insert(now);
             let waited = since.elapsed();
             if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {

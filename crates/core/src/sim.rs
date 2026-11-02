@@ -275,6 +275,24 @@ pub struct QbControl {
     pub aim: Vec2,
 }
 
+/// Live human input for a defender, set by an interactive client.
+///
+/// Movement is the stick; the buttons are the only way a player can make a tackle,
+/// a pass breakup or a pick happen on his own man rather than waiting for the
+/// coordinator's dice. Absent during ordinary AI play, so `sim` and `film` behave
+/// exactly as they always have.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DefControl {
+    /// Stick direction in world space, `x` down the field and `y` across it.
+    pub move_dir: Vec2,
+    /// One frame of the tackle button.
+    pub tackle: bool,
+    /// One frame of the swat button: knock the ball down.
+    pub swat: bool,
+    /// One frame of the pick button: go and take it away.
+    pub intercept: bool,
+}
+
 /// What a throw of a given weight, bent off a receiver, would do. The interactive
 /// client draws its aim guide from this, so the guide and the ball cannot
 /// disagree about where the pass is going.
@@ -310,6 +328,18 @@ pub struct PlaySim<'a> {
     pub result: Option<PlayResult>,
     /// `Some` when a human is driving the quarterback.
     pub control: Option<QbControl>,
+    /// `Some` when a human is driving a defender.
+    pub def_control: Option<DefControl>,
+    /// Which defender the pad is on, as an index into `players`.
+    pub human_defender: Option<usize>,
+    /// The snap waits for the button while this is set. An offense at the line
+    /// decides when the ball goes, so sitting in the audible cannot run the play
+    /// out from under him.
+    awaiting_snap: bool,
+    /// Where every man stood when the formation was set. The pre-snap shuffle is
+    /// an offset from these, so a long look at the defence cannot walk the whole
+    /// formation down the field.
+    presnap: Vec<Vec2>,
     /// The move the carrier is in the middle of, if somebody asked for one.
     carrier_moves: CarrierMove,
     pub events: Vec<SimEvent>,
@@ -353,7 +383,7 @@ impl<'a> PlaySim<'a> {
 
         let mut players: Vec<SimPlayer> = Vec::with_capacity(14);
         for role in OffRole::ALL {
-            let a = play.formation.alignment(role);
+            let a = play.alignment(role);
             let pos = Vec2::new(
                 setup.los + dirf * a.x,
                 clamp(setup.ball_y + a.y, -FIELD_HALF_WIDTH + 0.6, FIELD_HALF_WIDTH - 0.6),
@@ -438,6 +468,10 @@ impl<'a> PlaySim<'a> {
             catch_spot: setup.los,
             scramble_started: false,
             control: None,
+            def_control: None,
+            human_defender: None,
+            awaiting_snap: false,
+            presnap: Vec::new(),
             carrier_moves: CarrierMove::default(),
             throw_away: false,
             pass_caught: false,
@@ -451,6 +485,7 @@ impl<'a> PlaySim<'a> {
         sim.ball.pos = sim.players[0].pos;
         sim.build_routes();
         sim.assign_coverage();
+        sim.capture_presnap();
         sim.setup_handoff();
         sim
     }
@@ -500,10 +535,59 @@ impl<'a> PlaySim<'a> {
     // Construction helpers
     // -----------------------------------------------------------------
 
+    /// Put every man back where his assignment says he lines up. Used when an
+    /// audible changes the play at the line.
+    fn line_up(&mut self) {
+        let dirf = self.dirf();
+        for i in 0..7 {
+            let role = OffRole::ALL[self.players[i].role_index];
+            let a = self.play.alignment(role);
+            let p = &mut self.players[i];
+            p.pos = Vec2::new(
+                self.setup.los + dirf * a.x,
+                clamp(self.setup.ball_y + a.y, -FIELD_HALF_WIDTH + 0.6, FIELD_HALF_WIDTH - 0.6),
+            );
+            p.vel = Vec2::ZERO;
+            p.heading = if self.setup.direction > 0 { 0.0 } else { std::f32::consts::PI };
+            p.waypoint = 0;
+            p.route.clear();
+        }
+        for i in 7..14 {
+            let role = DefRole::ALL[self.players[i].role_index];
+            let a = defensive_alignment(
+                role,
+                self.def.coverage,
+                self.setup.los,
+                self.setup.direction,
+                self.play.run_side,
+            );
+            let p = &mut self.players[i];
+            p.pos = Vec2::new(
+                a.x,
+                clamp(self.setup.ball_y + a.y, -FIELD_HALF_WIDTH + 0.8, FIELD_HALF_WIDTH - 0.8),
+            );
+            p.vel = Vec2::ZERO;
+            p.heading = if self.setup.direction > 0 {
+                std::f32::consts::PI
+            } else {
+                0.0
+            };
+            p.waypoint = 0;
+            p.route.clear();
+            p.pressure = 0.0;
+            p.beaten = 0.0;
+            p.engaged = None;
+        }
+    }
+
+    fn capture_presnap(&mut self) {
+        self.presnap = self.players.iter().map(|p| p.pos).collect();
+    }
+
     fn build_routes(&mut self) {
         for i in 0..7 {
             let role = OffRole::ALL[self.players[i].role_index];
-            let align = self.play.formation.alignment(role);
+            let align = self.play.alignment(role);
             let dirf = self.dirf();
             let mut pts: Vec<Vec2> = Vec::new();
             match self.play.assignment(role) {
@@ -717,12 +801,21 @@ impl<'a> PlaySim<'a> {
         }
 
         if self.phase == Phase::PreSnap {
-            // Quick pre-snap shuffle so the broadcast shot has life.
+            // Quick pre-snap shuffle so the broadcast shot has life. It is an
+            // offset from where the formation was set, not a nudge applied every
+            // frame: with the snap waiting on a button the old version walked the
+            // whole offense sideways while the player read the defence.
             for i in 0..14 {
                 let jitter = Vec2::new(0.0, (self.t * 1.7 + i as f32).sin() * 0.02);
-                self.players[i].pos += jitter;
+                let base = self.presnap.get(i).copied().unwrap_or(self.players[i].pos);
+                self.players[i].pos = base + jitter;
             }
-            if self.t >= SNAP_DELAY {
+            if self.awaiting_snap {
+                // Hold at the line: every timing constant in the play is measured
+                // from SNAP_DELAY, so the clock stops here and starts again when
+                // the player asks for the ball.
+                self.t = self.t.min(SNAP_DELAY);
+            } else if self.t >= SNAP_DELAY {
                 self.snap();
             }
             return None;
@@ -1402,6 +1495,30 @@ impl<'a> PlaySim<'a> {
             if self.players[i].down || self.players[i].stun > 0.0 {
                 continue;
             }
+            // The defender on the pad answers the stick; the rest of the eleven
+            // are the coordinator's. With the stick at rest he keeps working to
+            // the ball rather than standing still, so handing the pad around
+            // never freezes a man on the field.
+            if Some(i) == self.human_defender {
+                if let Some(ctl) = self.def_control {
+                    let mag = ctl.move_dir.length().min(1.0);
+                    if mag > 0.18 {
+                        let target = self.players[i].pos + ctl.move_dir.normalize_or_zero() * 4.0;
+                        let spd = self.speed_cap(i) * (0.6 + 0.4 * mag);
+                        self.steer(i, target, spd, dt);
+                    } else {
+                        let aim = if let Some(f) = self.ball.flight.as_ref() {
+                            f.to
+                        } else if let Some(c) = carrier {
+                            self.players[c].pos
+                        } else {
+                            self.players[self.qb].pos
+                        };
+                        self.steer(i, aim, self.speed_cap(i) * 0.4, dt);
+                    }
+                    continue;
+                }
+            }
             if self.players[i].beaten > 0.0 {
                 // Blown past his man, keep chasing the quarterback.
                 let qb = self.players[self.qb].pos;
@@ -1662,18 +1779,34 @@ impl<'a> PlaySim<'a> {
         if self.players[carrier].down {
             return;
         }
-        // Only defenders near the ball carrier can attempt a tackle.
+        // Only defenders near the ball carrier can attempt a tackle. The man on
+        // the pad reaches a little further, and when he presses the button he gets
+        // the first shot: a tackle the player asked for cannot be taken off him by
+        // a defender the coordinator happens to like more.
         let mut attempts: Vec<(usize, f32)> = Vec::new();
         for d in 7..14 {
             if self.players[d].down || self.players[d].stun > 0.0 || self.players[d].tackle_cooldown > 0.0 {
                 continue;
             }
+            let reach = if Some(d) == self.human_defender {
+                TACKLE_RADIUS * 1.3
+            } else {
+                TACKLE_RADIUS
+            };
             let dist = self.players[d].pos.dist(self.players[carrier].pos);
-            if dist <= TACKLE_RADIUS {
+            if dist <= reach {
                 attempts.push((d, dist));
             }
         }
         attempts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        if let (Some(h), Some(ctl)) = (self.human_defender, self.def_control) {
+            if ctl.tackle {
+                if let Some(pos) = attempts.iter().position(|(d, _)| *d == h) {
+                    let him = attempts.remove(pos);
+                    attempts.insert(0, him);
+                }
+            }
+        }
         for (d, _) in attempts {
             let carrier_attrs = self.attrs(carrier);
             let defender_attrs = self.attrs(d);
@@ -1961,6 +2094,62 @@ impl<'a> PlaySim<'a> {
         let progress = (flight.t / flight.duration).clamp(0.0, 1.0);
         self.ball.pos = flight.from.lerp(flight.to, progress);
         self.ball.z = lerp(1.5, 1.0, progress) + flight.peak * (std::f32::consts::PI * progress).sin();
+        // The man on the pad gets his own shot at a ball in the air. A defensive
+        // back who reads it and presses pick or swat does not have to hope the
+        // automatic contest rolls his way; he has to be near the ball and he has
+        // to be there at the right time, and he gets one look at it.
+        if let (Some(d), Some(ctl)) = (self.human_defender, self.def_control) {
+            if (ctl.intercept || ctl.swat)
+                && !self.pass_contacted
+                && !self.players[d].down
+                && progress > 0.10
+                && progress < 0.99
+            {
+                let dist = self.players[d].pos.dist(self.ball.pos);
+                if dist < 2.1 && self.ball.z < 3.4 {
+                    self.pass_contacted = true;
+                    let cov = self.attrs(d).coverage_factor();
+                    let hands = self.attrs(d).catching as f32 / 100.0;
+                    // Right on it is a play; a lunging reach is a half chance.
+                    let close = if dist < 0.85 { 1.0 } else { 0.5 };
+                    let spot = self.ball.pos.x;
+                    if ctl.intercept {
+                        let pick = (0.06 + cov * 0.14 + hands * 0.10) * close;
+                        if self.rng.chance(pick) {
+                            let desc =
+                                format!("{} jumps in front and picks it off!", self.name_of(d));
+                            let mut r = self.finish(PlayOutcome::Interception, spot, desc);
+                            r.turnover = true;
+                            r.tackler = Some(self.roster_index(d));
+                            r.air_yards = flight.air_yards;
+                            r.passer = Some(self.roster_index(flight.thrower));
+                            r.receiver = flight.target.map(|t| self.roster_index(t));
+                            r.highlight = true;
+                            self.result = Some(r);
+                            self.ball.flight = None;
+                            self.catch_spot = spot;
+                            return;
+                        }
+                    }
+                    if ctl.swat {
+                        let bat = (0.16 + cov * 0.20 + hands * 0.10) * close;
+                        if self.rng.chance(bat) {
+                            let desc =
+                                format!("{} gets a hand in and bats it down!", self.name_of(d));
+                            let mut r = self.finish(PlayOutcome::PassIncomplete, self.los, desc);
+                            r.batted_down = true;
+                            r.air_yards = flight.air_yards;
+                            r.passer = Some(self.roster_index(flight.thrower));
+                            r.receiver = flight.target.map(|t| self.roster_index(t));
+                            self.result = Some(r);
+                            self.ball.flight = None;
+                            self.catch_spot = spot;
+                            return;
+                        }
+                    }
+                }
+            }
+        }
         // A defender standing in the way of the ball gets a hand on it before it
         // arrives. This is not the landing-spot contest: it is the safety drifting
         // over the top and the corner who undercut the route. He either knocks it
@@ -2233,6 +2422,108 @@ impl<'a> PlaySim<'a> {
         self.control = control;
     }
 
+    /// Hand a defender to the pad. `None` gives him back to the coordinator.
+    pub fn set_def_control(&mut self, control: Option<DefControl>) {
+        self.def_control = control;
+    }
+
+    pub fn set_human_defender(&mut self, who: Option<usize>) {
+        self.human_defender = who.filter(|i| (7..14).contains(i));
+    }
+
+    /// Defenders, nearest the ball first: the order the switch button walks.
+    pub fn defender_order(&self) -> Vec<usize> {
+        let mut out: Vec<usize> = (7..14)
+            .filter(|&i| !self.players[i].down && self.players[i].stun <= 0.0)
+            .collect();
+        out.sort_by(|&a, &b| {
+            let da = self.players[a].pos.dist(self.ball.pos);
+            let db = self.players[b].pos.dist(self.ball.pos);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        out
+    }
+
+    /// The man the pad should start on: the defender closest to the ball.
+    pub fn nearest_defender(&self) -> Option<usize> {
+        self.defender_order().first().copied()
+    }
+
+    /// Move the pad to the next defender, wrapping at the end of the list.
+    pub fn cycle_defender(&mut self) -> Option<usize> {
+        let order = self.defender_order();
+        if order.is_empty() {
+            self.human_defender = None;
+            return None;
+        }
+        let next = match self.human_defender.and_then(|h| order.iter().position(|&i| i == h)) {
+            Some(pos) => order[(pos + 1) % order.len()],
+            None => order[0],
+        };
+        self.human_defender = Some(next);
+        Some(next)
+    }
+
+    /// The defense role the pad is on, for the overlay.
+    pub fn human_defender_role(&self) -> Option<DefRole> {
+        self.human_defender.map(|i| DefRole::ALL[self.players[i].role_index])
+    }
+
+    /// Stop the snap waiting on the button and run it now.
+    pub fn request_snap(&mut self) {
+        self.awaiting_snap = false;
+        if self.phase == Phase::PreSnap {
+            self.t = self.t.max(SNAP_DELAY);
+            self.snap();
+        }
+    }
+
+    /// Make the snap wait for [`PlaySim::request_snap`] instead of going on a
+    /// timer. The AI league does not call this, so headless games are untouched.
+    pub fn await_snap(&mut self, waiting: bool) {
+        self.awaiting_snap = waiting;
+    }
+
+    pub fn snap_is_waiting(&self) -> bool {
+        self.awaiting_snap && self.phase == Phase::PreSnap
+    }
+
+    /// Change the play at the line, the way an audible does. Only legal before
+    /// the snap, and only through a full re-line-up, so nobody keeps a route from
+    /// the play that was called a moment ago.
+    pub fn call_play(&mut self, play: Play) {
+        if self.phase != Phase::PreSnap {
+            return;
+        }
+        self.play = play;
+        self.line_up();
+        self.build_routes();
+        self.assign_coverage();
+        self.capture_presnap();
+        self.carrier = None;
+        self.intended = None;
+        self.handoff = None;
+        self.ball.holder = Some(self.qb);
+        self.ball.flight = None;
+        self.ball.pos = self.players[self.qb].pos;
+        self.ball.z = 1.15;
+        self.pass_contacted = false;
+        self.throw_away = false;
+        self.pass_caught = false;
+        self.scramble_started = false;
+        self.setup_handoff();
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("Audible: {}", self.play.name),
+        });
+    }
+
+    /// Flip the called play to the other side of the formation.
+    pub fn flip_play(&mut self) {
+        let flipped = self.play.flipped();
+        self.call_play(flipped);
+    }
+
     /// Eligible receivers with the index to drive [`QbControl::target`].
     pub fn eligible_targets(&self) -> Vec<(OffRole, usize)> {
         self.eligible_indices()
@@ -2491,6 +2782,154 @@ mod tests {
     /// Contact is not the end of the play: the defender wraps, the carrier goes
     /// over the top of it, and only then is the ball dead. A card one frame after
     /// the hit is a card over two men still on their feet.
+    #[test]
+    fn the_snap_waits_for_the_button() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 11);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        sim.await_snap(true);
+        // Four seconds of looking at the defense: no snap, and no drift.
+        let lined = (0..14).map(|i| sim.players[i].pos).collect::<Vec<_>>();
+        for _ in 0..240 {
+            sim.step(FIXED_DT);
+        }
+        assert!(!sim.is_snapped(), "the ball snapped itself");
+        assert_eq!(sim.t, SNAP_DELAY, "the clock ran on at the line");
+        for (i, was) in lined.iter().enumerate() {
+            let now = sim.players[i].pos;
+            // Only the pre-snap shuffle, which is two hundredths of a yard.
+            assert!((now - *was).length() < 0.05, "man {i} walked off: {now:?} from {was:?}");
+        }
+        sim.request_snap();
+        assert!(sim.is_snapped(), "the ball never went");
+        assert_eq!(sim.t, SNAP_DELAY, "the snap moved the clock");
+    }
+
+    #[test]
+    fn an_audible_changes_the_play_and_re_lines_everyone() {
+        let (off, def) = teams();
+        let book = playbook();
+        let first = book
+            .iter()
+            .find(|p| p.formation == crate::playbook::Formation::Pistol)
+            .expect("no pistol play");
+        let other = book
+            .iter()
+            .find(|p| p.name == "FOUR VERTS")
+            .expect("no four verts");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 3);
+        let mut sim = PlaySim::new(&off, &def, first, &dcall, &s);
+        let was = sim.players[6].pos;
+        sim.call_play(other.clone());
+        assert_eq!(sim.play.name, "FOUR VERTS", "the audible did not stick");
+        assert_ne!(sim.players[6].pos, was, "nobody moved for the audible");
+        for i in 0..7 {
+            let role = OffRole::ALL[sim.players[i].role_index];
+            let want = other.alignment(role);
+            let got = sim.players[i].pos;
+            let along = (got.x - s.los) * s.direction as f32;
+            let across = got.y - s.ball_y;
+            assert!(
+                (along - want.x).abs() < 1e-3 && (across - want.y).abs() < 1e-3,
+                "{role:?} lined up at ({along}, {across}) not {want:?}"
+            );
+            // And he is running the new play's route, not the old one's.
+            let assign = other.assignment(role).expect("missing assignment");
+            let wants_route = matches!(
+                assign,
+                Assign::Route { .. } | Assign::Fake { .. } | Assign::Carry { .. } | Assign::QbCarry { .. }
+            );
+            assert_eq!(!sim.players[i].route.is_empty(), wants_route, "{role:?} route out of step");
+        }
+    }
+
+    #[test]
+    fn a_flipped_call_runs_to_the_other_side() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book.iter().find(|p| p.name == "MESH").expect("no mesh");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 5);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        let before: Vec<Vec2> = (0..7).map(|i| sim.players[i].pos).collect();
+        sim.flip_play();
+        assert!(sim.play.flip, "the flip was not kept");
+        for (i, was) in before.iter().enumerate() {
+            let now = sim.players[i].pos;
+            assert!((now.x - was.x).abs() < 1e-3, "man {i} moved upfield on a flip");
+            assert!((now.y + was.y).abs() < 1e-3, "man {i} did not mirror: {now:?}");
+        }
+        // The routes are mirrored too, not just the alignments.
+        assert!(
+            sim.players[5].route.iter().all(|p| p.y < s.ball_y),
+            "the wide left route did not mirror: {:?}",
+            sim.players[5].route
+        );
+    }
+
+    #[test]
+    fn the_pad_walks_round_all_seven_defenders() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 9);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        let first = sim.cycle_defender().expect("no defender to control");
+        assert!((7..14).contains(&first));
+        let mut seen = vec![first];
+        for _ in 0..6 {
+            seen.push(sim.cycle_defender().expect("switch ran out"));
+        }
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 7, "the switch skipped a man: {seen:?}");
+        assert_eq!(sim.cycle_defender(), Some(first), "the switch does not wrap");
+    }
+
+    #[test]
+    fn a_human_defender_makes_the_tackle_he_asks_for() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_run())
+            .expect("no run play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(35.0, 1, 10.0, 17);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        for _ in 0..90 {
+            sim.step(FIXED_DT);
+            if sim.carrier.is_some() {
+                break;
+            }
+        }
+        let carrier = sim.carrier.expect("nobody took the handoff");
+        sim.set_human_defender(Some(7));
+        let mut down = false;
+        for _ in 0..80 {
+            if sim.result.is_some() {
+                break;
+            }
+            sim.players[7].pos = sim.players[carrier].pos;
+            sim.players[7].stun = 0.0;
+            sim.players[7].tackle_cooldown = 0.0;
+            sim.set_def_control(Some(DefControl {
+                tackle: true,
+                ..Default::default()
+            }));
+            sim.step(FIXED_DT);
+            if sim.wrap.is_some() || sim.result.is_some() {
+                down = true;
+                break;
+            }
+        }
+        assert!(down, "pressing tackle never produced a tackle");
+    }
+
     #[test]
     fn a_tackle_takes_a_beat_before_the_ball_is_dead() {
         let (off, def_) = teams();

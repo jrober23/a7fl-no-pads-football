@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.15.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.16.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -56,39 +56,75 @@ keyboard drives it, so the game is always playable.
 
 Controls:
 
-| Input | On the call sheet | During the play |
+| Input | On the call sheet | At the line and during the play |
 | --- | --- | --- |
-| D-pad or left stick | Highlight a play: sideways moves through the set on screen, up and down moves between sets | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
-| A / South | Snap the play that is highlighted | Hold to wind up, release to throw to A; once you are running, spin |
-| B / East | — | Hold to wind up, release to throw to B; once you are running, hurdle |
-| X / West | — | Throw to X; once you are running, dive |
-| Y / North | Ask the coach | Throw to Y; once you are running, slide |
+| D-pad or left stick | Move between the formations; once you are in one, move between its plays | Move the quarterback (past the line of scrimmage he becomes a runner); with a pass wound up, aim it |
+| A / South | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, or spin once you are running |
+| B / East | Back out to the formations | Hold to wind up, release to throw to B; once you are running, hurdle |
+| X / West | — | Open the audible; once the ball is live, throw to X, or dive as a runner |
+| Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or slide as a runner |
 | RT / ZR | — | Change camera |
 | Start | — | Pause: resume, camera, quit |
 
-| Keyboard | On the call sheet | During the play |
+| Keyboard | On the call sheet | At the line and during the play |
 | --- | --- | --- |
-| Arrows or WASD | Highlight a play | Move the quarterback; aim the pass |
-| Space or Enter | Snap the play that is highlighted | Hold to wind up, release to throw to A; once you are running, spin |
-| X | — | Throw to B; once you are running, hurdle |
-| Z | — | Throw to X; once you are running, dive |
-| C | Ask the coach | Throw to Y; once you are running, slide |
+| Arrows or WASD | Move between formations, then between plays | Move the quarterback; aim the pass |
+| Space or Enter | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, or spin |
+| X | Back out to the formations | Open the audible; then throw to B, or hurdle as a runner |
+| Z | — | Flip the call; then throw to X, or dive as a runner |
+| C | — | Throw to Y; once you are running, slide |
 | Left Shift | — | Change camera |
 | Esc | — | Pause: resume, camera, quit |
 
+On defense the same pad does different work:
+
+| Input | Playing defense |
+| --- | --- |
+| D-pad or left stick | Move the defender you are on |
+| A / South, Space or Enter | Tackle: go and wrap up the ball carrier |
+| B / East, X | Switch to the next defender, nearest the ball first |
+| X / West, Z | Swat the pass down, while the ball is in the air |
+| Y / North, C | Intercept: go and take the ball away |
+| RT / ZR, Left Shift | Change camera |
+| Start, Esc | Pause |
+
 ### Calling plays
 
-The call sheet is a grid of cards, one card per play, with the set you are picking
-from on screen at once: eight plays in two rows of four. Each card is a small
-diagram of the play it calls — the formation, every route, the run path, the blocks
-and the line of scrimmage — drawn from the same data the simulation runs, so a card
-can never advertise a play the game does not play. The highlighted card is ringed in
-yellow and its name and concept are echoed along the bottom of the screen.
+The call sheet is a file, not a list. The formations run down the left — Pistol,
+Bone, Trips, Doubles, Spread — with the personnel for each under its name, and the
+right of the screen holds the cards for the formation you are on. Each card is a
+small diagram of the play it calls: the formation, every route, the run path, the
+blocks and the line of scrimmage, drawn from the same data the simulation runs, so a
+card can never advertise a play the game does not play.
 
-The d-pad (or the left stick, or the arrow keys) moves the highlight. Sideways walks
-through the plays in the set on screen and wraps around it; up and down move between
-sets, dropping off the bottom row into the top of the next set. Press A to snap the
-one you are on, or Y to let the coach call it.
+The first choice is the formation, which is what turns twenty-four designs into
+something you can read rather than a wall of cards. Up and down move between
+formations, A (or right) goes into the plays of the one you are on, the stick moves
+between those plays, and A calls the one you are on. B goes back out to the
+formations. Y flips the call to the other side of the formation, and the cards show
+it flipped, routes and all.
+
+### At the line
+
+The ball does not snap itself. You are on the line for as long as you like, looking
+at the defense, and A starts the play: the clock does not run and the formation does
+not drift while you look. X opens the audible, which is the same layered sheet drawn
+over the field — any play in the book, any formation, and Y to flip it to the other
+side. A calls it and the team re-lines up. B leaves the play that was already called.
+
+### Playing defense
+
+The game is not offense-only. When the other team has the ball you call the defense
+from its own sheet — coverage, front, and who blitzes — and then you take one of the
+seven yourself. B walks the pad around the defense, nearest the ball first, and the
+stick moves whoever you are on.
+
+A is the tackle. Get your man within reach of the carrier and press it and he gets
+the first shot at the wrap, with a step more reach than the coordinator's defenders.
+X and Y are the coverage buttons: swat the ball down, or go and take it away. They
+only work while the ball is in the air and your man is close enough to touch it, and
+he gets one look per throw — press them early and nothing happens, press them late
+and he has wasted his chance.
 
 ### Cameras
 
