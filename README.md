@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.22.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.23.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -136,10 +136,17 @@ nickname underneath it, the clubs either side waiting their turn. Up and down ch
 division, left and right roll through the four clubs in it, A takes the card you are
 on.
 
-One pick is the whole selection. The computer takes the next club in the same
-division, so exhibition is always a divisional game, and the club you take is yours
-for the whole game, both ways; the scoreboard carries `YOU:` against it, so there is
-never a snap where you are guessing which shirt you are in.
+Both sides are yours to pick. The first screen is your club, the second is the club
+you are playing against, and the second can come from any division — a divisional
+game is still there if you want it, it is just no longer the only game in the menu.
+After the last club in a division there is a **RANDOM** card: take it and the
+division you were looking at picks the club for you, never the one already in the
+game. Both screens carry one, so a player who does not want to choose can roll
+twice and be done.
+
+The club you take is yours for the whole game, both ways; the scoreboard carries
+`YOU:` against it, so there is never a snap where you are guessing which shirt you
+are in.
 
 Then the toss. Call heads or tails and watch the coin come down. Win it and you
 choose whether to throw the opening throw-off or receive it; lose it and the computer
@@ -274,7 +281,9 @@ pause menu:
   rather than beside you.
 * **Broadcast** — the high sideline camera the broadcast package uses, panning with
   the ball.
-* **Sky** — overhead, for seeing the whole thing at once.
+* **Sky** — overhead, straight down the field: the lens stands behind the ball in
+  the ball's own lane instead of off to one side of it, so it looks upfield rather
+  than across the ground.
 
 The stick follows whichever of those is on screen, and they do not agree about which
 axis runs up it. Broadcast looks across the field, so up the stick is across the field
@@ -330,9 +339,10 @@ sheet ended the whole game.
 
 The line of scrimmage is a place to work now, not a menu to get through.
 
-Holding RT at the line is the play preview: the shot lifts over the whole route
-tree and the routes are drawn on the grass, heavier, with a bigger bar at the end
-of each one. Let go and the picture drops back behind the ball and the drawing goes
+Holding RT at the line is the play preview: the shot lifts straight up over the
+whole route tree — it rises into the sky shot, which is square to the field rather
+than tilted across it — and the routes are drawn on the grass, heavier, with a
+bigger bar at the end of each one. Let go and the picture drops back behind the ball and the drawing goes
 with it — the call is not left lying open for the defence to read.
 
 The line is live otherwise. You may walk a defender anywhere before the snap,
@@ -451,6 +461,11 @@ interception gets a replay from the broadcast camera before the card comes up, w
 frames it was drawn from are kept for it — so the throws, moves and stick work in it
 are the ones you put in.
 
+A flagged snap is replayed at the flag instead. The tape is cut to the spot of the
+foul and labelled `THE FLAG`, because on a big play with a call on it the call is
+what the second look is for: the pennant stands where the infraction happened in the
+same picture, and the play that made the replay worth running is the background.
+
 A man who goes out of bounds stays on the grass side of the advertising boards. The
 boards stand on the bleacher line rather than on the paint, with a run-off apron
 between them and the white sideline, so the sideline is still the field's edge and
@@ -482,9 +497,11 @@ A throw that breaks the rule is still thrown. Short of the forty, or off the
 sideline, the ball goes up where you aimed it and comes down where it was always
 going to, and only then does the card tell you it was a Run Back — you watch the ball
 leave your hand instead of the picture cutting away from it. A ball nobody catches is
-live: it lies there while the returner and the three gunners get to it, and it is dead
-when somebody falls on it, or down where it lies if nobody does. Only after that does
-the next screen say what the throw-off was worth.
+live: it lies there while the returner and the three gunners get to it, and whoever is
+closest when they have all had two seconds is on it — the receiving side, or the
+throwing side if the receiving side never got there. It is not whistled dead with
+nobody touching it. Only after that does the next screen say what the throw-off was
+worth.
 
 The aim used to run up and down the stick, which in this lens — behind the ball,
 looking downfield — is towards the camera rather than across the field, so the one
@@ -496,8 +513,13 @@ A touchback is still a rule: it just takes a fourth-down free throw from the
 other side of midfield to get near an end zone now.
 
 Back to receive, the ball is live and you are the returner: get under it, catch it,
-run it back. Nobody teleports you underneath a throw-off any more — if you are not
-where it comes down, it lands untouched and dies there. Once you have it the three
+run it back. Nobody teleports you underneath a throw-off any more, but a man who is
+not touching the stick is standing under the ball rather than frozen at his mark, so
+his feet take him to it and the catch is his. A ball that comes down more than three
+yards from him is nobody's catch: it is on the turf and live, and the men chasing it
+sort out who falls on it. The thirty-second clock is on the return, from the catch,
+not on the throw-off, so a throw that took its time can no longer have the return
+whistled dead the instant it is caught. Once you have it the three
 gunners are chasing you, so a return is a run rather than a dice roll. Throwing it
 off, you become the gunner nearest the ball and can go down and make the tackle
 yourself.

@@ -121,6 +121,9 @@ pub struct Broadcast {
     lens_tilt: f32,
     /// How far the route-tree preview has eased out of the live shot, 0..1.
     preview_ease: f32,
+    /// A spot the picture is pinned to instead of the ball: the flag on a
+    /// reviewed foul.
+    pin: Option<Vec2>,
     /// The crowd, one man at a time, so it can move.
     crowd: Vec<CrowdFigure>,
     crowd_t: f32,
@@ -147,6 +150,7 @@ impl Broadcast {
             lens_zoom: 1.0,
             lens_tilt: 0.0,
             preview_ease: 0.0,
+            pin: None,
             crowd,
             crowd_t: 0.0,
         }
@@ -162,6 +166,14 @@ impl Broadcast {
     /// The lens the game is using right now, so a menu can move it.
     pub fn lens(&self) -> (f32, f32) {
         (self.lens_zoom, self.lens_tilt)
+    }
+
+    /// Pin the picture to one spot rather than the ball -- the flag on a reel of a
+    /// foul -- or let it go back to following the play. A pin is a cut, not an
+    /// ease: the shot is already on the flag when the replay starts.
+    pub fn pin_focus(&mut self, at: Option<Vec2>) {
+        self.pin = at;
+        self.focus = Focus::default();
     }
 
     /// The lens the player tuned on the settings screen. Zoom pulls the camera
@@ -584,7 +596,12 @@ impl Broadcast {
             Some(flight) => (ball_pos + (flight.to - ball_pos) * AIR_LEAD, FOLLOW_AIR),
             None => (ball_pos, FOLLOW),
         };
-        let focus = self.focus.track_with(anchor, rate);
+        // A pinned shot holds the flag, not the ball: on a reviewed foul the foul
+        // is the story, wherever the play itself ended up.
+        let focus = match self.pin {
+            Some(at) => at,
+            None => self.focus.track_with(anchor, rate),
+        };
         // An interception turns the play round: the picture has to face the way
         // the man with the ball is running, not the way the ball was snapped.
         let dir = sim.facing();
@@ -598,9 +615,17 @@ impl Broadcast {
         if (self.preview_ease - want).abs() < 0.002 {
             self.preview_ease = want;
         }
-        let shot = self.camera_for(mode, focus, dir, sim.los, sim.setup.ball_y);
-        let wide = self.camera_for(CameraMode::SkyCam, focus, dir, sim.los, sim.setup.ball_y);
-        let camera = blend_camera(&shot, &wide, smooth(self.preview_ease));
+        let camera = match self.pin {
+            // A pinned shot is cut on the flag and holds it: no ball tracking, no
+            // preview blend, just the spot the foul was called on.
+            Some(at) => self.flag_camera(at, dir),
+            None => {
+                let shot = self.camera_for(mode, focus, dir, sim.los, sim.setup.ball_y);
+                let wide =
+                    self.camera_for(CameraMode::SkyCam, focus, dir, sim.los, sim.setup.ball_y);
+                blend_camera(&shot, &wide, smooth(self.preview_ease))
+            }
+        };
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
@@ -937,6 +962,20 @@ impl Broadcast {
         }
     }
 
+    /// The shot on a flag: tight, low and side-on, with the pennant in the middle
+    /// of it. The replay camera leads the runner by three yards, which on a foul
+    /// would put the flag off to one side of a picture about something else.
+    fn flag_camera(&self, at: Vec2, direction: i8) -> Camera {
+        let d = direction as f32;
+        let pos = Vec3::new(at.x - d * 6.0, at.y + 9.0, 4.0);
+        let look = Vec3::new(at.x, at.y, 0.9);
+        let (pos, look) = lens_shift(pos, look, at, self.lens_zoom, self.lens_tilt);
+        let mut cam = Camera::new(pos, 0.0, 0.0);
+        cam.look_at(look);
+        cam.fov = 34f32.to_radians();
+        cam
+    }
+
     /// `action` is the point the camera is anchored on: the ball, eased, for a
     /// live snap. Every mode places itself relative to it, so no shot can lose
     /// track of where the ball is.
@@ -971,9 +1010,13 @@ impl Broadcast {
                 Vec3::new(los + d * 13.0, ball_y, 1.3),
                 44f32,
             ),
+            // Straight up the field: the lens sits behind the ball, in the ball's
+            // own lane, and looks down it. It used to stand five yards off that
+            // lane and aim back across at the ball, which is why every sky shot --
+            // and the pre-snap preview, which eases into this one -- was tilted.
             CameraMode::SkyCam => (
-                Vec3::new(action.x - d * 15.0, action.y - 5.0, 40.0),
-                Vec3::new(action.x, action.y, 0.0),
+                Vec3::new(action.x - d * 17.0, action.y, 34.0),
+                Vec3::new(action.x + d * 19.0, action.y, 0.0),
                 50f32,
             ),
             CameraMode::Replay => (
@@ -1353,8 +1396,15 @@ fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode, lens: (f32, f32)) -> 
         // tipped up enough that the men are not pinned to the bottom of the frame.
         _ => (10.0, 7.0, 6.0, 33.0),
     };
-    let pos = Vec3::new(focus.x - dir * dist, focus.y * 0.55, height);
-    let look = Vec3::new(focus.x + dir * lead, focus.y * 0.72, 0.35);
+    // The sky shot sits in the return lane and looks straight up it; the rest sit
+    // a little off the line, which is what gives the field some width to them.
+    let (pos_y, look_y) = if mode == CameraMode::SkyCam {
+        (focus.y, focus.y)
+    } else {
+        (focus.y * 0.55, focus.y * 0.72)
+    };
+    let pos = Vec3::new(focus.x - dir * dist, pos_y, height);
+    let look = Vec3::new(focus.x + dir * lead, look_y, 0.35);
     let (pos, look) = lens_shift(pos, look, focus, lens.0, lens.1);
     let mut cam = Camera::new(pos, 0.0, 0.0);
     cam.fov = fov.to_radians();
@@ -1583,6 +1633,87 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The sky shot is straight: behind the ball, in the ball's own lane, looking
+    /// down the field. It used to stand five yards off that lane, which is what
+    /// made it -- and the preview that eases into it -- read as tilted.
+    #[test]
+    fn the_sky_shot_looks_straight_down_the_field() {
+        let teams = league_teams();
+        let b = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        for y in [0.0f32, -12.0, 9.0] {
+            for dir in [1i8, -1] {
+                let cam = b.camera_for(CameraMode::SkyCam, Vec2::new(50.0, y), dir, 40.0, 0.0);
+                assert!(
+                    (cam.pos.y - y).abs() < 1e-3,
+                    "the sky lens sits {:.2} yards off the ball's lane",
+                    cam.pos.y - y
+                );
+                let expect = if dir > 0 { 0.0 } else { std::f32::consts::PI };
+                let mut off = cam.yaw - expect;
+                while off > std::f32::consts::PI {
+                    off -= std::f32::consts::TAU;
+                }
+                while off < -std::f32::consts::PI {
+                    off += std::f32::consts::TAU;
+                }
+                assert!(
+                    off.abs() < 1e-3,
+                    "the sky lens is turned {off:.2} rad off the field"
+                );
+                assert!(cam.pitch < 0.0, "the sky lens is not looking at the field");
+            }
+        }
+    }
+
+    /// A reviewed foul is cut to the flag, not to the ball.
+    #[test]
+    fn a_pinned_shot_frames_the_flag_instead_of_the_ball() {
+        let teams = league_teams();
+        let play = playbook()
+            .into_iter()
+            .find(|p| p.family.is_pass())
+            .expect("a pass play");
+        let def = defensive_playbook()[0].clone();
+        let setup = SnapSetup {
+            los: 55.0,
+            ball_y: 0.0,
+            direction: 1,
+            down: 1,
+            to_go: 10.0,
+            seed: 9,
+            offense_team: 0,
+            defense_team: 1,
+            is_try: false,
+        };
+        let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+        sim.step(1.0 / 60.0);
+        let mut b = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        let flag = Vec2::new(30.0, 0.0);
+        b.pin_focus(Some(flag));
+        let cam = b.live_scene(&sim, CameraMode::Replay).1;
+        let lens = crate::scene::Projector::new(640, 360, cam.fov);
+        let (fx, _, _) = lens
+            .project(cam.view(Vec3::new(flag.x, flag.y, 0.5)))
+            .expect("the flag is not in the picture");
+        assert!(
+            (fx - 320.0).abs() < 90.0,
+            "the flag sits at screen {fx}, not in the middle of the shot"
+        );
+        // The shot must not drift with the play: a pinned focus is the flag, and
+        // the flag has not moved while the men have.
+        for _ in 0..45 {
+            sim.step(1.0 / 60.0);
+        }
+        let later = b.live_scene(&sim, CameraMode::Replay).1;
+        assert!(
+            (cam.pos - later.pos).length() < 1e-4,
+            "the pinned shot drifted with the ball: {:?} -> {:?}",
+            cam.pos,
+            later.pos
+        );
+        b.pin_focus(None);
     }
 
     #[test]

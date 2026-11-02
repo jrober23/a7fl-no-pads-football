@@ -151,7 +151,12 @@ const THROW_OFF_LIGHT_AIR: f32 = THROW_OFF_MIN_AIR_YARDS - 6.0;
 
 /// How long a loose ball lies there while everybody converges on it, before the
 /// nearest man is on it and the play is dead.
-const LOOSE_SECONDS: f32 = 1.35;
+const LOOSE_SECONDS: f32 = 2.2;
+
+/// How close the returner has to be to the spot the ball comes down to field it.
+/// Under the old two-and-a-half yards a ball that came down at a man's feet was
+/// ruled a muff he had never touched.
+const CATCH_RADIUS: f32 = 3.4;
 
 /// How long the tackle that ends a return takes to put him on the turf. The ball
 /// is dead at the moment of contact; this is the picture of it, so the return does
@@ -225,6 +230,13 @@ pub struct ThrowOffSim<'a> {
     /// Sim time the returner took the ball in, so a client can turn its camera
     /// upfield the way a broadcast does.
     catch_t: Option<f32>,
+    /// Sim time the return began. The thirty-second clock runs on the return, not
+    /// on the throw-off: it used to run from the release, so a slow throw had the
+    /// return whistled dead the instant the ball was caught.
+    return_t: f32,
+    /// True when the ball came down in the returner's hands and he did not hold it,
+    /// as opposed to landing untouched with nobody under it.
+    muffed: bool,
     /// A rule the throw has already broken, kept back until the ball is dead: the
     /// throw still flies, so the player sees it leave the hand.
     violation: Option<(ThrowOffOutcome, String)>,
@@ -326,6 +338,8 @@ impl<'a> ThrowOffSim<'a> {
             human_thrower: false,
             fair_catch: false,
             catch_t: None,
+            return_t: 0.0,
+            muffed: false,
             violation: None,
             loose_t: 0.0,
             human_hit: None,
@@ -359,6 +373,18 @@ impl<'a> ThrowOffSim<'a> {
     pub fn set_human(&mut self, index: Option<usize>, dir: Vec2) {
         self.human = index;
         self.human_dir = dir.clamp_len(1.0);
+    }
+
+    /// Where a man on the pad should run: where the stick is pushing him, or at the
+    /// ball when the stick is idle. Standing still under a throw has to mean
+    /// fielding it -- frozen at his mark, a returner never reached the ball at all
+    /// and the play was ruled over without anybody touching it.
+    fn pad_target(&self, i: usize, push: Vec2, ball: Vec2) -> Vec2 {
+        if push.length() > 0.2 {
+            self.players[i].pos + push * 4.0
+        } else {
+            ball
+        }
     }
 
     fn returner(&self) -> usize {
@@ -560,7 +586,7 @@ impl<'a> ThrowOffSim<'a> {
         for i in 1..4 {
             let speed = self.speed(i);
             let target = if human == Some(i) {
-                self.players[i].pos + push * 4.0
+                self.pad_target(i, push, landing)
             } else {
                 landing
             };
@@ -569,7 +595,7 @@ impl<'a> ThrowOffSim<'a> {
         let returner = self.returner();
         let speed = self.speed(returner);
         let target = if human == Some(returner) {
-            self.players[returner].pos + push * 4.0
+            self.pad_target(returner, push, landing)
         } else {
             landing
         };
@@ -631,8 +657,11 @@ impl<'a> ThrowOffSim<'a> {
         // Nobody got under it: it is a live ball on the ground, and it stays live
         // until somebody falls on it.
         let gap = self.players[returner].pos.dist(landing);
-        if gap > 2.4 {
-            self.loose(landing);
+        if gap > CATCH_RADIUS {
+            // Nobody was under it. That is a live ball on the turf -- not a muff,
+            // which is what it was called however far away the returner was --
+            // and the men converging on it settle who gets it.
+            self.loose(landing, false);
             return;
         }
 
@@ -676,13 +705,14 @@ impl<'a> ThrowOffSim<'a> {
         if !self.rng.chance(catch_p) {
             // A muff is a live ball: the throwing team may recover it but cannot
             // advance. It is played out on the ground like any other loose ball.
-            self.loose(landing);
+            self.loose(landing, true);
             return;
         }
 
         self.returner_has_ball = true;
         self.phase = ThrowPhase::Return;
         self.catch_t = Some(self.t);
+        self.return_t = self.t;
         self.ball = self.players[returner].pos;
         self.ball_z = 1.0;
         self.events.push(format!("{} brings it out", self.name(returner)));
@@ -690,11 +720,12 @@ impl<'a> ThrowOffSim<'a> {
 
     /// The ball is down and nobody has it. It is a live ball: the returner and the
     /// three gunners converge on it, and it is dead when the nearest man gets there.
-    fn loose(&mut self, landing: Vec2) {
+    fn loose(&mut self, landing: Vec2, muffed: bool) {
         self.phase = ThrowPhase::Loose;
         self.ball = landing;
         self.ball_z = 0.3;
         self.loose_t = 0.0;
+        self.muffed = muffed;
         self.events.push("Loose ball on the ground!".to_string());
     }
 
@@ -705,7 +736,7 @@ impl<'a> ThrowOffSim<'a> {
         for i in 1..self.players.len() {
             let speed = self.speed(i);
             let target = if human == Some(i) {
-                self.players[i].pos + push * 4.0
+                self.pad_target(i, push, ball)
             } else {
                 ball
             };
@@ -716,33 +747,30 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
-        // Whoever is closest when the whistle goes is the man on it. A ball nobody
-        // got to is simply down where it lies.
+        // Everybody has had two seconds to get there, so whoever is closest when
+        // the whistle goes is the man on it. A live ball is not whistled dead with
+        // nobody on it: that read as a recovery from the bottom of a pile that was
+        // not there, a frame after the ball came down.
         let returner = self.returner();
-        let (winner, gap) = (1..self.players.len())
+        let (winner, _gap) = (1..self.players.len())
             .map(|i| (i, self.players[i].pos.dist(ball)))
             .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
             .unwrap_or((returner, 99.0));
-        let on_it = gap < 2.0;
-        let throwing_team_has_it = on_it && self.players[winner].team == self.setup.throwing_team;
-        let (outcome, next, desc) = if throwing_team_has_it {
-            (
-                ThrowOffOutcome::RecoveredByK,
-                self.setup.throwing_team,
-                format!("Muffed, and {} falls on it for the throwing team.", self.name(winner)),
-            )
-        } else if on_it {
-            (
-                ThrowOffOutcome::Downed,
-                self.setup.receiving_team,
-                format!("Muffed, and {} falls on it.", self.name(winner)),
-            )
+        let recovered_by_k = self.players[winner].team == self.setup.throwing_team;
+        let (outcome, next, desc) = if recovered_by_k {
+            let desc = if self.muffed {
+                format!("Muffed, and {} falls on it for the throwing team.", self.name(winner))
+            } else {
+                format!("Nobody fields it, and {} is on the loose ball.", self.name(winner))
+            };
+            (ThrowOffOutcome::RecoveredByK, self.setup.throwing_team, desc)
         } else {
-            (
-                ThrowOffOutcome::Downed,
-                self.setup.receiving_team,
-                "The ball is down where it lies.".to_string(),
-            )
+            let desc = if self.muffed {
+                format!("Muffed, and {} falls on it.", self.name(winner))
+            } else {
+                format!("{} falls on the loose ball.", self.name(winner))
+            };
+            (ThrowOffOutcome::Downed, self.setup.receiving_team, desc)
         };
         self.finish(outcome, next, ball.x, 0, None, desc);
     }
@@ -814,7 +842,7 @@ impl<'a> ThrowOffSim<'a> {
         let human = self.human;
         let push = self.human_dir;
         let speed = self.speed(returner);
-        let target = if human == Some(returner) {
+        let target = if human == Some(returner) && push.length() > 0.2 {
             self.players[returner].pos + push * 4.0
         } else {
             target
@@ -827,7 +855,11 @@ impl<'a> ThrowOffSim<'a> {
         // Gunners chase, unless one of them is the man the human is driving.
         for g in 1..4 {
             let speed = self.speed(g);
-            let target = if human == Some(g) { self.players[g].pos + push * 4.0 } else { pos };
+            let target = if human == Some(g) {
+                self.pad_target(g, push, pos)
+            } else {
+                pos
+            };
             self.steer(g, target, speed, dt);
         }
 
@@ -944,8 +976,11 @@ impl<'a> ThrowOffSim<'a> {
             }
         }
 
-        if self.t > 30.0 {
-            let desc = "The return dies at the bottom of the pile.".to_string();
+        // Thirty seconds of return, counted from the catch: the old clock ran from
+        // the throw-off itself, so a player who took his time over the throw had
+        // the return called dead the moment the ball came down.
+        if self.t - self.return_t > 30.0 {
+            let desc = "The return is whistled down after thirty seconds.".to_string();
             self.finish(
                 ThrowOffOutcome::Downed,
                 self.setup.receiving_team,
@@ -1344,6 +1379,90 @@ mod tests {
             sim.tackle_in_progress() || sim.players[1].down,
             "the dive never got there"
         );
+    }
+
+    /// A man on the pad who is not touching the stick is standing under the
+    /// throw-off, not frozen out of it. He used to stand at his mark and never
+    /// reach the ball, and the play was ruled over the moment it came down.
+    #[test]
+    fn a_returner_who_stands_still_fields_the_ball() {
+        let (a, b) = teams();
+        let mut caught = 0;
+        for seed in 0..12u64 {
+            let setup = ThrowOffSetup { seed, ..ThrowOffSetup::normal() };
+            let mut sim = ThrowOffSim::new(&setup, &a, &b);
+            sim.human = Some(4);
+            sim.human_dir = Vec2::ZERO;
+            sim.snap_delay = 0.0;
+            sim.launch_with(1.0, 0.0);
+            let mut guard = 0;
+            while sim.result.is_none() && guard < 3000 {
+                sim.step(1.0 / 60.0);
+                guard += 1;
+            }
+            let fielded = sim.catch_time().is_some();
+            let r = sim.result.clone().expect("the throw-off finished");
+            if !fielded {
+                continue;
+            }
+            caught += 1;
+            assert_ne!(
+                r.outcome,
+                ThrowOffOutcome::RecoveredByK,
+                "seed {seed}: he caught it and it was given to the throwers: {}",
+                r.description
+            );
+            assert_ne!(
+                r.outcome,
+                ThrowOffOutcome::Downed,
+                "seed {seed}: caught, and then dead without a tackle: {}",
+                r.description
+            );
+        }
+        assert!(
+            caught >= 8,
+            "a returner standing under the ball fielded it {caught} times in 12"
+        );
+    }
+
+    /// The thirty-second clock is on the return, not on the throw-off. A throw
+    /// that took most of the half-minute to come down used to have the return
+    /// whistled dead the frame the ball was caught.
+    #[test]
+    fn the_thirty_second_clock_runs_from_the_catch() {
+        let (a, b) = teams();
+        let mut checked = 0;
+        for seed in 0..16u64 {
+            let setup = ThrowOffSetup { seed, ..ThrowOffSetup::normal() };
+            let mut sim = ThrowOffSim::new(&setup, &a, &b);
+            // The thrower holds it for nearly the whole of the half-minute.
+            sim.snap_delay = 26.0;
+            let mut guard = 0;
+            while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 4000 {
+                sim.step(1.0 / 60.0);
+                guard += 1;
+            }
+            if sim.phase != ThrowPhase::Return {
+                continue;
+            }
+            checked += 1;
+            assert!(sim.result.is_none(), "the return was over before it began");
+            let caught_at = sim.t;
+            let mut after = 0;
+            while sim.result.is_none() && after < 600 {
+                sim.step(1.0 / 60.0);
+                after += 1;
+            }
+            if let Some(r) = &sim.result {
+                assert!(
+                    !r.description.contains("thirty seconds"),
+                    "seed {seed}: caught at {caught_at:.1}s and whistled on the clock at {:.1}s: {}",
+                    sim.t,
+                    r.description
+                );
+            }
+        }
+        assert!(checked > 0, "no throw-off was caught, so the clock was never tested");
     }
 
     /// A return that ends in a tackle is not called the instant the hands close:

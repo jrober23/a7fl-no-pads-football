@@ -369,30 +369,94 @@ fn ids_in(all: &[Club], division: Division) -> Vec<usize> {
 
 fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
     let all = clubs();
-    let yours = pick_team(view, pad, &all, None, "YOUR TEAM")?;
-    let theirs = opponent_of(&all, yours);
+    // Both sides are the player's to pick now, not just his own: the second
+    // screen is the club he is playing against, from any division. Either screen
+    // can be left to a roll instead.
+    let yours = pick_team(view, pad, &all, None, "YOUR TEAM")?.club(&all, None);
+    let theirs = pick_team(view, pad, &all, Some(yours), "THEIR TEAM")?.club(&all, Some(yours));
     let receive = coin_flip(view, pad, &all, yours, theirs)?;
     Some(Kickoff { yours, theirs, receive })
 }
 
-/// The other side of the toss. The player picks one club, so the computer gets
-/// the next club in the same division: a divisional game, without a second
-/// screen to get through before the coin is in the air.
-fn opponent_of(all: &[Club], yours: usize) -> usize {
-    let list = ids_in(all, all[yours].division);
-    let at = list.iter().position(|&i| i == yours).unwrap_or(0);
-    list[(at + 1) % list.len()]
+/// What the carousel came back with: a club, or a roll of the division it was
+/// showing when the player took the random card.
+enum Pick {
+    Club(usize),
+    Random(usize),
+}
+
+impl Pick {
+    fn club(self, all: &[Club], avoid: Option<usize>) -> usize {
+        match self {
+            Pick::Club(i) => i,
+            Pick::Random(div) => roll_club(&ids_in(all, Division::ALL[div]), avoid, coin_seed()),
+        }
+    }
+}
+
+/// One club out of a list, never the one already in the game. The extra pass is
+/// for a one-club list, where the avoided club would otherwise be the answer.
+fn roll_club(list: &[usize], avoid: Option<usize>, seed: u64) -> usize {
+    let n = list.len().max(1);
+    let mut at = (seed as usize) % n;
+    for _ in 0..n {
+        if Some(list[at]) != avoid {
+            return list[at];
+        }
+        at = (at + 1) % n;
+    }
+    list[at]
+}
+
+/// One card of the carousel: a club's badge, or the roll.
+fn slot(
+    frame: &mut Frame,
+    all: &[Club],
+    cx: i32,
+    cy: i32,
+    size: i32,
+    club: Option<usize>,
+    lit: bool,
+) {
+    match club {
+        Some(i) => badge(frame, cx, cy, size, &all[i], lit),
+        None => roll_card(frame, cx, cy, size, lit),
+    }
+}
+
+/// The random card: a shield with a die punched through it, so an empty slot
+/// reads as a choice rather than a club that failed to load.
+fn roll_card(frame: &mut Frame, cx: i32, cy: i32, size: i32, lit: bool) {
+    let tone = |c: Rgb| if lit { c } else { c.lerp(backdrop(), 0.62) };
+    let w = size;
+    let h = size * 6 / 5;
+    let x = cx - w / 2;
+    let y = cy - h / 2;
+    frame.rounded_rect(x - 3, y - 3, w + 6, h + 6, w / 4, tone(accent()));
+    frame.rounded_rect(x, y, w, h, w / 5, tone(panel()));
+    let dot = (w / 9).max(2);
+    for (dx, dy) in [(0, 0), (-1, -1), (1, -1), (-1, 1), (1, 1)] {
+        frame.fill_rect(
+            cx + dx * dot - dot / 2,
+            cy + dy * dot - dot / 2,
+            dot,
+            dot,
+            tone(accent()),
+        );
+    }
+    centered_in(frame, cx, y + h + 6, "RANDOM", if size > 80 { 2 } else { 1 }, tone(paper()));
 }
 
 /// The carousel: the division along the top, the club in the middle, its city
-/// and nickname underneath. Left and right roll through the division.
+/// and nickname underneath, and a random card after the last club in the
+/// division. Left and right roll through the division.
 fn pick_team(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     all: &[Club],
     avoid: Option<usize>,
     heading: &str,
-) -> Option<usize> {
+) -> Option<Pick> {
     let mut div = 0usize;
     let mut sel = 0usize;
     let mut slide = 0.0f32;
@@ -415,8 +479,14 @@ fn pick_team(
                 slide = 0.0;
             }
         }
-        let list = ids_in(all, Division::ALL[div]);
-        let n = list.len().max(1);
+        // The clubs of this division and one card past them that rolls for the
+        // player, so he never has to know a club to pick one.
+        let mut slots: Vec<Option<usize>> = ids_in(all, Division::ALL[div])
+            .into_iter()
+            .map(Some)
+            .collect();
+        slots.push(None);
+        let n = slots.len();
         if let d = nav[0].step(input.stick.x, dt) {
             if d != 0 {
                 sel = wrap(sel, n, d);
@@ -426,17 +496,16 @@ fn pick_team(
         slide *= 1.0 - (dt * 9.0).min(1.0);
         said = (said - dt).max(0.0);
         if input.pressed.a {
-            let pick = list[sel];
-            if Some(pick) == avoid {
-                said = 1.6;
-            } else {
-                return Some(pick);
+            match slots[sel] {
+                Some(pick) if Some(pick) == avoid => said = 1.6,
+                Some(pick) => return Some(Pick::Club(pick)),
+                None => return Some(Pick::Random(div)),
             }
         }
 
-        let club = &all[list[sel]];
-        let prev = &all[list[wrap(sel, n, -1)]];
-        let next = &all[list[wrap(sel, n, 1)]];
+        let club = slots[sel];
+        let prev = slots[wrap(sel, n, -1)];
+        let next = slots[wrap(sel, n, 1)];
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
         night(&mut frame);
         centered(&mut frame, 16, heading, 2, accent());
@@ -449,11 +518,19 @@ fn pick_team(
             }
             frame.text_shadowed(x, 49, d.label(), 1, if on { paper() } else { dim() }, 1);
         }
-        badge(&mut frame, 96, 150, 62, prev, false);
-        badge(&mut frame, 544, 150, 62, next, false);
-        badge(&mut frame, 320 + slide as i32, 152, 104, club, true);
-        centered(&mut frame, 246, &club.city.to_uppercase(), 3, paper());
-        centered(&mut frame, 284, &club.name.to_uppercase(), 2, club.accent);
+        slot(&mut frame, all, 96, 150, 62, prev, false);
+        slot(&mut frame, all, 544, 150, 62, next, false);
+        slot(&mut frame, all, 320 + slide as i32, 152, 104, club, true);
+        let (city, name, tone) = match club {
+            Some(i) => (
+                all[i].city.to_uppercase(),
+                all[i].name.to_uppercase(),
+                all[i].accent,
+            ),
+            None => ("RANDOM".to_string(), "ROLL THE DICE".to_string(), accent()),
+        };
+        centered(&mut frame, 246, &city, 3, paper());
+        centered(&mut frame, 284, &name, 2, tone);
         if said > 0.0 {
             centered(&mut frame, 310, "ALREADY IN THIS GAME", 1, Rgb::new(255, 120, 96));
         } else {
@@ -697,14 +774,29 @@ mod tests {
         }
     }
 
+    /// A roll never hands the player the club already on the other side of the
+    /// game, whatever card he took it from.
     #[test]
-    fn the_computer_gets_the_next_club_in_the_division() {
+    fn a_random_pick_never_rolls_the_other_side() {
         let all = clubs();
-        for yours in 0..all.len() {
-            let theirs = opponent_of(&all, yours);
-            assert_ne!(theirs, yours, "the computer cannot be the club you picked");
-            assert_eq!(all[theirs].division, all[yours].division, "not a divisional game");
+        for div in 0..Division::ALL.len() {
+            let list = ids_in(&all, Division::ALL[div]);
+            for &avoid in &list {
+                for seed in 0..40u64 {
+                    let got = roll_club(&list, Some(avoid), seed);
+                    assert_ne!(got, avoid, "rolled the club already in the game");
+                    assert!(list.contains(&got), "rolled a club outside the division");
+                }
+            }
         }
+        // And with nobody to avoid, every club in the list can come up.
+        let list = ids_in(&all, Division::ALL[0]);
+        let mut seen = [false; 4];
+        for seed in 0..40u64 {
+            let got = roll_club(&list, None, seed);
+            seen[list.iter().position(|&i| i == got).expect("not in the list")] = true;
+        }
+        assert!(seen.iter().all(|s| *s), "the roll never reached every club: {seen:?}");
     }
 
     #[test]

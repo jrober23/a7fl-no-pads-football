@@ -1640,11 +1640,39 @@ fn worth_a_replay(sim: &PlaySim) -> bool {
 /// The tape holds the played frames themselves rather than re-running the snap:
 /// the player's throws, moves and stick work are all in it, and a re-simulation
 /// would have none of them and would disagree with the result it is replaying.
+///
+/// A snap with a flag on it is reviewed where the flag is. The call is what the
+/// tape is being run for, so the shot is cut to the spot of the foul rather than
+/// following the big play it happened on.
 fn play_back(
     tape: &[PlaySim],
     broadcast: &mut Broadcast,
     view: &mut View,
+    pad: Option<&mut Pad>,
+) -> bool {
+    let flag = tape
+        .iter()
+        .rev()
+        .find_map(|snap| snap.flag.as_ref())
+        .map(|call| a7fl_core::math::Vec2::new(call.spot_of_foul, 0.0));
+    let (mode, label) = if flag.is_some() {
+        (CameraMode::Replay, "THE FLAG")
+    } else {
+        (CameraMode::Broadcast, "REPLAY")
+    };
+    broadcast.pin_focus(flag);
+    let done = play_back_tape(tape, broadcast, view, pad, mode, label);
+    broadcast.pin_focus(None);
+    done
+}
+
+fn play_back_tape(
+    tape: &[PlaySim],
+    broadcast: &mut Broadcast,
+    view: &mut View,
     mut pad: Option<&mut Pad>,
+    mode: CameraMode,
+    label: &str,
 ) -> bool {
     let ui = PassUi {
         focus: None,
@@ -1681,11 +1709,11 @@ fn play_back(
                 }
             }
         }
-        let mut frame = broadcast.live_frame_ui(snapshot, CameraMode::Broadcast, &ui);
-        let tw = a7fl_render::font::text_width("REPLAY", 3) as i32;
+        let mut frame = broadcast.live_frame_ui(snapshot, mode, &ui);
+        let tw = a7fl_render::font::text_width(label, 3) as i32;
         frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
         frame.fill_rect(12, 12, 4, 30, hud::RED);
-        frame.text_shadowed(23, 20, "REPLAY", 3, hud::WHITE, 1);
+        frame.text_shadowed(23, 20, label, 3, hud::WHITE, 1);
         let lines = vec!["REPLAY   [A] SKIP".to_string()];
         if !view.show(&mut frame, &lines) {
             return false;
@@ -1698,7 +1726,7 @@ fn play_back(
     let Some(last) = tape.last() else {
         return true;
     };
-    let mut frame = broadcast.live_frame_ui(last, CameraMode::Broadcast, &ui);
+    let mut frame = broadcast.live_frame_ui(last, mode, &ui);
     let tw = a7fl_render::font::text_width("END OF PLAY", 3) as i32;
     frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
     frame.fill_rect(12, 12, 4, 30, hud::RED);
@@ -1719,7 +1747,7 @@ fn play_back(
     let fade = Instant::now();
     while fade.elapsed() < Duration::from_millis(280) {
         let t = (fade.elapsed().as_secs_f32() / 0.28).clamp(0.0, 1.0);
-        let mut frame = broadcast.live_frame_ui(last, CameraMode::Broadcast, &ui);
+        let mut frame = broadcast.live_frame_ui(last, mode, &ui);
         frame.fill_rect_alpha(0, 0, frame.w as i32, frame.h as i32, hud::INK, t);
         if !view.show(&mut frame, &[]) {
             return false;
