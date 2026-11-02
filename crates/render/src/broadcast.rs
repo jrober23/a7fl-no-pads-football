@@ -408,7 +408,7 @@ impl Broadcast {
 
     /// The called play on the field: each eligible man's route as the sim has it
     /// built, drawn on the turf from where he is standing to where it ends.
-    fn paint_routes(&self, frame: &mut Frame, camera: &Camera, sim: &PlaySim) {
+    fn paint_routes(&self, frame: &mut Frame, camera: &Camera, sim: &PlaySim, emphasis: bool) {
         const ROUTE: a7fl_core::math::Rgb = a7fl_core::math::Rgb::hex(0xEAF3FF);
         const END: a7fl_core::math::Rgb = a7fl_core::math::Rgb::hex(0xFFD84A);
         for i in 0..7 {
@@ -424,7 +424,13 @@ impl Broadcast {
                     self.scene.projector.project(camera.view(a)),
                     self.scene.projector.project(camera.view(b)),
                 ) {
-                    frame.line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, ROUTE, 1);
+                    let weight = if emphasis { 2 } else { 1 };
+                    frame.line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, ROUTE, weight);
+                    if emphasis {
+                        // A halo under the brighter line, so the route still reads
+                        // where the turf is bright.
+                        frame.line(x0 as i32 + 1, y0 as i32, x1 as i32 + 1, y1 as i32, END, 1);
+                    }
                 }
                 last = pt;
             }
@@ -434,7 +440,8 @@ impl Broadcast {
                 .projector
                 .project(camera.view(Vec3::new(last.x, last.y, 0.04)))
             {
-                frame.fill_rect_alpha(x as i32 - 4, y as i32 - 1, 8, 3, END, 0.9);
+                let (w, h) = if emphasis { (10, 5) } else { (8, 3) };
+                frame.fill_rect_alpha(x as i32 - w / 2, y as i32 - h / 2, w, h, END, 0.95);
             }
         }
     }
@@ -546,15 +553,21 @@ impl Broadcast {
             None => (ball_pos, FOLLOW),
         };
         let focus = self.focus.track_with(anchor, rate);
-        let camera = self.camera_for(mode, focus, sim.setup.direction, sim.los, sim.setup.ball_y);
+        // An interception turns the play round: the picture has to face the way
+        // the man with the ball is running, not the way the ball was snapped.
+        let dir = sim.facing();
+        // Holding the preview at the line lifts the shot over the whole route
+        // tree instead of the sliver of it a runner's camera holds.
+        let mode = if sim.previewing() { CameraMode::SkyCam } else { mode };
+        let camera = self.camera_for(mode, focus, dir, sim.los, sim.setup.ball_y);
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
-        self.paint_lines(&mut frame, &camera, sim.los, sim.setup.direction, sim.setup.to_go);
+        self.paint_lines(&mut frame, &camera, sim.los, dir, sim.setup.to_go);
         // Before the snap the call is drawn on the grass: every route the play
         // runs, so the throw can be read before the ball goes.
         if sim.phase == a7fl_core::sim::Phase::PreSnap {
-            self.paint_routes(&mut frame, &camera, sim);
+            self.paint_routes(&mut frame, &camera, sim, sim.previewing());
         }
         self.draw_bodies(&mut frame, &camera, &players);
         if let Some(flag) = &sim.flag {

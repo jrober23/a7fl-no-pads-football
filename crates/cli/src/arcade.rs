@@ -56,6 +56,10 @@ const MIN_POWER: f32 = 0.18;
 /// A press shorter than this is not a throw at all: it is a pump fake. Tap the
 /// same receiver twice and the quarterback pumps twice.
 const PUMP_TAP: f32 = 0.16;
+/// How long the picture holds while an interception turns it round.
+const TURNAROUND: Duration = Duration::from_millis(700);
+/// How many cards an audible shows at once over the field.
+const POPUP_CARDS: usize = 3;
 /// The four passing buttons, in the order the badges are drawn.
 const PASS_LABELS: [&str; 4] = ["A", "B", "X", "Y"];
 /// The same four buttons once the ball is in a runner's hands. Y is the stiff
@@ -912,6 +916,8 @@ impl Arcade {
         let off_abbr = self.game.teams[self.game.offense()].abbr.clone();
         let book: &[Play] = &self.book;
 
+        let my_team = self.my_team.unwrap_or(self.game.possession);
+
         // Borrow the fields separately: the game owns the snap, the rest of the
         // struct drives the picture and reads the controls.
         let game = &mut self.game;
@@ -935,6 +941,7 @@ impl Arcade {
                 &header,
                 &off_abbr,
                 book,
+                my_team,
             );
             if !finished {
                 *quit = true;
@@ -950,6 +957,7 @@ impl Arcade {
     fn run_defense_snap(&mut self, def: DefCall) {
         let play = self.cpu_offense();
         let header = self.header();
+        let defbook: &[DefCall] = &self.defbook;
         let game = &mut self.game;
         let broadcast = &mut self.broadcast;
         let view = &mut self.view;
@@ -960,7 +968,16 @@ impl Arcade {
 
         let record = game.snap_with(play, def, |sim| {
             sim.set_human_defender(sim.nearest_defender());
-            let finished = drive_defense(sim, broadcast, view, pad.as_mut(), flip_y, cam, &header);
+            let finished = drive_defense(
+                sim,
+                broadcast,
+                view,
+                pad.as_mut(),
+                flip_y,
+                cam,
+                &header,
+                defbook,
+            );
             if !finished {
                 *quit = true;
             }
@@ -1398,6 +1415,7 @@ fn drive(
     header: &str,
     off_abbr: &str,
     book: &[Play],
+    my_team: usize,
 ) -> bool {
     let mut acc = 0.0f64;
     let mut last = Instant::now();
@@ -1407,6 +1425,8 @@ fn drive(
     let mut charge: Option<(usize, f32)> = None;
     // When the ball died, so the picture can hold on the tackle before the card.
     let mut dead_at: Option<Instant> = None;
+    // When the play turned round on an interception, so the screen can swing.
+    let mut turn: Option<Instant> = None;
 
     loop {
         let now = Instant::now();
@@ -1432,13 +1452,35 @@ fn drive(
         let view_mode = CAMS[*cam % CAMS.len()];
 
         // Before the snap the pad belongs to the line, not to the quarterback: A
-        // goes, X opens the audible, Y flips the call.
+        // goes, X opens the audible, Y flips the call, LT barks a hard count and
+        // holding RT shows the whole route tree until it is let go.
         if sim.phase == Phase::PreSnap {
+            sim.set_preview(input.held.throw);
+            if input.pressed.dummy {
+                sim.dummy_audible();
+            }
             if input.pressed.y {
                 sim.flip_play();
             }
             if input.pressed.x {
-                match audible_sheet(view, pad.as_deref_mut(), book, &sim.play) {
+                let current = sim.play.clone();
+                let forms = formations_in(book);
+                let list = forms
+                    .iter()
+                    .position(|f| *f == current.formation)
+                    .map(|f| plays_in(book, forms[f]))
+                    .unwrap_or_default();
+                match audible_popup(
+                    sim,
+                    broadcast,
+                    view,
+                    pad.as_deref_mut(),
+                    view_mode,
+                    header,
+                    book,
+                    &list,
+                    &current,
+                ) {
                     Audible::Picked(play) => sim.call_play(play),
                     Audible::Back => {}
                     Audible::Quit => return false,
@@ -1450,13 +1492,16 @@ fn drive(
             if input.pressed.a {
                 sim.request_snap();
             }
+        } else {
+            sim.set_preview(false);
         }
         let presnap = sim.phase == Phase::PreSnap;
 
         // Once the ball is in a runner's hands and there is no pass to throw, the
         // face buttons are his move set rather than the receivers'.
-        let running = !presnap && sim.face_buttons_are_moves();
-        let targets = if running || presnap {
+        let returning = sim.phase == Phase::Return;
+        let running = !presnap && !returning && sim.face_buttons_are_moves();
+        let targets = if running || presnap || returning {
             Vec::new()
         } else {
             sim.eligible_targets()
@@ -1464,7 +1509,7 @@ fn drive(
         // Which way the stick points in the world depends on the shot on screen:
         // the sideline camera and the two behind-the-ball ones disagree about
         // which axis runs up it.
-        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.setup.direction);
+        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.facing());
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
         let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
         if running {
@@ -1525,9 +1570,33 @@ fn drive(
             power,
         }));
 
-        while acc >= STEP as f64 && sim.result.is_none() {
-            sim.step(STEP);
-            acc -= STEP as f64;
+        // An interception turns the play round: the picture swings, the pad goes
+        // to the man who took it if he is ours, and then he runs.
+        if returning {
+            if turn.is_none() {
+                turn = Some(now);
+                if my_team == sim.setup.defense_team {
+                    sim.set_human_defender(sim.returner_index());
+                }
+            }
+            sim.set_def_control(Some(DefControl {
+                move_dir: stick,
+                tackle: false,
+                dive: false,
+                swat: false,
+                intercept: false,
+            }));
+        }
+        let turning = turn
+            .map(|since| now.duration_since(since) < TURNAROUND)
+            .unwrap_or(false);
+        if !turning {
+            while acc >= STEP as f64 && sim.result.is_none() {
+                sim.step(STEP);
+                acc -= STEP as f64;
+            }
+        } else {
+            acc = 0.0;
         }
 
         // The word over a dead ball arrives over half a second rather than cutting
@@ -1581,10 +1650,14 @@ fn drive(
             }
             // Who the pad is on: the man with the ball, or the quarterback before
             // there is one.
-            let focus = sim.carrier.or(Some(sim.qb)).map(|i| Focus {
-                at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
-                label: "YOU".to_string(),
-            });
+            let focus = if returning && my_team != sim.setup.defense_team {
+                None
+            } else {
+                sim.carrier.or(Some(sim.qb)).map(|i| Focus {
+                    at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+                    label: "YOU".to_string(),
+                })
+            };
             let ui = PassUi {
                 focus,
                 badges,
@@ -1607,7 +1680,13 @@ fn drive(
             );
             let mut lines = vec![header.to_string(), call];
 
-            if running {
+            if returning {
+                lines.push(if my_team == sim.setup.defense_team {
+                    "  INTERCEPTION - THE BALL IS YOURS   MOVE TO RUN IT BACK   [START] PAUSE".to_string()
+                } else {
+                    "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string()
+                });
+            } else if running {
                 // The moves, and which one is in flight right now.
                 let set = moves_for(sim);
                 let mut row = format!(
@@ -1640,7 +1719,7 @@ fn drive(
             }
             if presnap {
                 lines.push(format!(
-                    "  AT THE LINE   [A] SNAP   [X] AUDIBLE   [Y] FLIP   [SELECT] {}   [START] PAUSE",
+                    "  [A] SNAP   [X] AUDIBLE   [Y] FLIP   HOLD [RT] PREVIEW   [LT] DUMMY COUNT   [SELECT] {}",
                     cam_name(view_mode)
                 ));
             } else {
@@ -1693,6 +1772,7 @@ fn drive(
 /// is in. It used to be that left and right changed formation, which left the
 /// second and third card of every row unreachable -- the only plays an audible
 /// could ever call were the first of each row.
+#[cfg(test)]
 fn audible_nav(
     in_plays: bool,
     pick: usize,
@@ -1726,74 +1806,112 @@ enum Audible {
     Quit,
 }
 
-fn audible_sheet(
+/// Where the three-card window of an audible starts.
+fn popup_window(pick: usize) -> usize {
+    pick / POPUP_CARDS * POPUP_CARDS
+}
+
+/// A small card drawn over the live picture. The full sheet used to take the
+/// field away, which meant a player checking out of a call could not see the look
+/// he was checking out of.
+fn draw_popup(frame: &mut a7fl_render::Frame, title: &str, cards: &[String], pick: usize) {
+    use a7fl_core::math::Rgb;
+    let ink = Rgb::hex(0x0E1116);
+    let accent = Rgb::hex(0xFFC440);
+    let paper = Rgb::new(232, 238, 246);
+    let faded = Rgb::new(150, 164, 184);
+    let w = 392i32;
+    let h = 66i32;
+    let x = (frame.w as i32 - w) / 2;
+    let y = frame.h as i32 - 104;
+    frame.fill_rect_alpha(x, y, w, h, ink, 0.88);
+    frame.fill_rect(x, y, w, 2, Rgb::hex(0x345C9C));
+    frame.text(x + 8, y + 7, title, 1, accent);
+    let first = popup_window(pick);
+    let last = (first + POPUP_CARDS).min(cards.len());
+    let card_w = (w - 16) / POPUP_CARDS as i32;
+    for (n, i) in (first..last).enumerate() {
+        let cx = x + 8 + n as i32 * card_w;
+        if i == pick {
+            frame.fill_rect_alpha(cx, y + 20, card_w - 4, 26, accent, 0.22);
+            frame.fill_rect(cx, y + 20, 2, 26, accent);
+        }
+        frame.text(
+            cx + 6,
+            y + 28,
+            &cards[i],
+            1,
+            if i == pick { accent } else { paper },
+        );
+    }
+    frame.text(x + 8, y + 52, "[STICK] CYCLE   [A] TAKE IT   [B] BACK", 1, faded);
+}
+
+/// The offensive audible, over the picture: three plays at a time, the field
+/// still on screen behind it.
+fn audible_popup(
+    sim: &mut PlaySim,
+    broadcast: &mut Broadcast,
     view: &mut View,
     mut pad: Option<&mut Pad>,
+    view_mode: CameraMode,
+    header: &str,
     book: &[Play],
+    list: &[usize],
     current: &Play,
 ) -> Audible {
-    let forms = formations_in(book);
-    if forms.is_empty() {
+    if list.is_empty() {
         return Audible::Back;
     }
-    let mut form = forms
-        .iter()
-        .position(|f| *f == current.formation)
-        .unwrap_or(0);
-    let mut pick = plays_in(book, forms[form])
+    let mut pick = list
         .iter()
         .position(|&i| book[i].name == current.name)
         .unwrap_or(0);
-    let mut in_plays = true;
     let mut flip = current.flip;
     let mut nav = Nav::default();
     let mut last = Instant::now();
-    // A button still held from the line must not pick the first card.
+    // A button still held from the line must not take the first card.
     view.reset();
     loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
-
-        let list = plays_in(book, forms[form]);
-        if list.is_empty() {
-            return Audible::Back;
-        }
-        pick = pick.min(list.len() - 1);
-        let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
-        callsheet::draw_layered(&mut frame, book, &forms, form, pick, in_plays, flip);
-        let play = &book[list[pick]];
-        let help = if in_plays {
-            "  [STICK] PLAY   [LEFT] FORMATIONS   [A] CALL IT   [Y] FLIP   [B] BACK"
-        } else {
-            "  [STICK] FORMATION   [RIGHT] INTO THE PLAYS   [A] CALL IT   [Y] FLIP   [B] BACK"
-        };
+        let cards: Vec<String> = list
+            .iter()
+            .map(|&i| format!("{}  {}", book[i].name, book[i].family.label()))
+            .collect();
+        let mut frame = broadcast.live_frame(sim, view_mode);
+        draw_popup(
+            &mut frame,
+            if flip { "AUDIBLE - FLIPPED" } else { "AUDIBLE" },
+            &cards,
+            pick,
+        );
+        let called = &book[list[pick]];
         let lines = vec![
+            header.to_string(),
             format!(
-                "  AUDIBLE - {} - {}   {}   {} PLAYS IN THIS SET",
-                play.name,
-                play.formation.label(),
-                if flip { "FLIPPED" } else { "AS DRAWN" },
-                list.len()
+                "  {} - {} - TAKE IT OR BACK OUT, THE LOOK STAYS ON THE FIELD",
+                called.name,
+                called.formation.label()
             ),
-            help.to_string(),
         ];
         if !view.show(&mut frame, &lines) {
             return Audible::Quit;
         }
         let input = pad::mix(pad.as_deref_mut(), view.poll());
-        if input.pressed.start || input.pressed.b {
+        if input.pressed.start || input.pressed.b || input.pressed.x {
             return Audible::Back;
         }
         if input.pressed.y {
             flip = !flip;
         }
         if let Some(dir) = nav.step(input.stick, dt) {
-            let (inside, next_pick, next_form) =
-                audible_nav(in_plays, pick, list.len(), form, forms.len(), dir);
-            in_plays = inside;
-            pick = next_pick;
-            form = next_form;
+            match dir {
+                Dir::Right => pick = (pick + 1) % list.len(),
+                Dir::Left => pick = (pick + list.len() - 1) % list.len(),
+                _ => {}
+            }
         }
         if input.pressed.a {
             let mut called = book[list[pick]].clone();
@@ -1801,6 +1919,72 @@ fn audible_sheet(
                 called = called.flipped();
             }
             return Audible::Picked(called);
+        }
+        std::thread::sleep(Duration::from_millis(8));
+    }
+}
+
+enum DefenseAudible {
+    Picked(DefCall),
+    Back,
+    Quit,
+}
+
+/// The defensive check, the same card over the same picture: three calls at a
+/// time, cycled with the stick.
+fn defense_popup(
+    sim: &mut PlaySim,
+    broadcast: &mut Broadcast,
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    view_mode: CameraMode,
+    header: &str,
+    book: &[DefCall],
+) -> DefenseAudible {
+    if book.is_empty() {
+        return DefenseAudible::Back;
+    }
+    let mut pick = book
+        .iter()
+        .position(|d| d.name == sim.def.name)
+        .unwrap_or(0);
+    let mut nav = Nav::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let cards: Vec<String> = book
+            .iter()
+            .map(|d| format!("{}  {}", d.name, d.coverage.label()))
+            .collect();
+        let mut frame = broadcast.live_frame(sim, view_mode);
+        draw_popup(&mut frame, "DEFENSIVE CALL", &cards, pick);
+        let lines = vec![
+            header.to_string(),
+            format!(
+                "  {} - {} - CHECK TO IT OR STAY IN WHAT YOU HAVE",
+                book[pick].name,
+                book[pick].coverage.label()
+            ),
+        ];
+        if !view.show(&mut frame, &lines) {
+            return DefenseAudible::Quit;
+        }
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.start || input.pressed.b {
+            return DefenseAudible::Back;
+        }
+        if let Some(dir) = nav.step(input.stick, dt) {
+            match dir {
+                Dir::Right => pick = (pick + 1) % book.len(),
+                Dir::Left => pick = (pick + book.len() - 1) % book.len(),
+                _ => {}
+            }
+        }
+        if input.pressed.a {
+            return DefenseAudible::Picked(book[pick].clone());
         }
         std::thread::sleep(Duration::from_millis(8));
     }
@@ -1816,11 +2000,13 @@ fn drive_defense(
     flip_y: bool,
     cam: &mut usize,
     header: &str,
+    defbook: &[DefCall],
 ) -> bool {
     let mut acc = 0.0f64;
     let mut last = Instant::now();
     let mut drew = Instant::now() - FRAME;
     let mut dead_at: Option<Instant> = None;
+    let mut turn: Option<Instant> = None;
     let mut switched = Instant::now() - Duration::from_millis(400);
 
     loop {
@@ -1842,7 +2028,28 @@ fn drive_defense(
             *cam = (*cam + 1) % CAMS.len();
         }
         let view_mode = CAMS[*cam % CAMS.len()];
-        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.setup.direction);
+        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.facing());
+
+        // RB checks the defence at the line: three calls at a time over the
+        // picture, so the look being checked out of stays on the field.
+        if sim.phase == Phase::PreSnap && input.pressed.shoulder {
+            match defense_popup(
+                sim,
+                broadcast,
+                view,
+                pad.as_deref_mut(),
+                view_mode,
+                header,
+                defbook,
+            ) {
+                DefenseAudible::Picked(call) => sim.call_defense(call),
+                DefenseAudible::Back => {}
+                DefenseAudible::Quit => return false,
+            }
+            last = Instant::now();
+            acc = 0.0;
+            continue;
+        }
 
         // B walks the pad round the seven. A wraps up, X dives at him, Y picks.
         if input.pressed.b && now.duration_since(switched) >= Duration::from_millis(120) {
@@ -1857,9 +2064,20 @@ fn drive_defense(
             intercept: input.pressed.y,
         }));
 
-        while acc >= STEP as f64 && sim.result.is_none() {
-            sim.step(STEP);
-            acc -= STEP as f64;
+        // A pick turns the play round: hold the shot while the camera swings.
+        if sim.phase == Phase::Return && turn.is_none() {
+            turn = Some(now);
+        }
+        let turning = turn
+            .map(|since| now.duration_since(since) < TURNAROUND)
+            .unwrap_or(false);
+        if !turning {
+            while acc >= STEP as f64 && sim.result.is_none() {
+                sim.step(STEP);
+                acc -= STEP as f64;
+            }
+        } else {
+            acc = 0.0;
         }
 
         // The word over a dead ball arrives over half a second rather than cutting
@@ -1911,10 +2129,17 @@ fn drive_defense(
                     "  INTERCEPTION - THE BALL IS YOURS   RUN IT BACK   [START] PAUSE".to_string(),
                 );
             } else {
-                lines.push(
-                    "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [SELECT] CAMERA   [START] PAUSE"
-                        .to_string(),
-                );
+                if sim.phase == Phase::PreSnap {
+                    lines.push(
+                        "  WALK UP TO THE LINE   [RB] CHECK THE CALL   [B] SWITCH   [SELECT] CAMERA   DO NOT JUMP THE SNAP"
+                            .to_string(),
+                    );
+                } else {
+                    lines.push(
+                        "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [SELECT] CAMERA   [START] PAUSE"
+                            .to_string(),
+                    );
+                }
             }
             if let Some(flag) = &sim.flag {
                 lines.push(format!(
@@ -2074,6 +2299,14 @@ mod tests {
 
     fn close(a: Vec2, b: Vec2) -> bool {
         (a - b).length() < 1e-5
+    }
+
+    #[test]
+    fn the_audible_pages_three_cards_at_a_time() {
+        assert_eq!(popup_window(0), 0);
+        assert_eq!(popup_window(2), 0);
+        assert_eq!(popup_window(3), 3);
+        assert_eq!(popup_window(7), 6);
     }
 
     #[test]

@@ -12,14 +12,13 @@
 //! * pass interference, holding while the quarterback is in the pocket, roughing
 //!   the passer, intentional grounding,
 //! * sideline / end line / goal line geometry including safeties.
-
 use crate::field::{self, FIELD_HALF_WIDTH, FIELD_LENGTH};
 use crate::math::{approach_angle, clamp, lerp, Rng, Vec2};
 use crate::playbook::{
     defensive_alignment, Assign, Coverage, DefCall, DefRole, OffRole, Play, PlayFamily,
 };
 use crate::moves::{CarrierMove, Kind};
-use crate::rules::{PenaltyCall, PenaltyKind};
+use crate::rules::{FoulTeam, PenaltyCall, PenaltyKind};
 use crate::team::{Attributes, Team};
 
 pub const TACKLE_RADIUS: f32 = 0.95;
@@ -58,6 +57,14 @@ pub const PUMP_TIME: f32 = 0.55;
 
 /// How long an interception may be run back before the returner is done.
 pub const RETURN_SECONDS: f32 = 9.0;
+/// How long a CPU offense waits at the line when a human is on defence: long
+/// enough to walk a man up, check to another call, and get set.
+pub const PRESNAP_WAIT: f32 = 2.6;
+/// How long a dummy count takes to sell at the line.
+pub const DUMMY_TIME: f32 = 1.1;
+/// How far a defender may lean into the neutral zone before the ball goes. Any
+/// further and he is across the line, which is a foul the moment the snap comes.
+pub const NEUTRAL_ZONE: f32 = 1.6;
 /// Ground covered by one full stride cycle (two steps). Drives the run animation:
 /// about 3.2 yards at speed, which is five or so steps a second flat out.
 pub const STRIDE_YARDS: f32 = 3.2;
@@ -401,6 +408,10 @@ pub struct PlaySim<'a> {
     pub flag: Option<PenaltyCall>,
     /// Sim time the flag came in, so the picture can pulse it.
     pub flag_at: f32,
+    /// True while the player is holding the preview button at the line.
+    preview: bool,
+    /// Time left of a dummy count being sold at the line.
+    dummy_t: f32,
     /// A tackle in progress: the hit is on and the two men are going down.
     pub wrap: Option<Wrap>,
     /// Whether a defender has already had his chance at a ball in the air, so one
@@ -542,6 +553,8 @@ impl<'a> PlaySim<'a> {
             possession_start: None,
             flag: None,
             flag_at: 0.0,
+            preview: false,
+            dummy_t: 0.0,
             wrap: None,
             pass_contacted: false,
             elapsed_override: None,
@@ -879,18 +892,32 @@ impl<'a> PlaySim<'a> {
             // frame: with the snap waiting on a button the old version walked the
             // whole offense sideways while the player read the defence.
             self.advance_shift(dt);
+            self.dummy_t = (self.dummy_t - dt).max(0.0);
             for i in 0..14 {
+                // The defender on the pad is not shuffled: he has legs of his own
+                // before the snap, and writing the formation over him every frame
+                // is what kept a player from walking up to the line.
+                if Some(i) == self.human_defender {
+                    continue;
+                }
                 let jitter = Vec2::new(0.0, (self.t * 1.7 + i as f32).sin() * 0.02);
                 let base = self.shifted_pos(i);
                 self.players[i].pos = base + jitter;
+            }
+            self.walk_presnap_defender(dt);
+            self.check_presnap_encroachment();
+            if self.result.is_some() {
+                return self.result.as_ref();
             }
             if self.awaiting_snap {
                 // Hold at the line: every timing constant in the play is measured
                 // from SNAP_DELAY, so the clock stops here and starts again when
                 // the player asks for the ball.
                 self.t = self.t.min(SNAP_DELAY);
-            } else if self.t >= SNAP_DELAY {
+            } else if self.t >= SNAP_DELAY + self.presnap_wait() {
                 self.snap();
+                // The snap can be the foul itself: hand the flag back with it.
+                return self.result.as_ref();
             }
             return None;
         }
@@ -1061,7 +1088,90 @@ impl<'a> PlaySim<'a> {
         self.events.push(SimEvent { t: self.t, text });
     }
 
+    /// How long the CPU offense waits at the line before it snaps it.
+    fn presnap_wait(&self) -> f32 {
+        if self.human_defender.is_some() {
+            PRESNAP_WAIT
+        } else {
+            0.0
+        }
+    }
+
+    /// The defender on the pad answers the stick before the snap, inside the
+    /// neutral zone. He may lean across the line; what he may not do is still be
+    /// there when the ball goes, or run into a man on the other side of it.
+    fn walk_presnap_defender(&mut self, dt: f32) {
+        let Some(d) = self.human_defender else { return };
+        if self.players[d].down || self.players[d].stun > 0.0 {
+            return;
+        }
+        let ctl = self.def_control;
+        let mag = ctl.map(|c| c.move_dir.length().min(1.0)).unwrap_or(0.0);
+        if mag > 0.18 {
+            let dir = ctl.map(|c| c.move_dir).unwrap_or(Vec2::ZERO).normalize_or_zero();
+            let target = self.players[d].pos + dir * 3.0;
+            let spd = self.speed_cap(d) * (0.30 + 0.30 * mag);
+            self.steer(d, target, spd, dt);
+        } else {
+            self.players[d].vel *= (1.0 - 9.0 * dt).clamp(0.0, 1.0);
+            if self.players[d].vel.length() < 0.03 {
+                self.players[d].vel = Vec2::ZERO;
+            }
+        }
+        // He can lean into the neutral zone, not walk into the backfield.
+        let along = (self.players[d].pos.x - self.los) * self.dirf();
+        if along > NEUTRAL_ZONE {
+            self.players[d].pos.x = self.los + self.dirf() * NEUTRAL_ZONE;
+            self.players[d].vel.x = 0.0;
+        }
+    }
+
+    /// Contact across the line before the snap is encroachment, and it is
+    /// whistled the moment it happens rather than at the snap.
+    fn check_presnap_encroachment(&mut self) {
+        let Some(d) = self.human_defender else { return };
+        if (self.players[d].pos.x - self.los) * self.dirf() <= 0.02 {
+            return;
+        }
+        let touched = (0..7).any(|i| {
+            !self.players[i].down
+                && self.players[i].pos.dist(self.players[d].pos) < TACKLE_RADIUS * 0.85
+        });
+        if touched {
+            self.call_encroachment(d);
+        }
+    }
+
+    /// Book the foul: five yards, replay the down, and no snap. The defence is
+    /// the offending side even though the rulebook's default for the word is the
+    /// offence jumping early, so the side is set here rather than read off it.
+    fn call_encroachment(&mut self, d: usize) {
+        let name = self.name_of(d);
+        let spot = self.players[d].pos.x;
+        let mut call = PenaltyCall::new(PenaltyKind::Encroachment, spot)
+            .with_player(self.roster_index(d));
+        call.against = FoulTeam::Defense;
+        self.flag = Some(call);
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("{name} is across the line before the snap"),
+        });
+        self.finish(
+            PlayOutcome::Penalty,
+            self.los,
+            format!("{name} jumps the count: encroachment, five yards."),
+        );
+    }
+
     fn snap(&mut self) {
+        // A defender still across the line when the ball goes is the foul, even
+        // if he never touched anybody.
+        if let Some(d) = self.human_defender {
+            if (self.players[d].pos.x - self.los) * self.dirf() > 0.02 {
+                self.call_encroachment(d);
+                return;
+            }
+        }
         self.phase = match self.play.family {
             PlayFamily::QuickPass | PlayFamily::DropbackPass | PlayFamily::Screen => Phase::Dropback,
             PlayFamily::PlayAction => Phase::Dropback,
@@ -2656,6 +2766,97 @@ impl<'a> PlaySim<'a> {
         self.def_control = control;
     }
 
+    /// Which way the picture faces. An interception turns the play round, so the
+    /// camera and the stick follow the man with the ball rather than the team that
+    /// snapped it.
+    pub fn facing(&self) -> i8 {
+        if self.phase == Phase::Return {
+            -self.setup.direction
+        } else {
+            self.setup.direction
+        }
+    }
+
+    /// True while the preview button is held at the line.
+    pub fn previewing(&self) -> bool {
+        self.preview && self.phase == Phase::PreSnap
+    }
+
+    pub fn set_preview(&mut self, on: bool) {
+        self.preview = on;
+    }
+
+    /// The man running an interception back, for the client to put the pad on.
+    pub fn returner_index(&self) -> Option<usize> {
+        if self.phase == Phase::Return {
+            self.returner
+        } else {
+            None
+        }
+    }
+
+    /// Bark a hard count at the line to draw the defence across it.
+    ///
+    /// The gamble is the whole point: a man who bites is five yards and a replay
+    /// of the down, and a defence that sits still has seen the count for nothing.
+    pub fn dummy_audible(&mut self) {
+        if self.phase != Phase::PreSnap || self.dummy_t > 0.0 {
+            return;
+        }
+        self.dummy_t = DUMMY_TIME;
+        let name = self.name_of(self.qb);
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("{name} barks the count"),
+        });
+        // Whoever is closest to the ball and close enough to the line to be
+        // tempted. Only one man has to jump.
+        let bait = (7..14)
+            .filter(|&d| {
+                !self.players[d].down
+                    && self.players[d].stun <= 0.0
+                    && ((self.players[d].pos.x - self.los) * self.dirf()).abs() < 2.2
+            })
+            .min_by(|&a, &b| {
+                let da = self.players[a].pos.dist(self.ball.pos);
+                let db = self.players[b].pos.dist(self.ball.pos);
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            });
+        let Some(d) = bait else { return };
+        // A hard count draws a jump about a third of the time; the rest of the
+        // time the defence just looks back at him.
+        if !self.rng.chance(0.34) {
+            return;
+        }
+        self.players[d].pos.x += self.dirf() * 0.8;
+        self.players[d].vel = Vec2::new(self.dirf() * 1.4, 0.0);
+        self.call_encroachment(d);
+        self.dummy_t = 0.0;
+    }
+
+    /// Check the defence to another call at the line. Only legal before the snap.
+    pub fn call_defense(&mut self, def: DefCall) {
+        if self.phase != Phase::PreSnap {
+            return;
+        }
+        // The offence keeps the ground it is standing on: it is the defence that
+        // is being re-lined, and moving the men across the ball would be a jump.
+        let off: Vec<Vec2> = self.players[..7].iter().map(|p| p.pos).collect();
+        let name = def.name;
+        self.def = def;
+        self.line_up();
+        for (i, was) in off.iter().enumerate() {
+            self.players[i].pos = *was;
+            self.players[i].vel = Vec2::ZERO;
+        }
+        self.assign_coverage();
+        self.capture_presnap();
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("Defence checks to {name}"),
+        });
+    }
+
     pub fn set_human_defender(&mut self, who: Option<usize>) {
         self.human_defender = who.filter(|i| (7..14).contains(i));
     }
@@ -3507,6 +3708,120 @@ mod tests {
         );
         assert!(r.return_yards >= 0.0, "a return with negative yards");
         assert!(r.turnover, "an interception is not a turnover");
+    }
+
+    #[test]
+    fn the_defender_on_the_pad_can_walk_before_the_snap() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(40.0, 1, 10.0, 71);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        sim.set_human_defender(Some(7));
+        let was = sim.players[7].pos;
+        sim.set_def_control(Some(DefControl {
+            move_dir: Vec2::new(0.0, 1.0),
+            tackle: false,
+            dive: false,
+            swat: false,
+            intercept: false,
+        }));
+        for _ in 0..90 {
+            sim.step(FIXED_DT);
+        }
+        assert!(!sim.is_snapped(), "the ball went while he was still walking");
+        assert!(
+            (sim.players[7].pos - was).length() > 0.3,
+            "the defender never moved: {:?} from {was:?}",
+            sim.players[7].pos
+        );
+    }
+
+    #[test]
+    fn a_defender_across_the_line_at_the_snap_is_flagged() {
+        let (off, def) = teams();
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(40.0, 1, 10.0, 72);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+        sim.set_human_defender(Some(7));
+        sim.players[7].pos.x = s.los + s.direction as f32 * 0.9;
+        sim.request_snap();
+        let r = sim.result.clone().expect("no flag was thrown");
+        let call = r.penalty.clone().expect("a penalty with no call");
+        assert_eq!(call.kind, crate::rules::PenaltyKind::Encroachment);
+        assert_eq!(call.against, crate::rules::FoulTeam::Defense);
+        assert_eq!(r.yards, 0.0, "an encroachment is not a play");
+        assert_eq!(sim.phase, Phase::Dead, "the ball went on a dead-ball foul");
+    }
+
+    #[test]
+    fn a_dummy_count_can_draw_the_defence_offside() {
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let mut flagged = 0;
+        for seed in 0..40u64 {
+            let (off, def) = teams();
+            let s = setup(40.0, 1, 10.0, 100 + seed);
+            let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+            // A rusher right over the ball, which is who a hard count tempts.
+            sim.players[7].pos.x = s.los - s.direction as f32 * 0.4;
+            sim.dummy_audible();
+            if let Some(r) = sim.result.clone() {
+                let call = r.penalty.expect("a jump with no flag");
+                assert_eq!(call.kind, crate::rules::PenaltyKind::Encroachment);
+                assert_eq!(call.against, crate::rules::FoulTeam::Defense);
+                flagged += 1;
+            }
+        }
+        assert!(
+            flagged > 0 && flagged < 40,
+            "the count is a sure thing or a waste of breath: {flagged} of 40"
+        );
+    }
+
+    #[test]
+    fn a_defence_audible_moves_the_defence_and_not_the_offence() {
+        let (off, def) = teams();
+        let book = playbook();
+        let book_def = defensive_playbook();
+        let first = book_def[0].clone();
+        let other = book_def
+            .iter()
+            .find(|d| d.name != first.name)
+            .cloned()
+            .expect("only one defensive call");
+        let s = setup(40.0, 1, 10.0, 73);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &first, &s);
+        let off_before: Vec<Vec2> = (0..7).map(|i| sim.players[i].pos).collect();
+        let def_before: Vec<Vec2> = (7..14).map(|i| sim.players[i].pos).collect();
+        sim.call_defense(other.clone());
+        assert_eq!(sim.def.name, other.name);
+        for i in 0..7 {
+            assert!(
+                (sim.players[i].pos - off_before[i]).length() < 0.05,
+                "the offence was re-lined by a defensive check"
+            );
+        }
+        assert!(
+            (7..14).any(|i| sim.players[i].pos.dist(def_before[i - 7]) > 0.2),
+            "the defence did not move to the new call"
+        );
+    }
+
+    #[test]
+    fn an_interception_faces_the_other_way() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book.iter().find(|p| p.family.is_pass()).expect("no pass play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(45.0, 1, 10.0, 74);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        assert_eq!(sim.facing(), s.direction);
+        sim.start_return(7, 45.0, 0, 14.0);
+        assert_eq!(sim.facing(), -s.direction, "the picture did not turn round");
+        assert_eq!(sim.returner_index(), Some(7));
     }
 
     #[test]

@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.4-windows-x86_64.zip` from the
+Grab `a7fl-v0.18.5-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -86,9 +86,11 @@ Controls:
 | D-pad or left stick | Up and down move between the formations; right (or A) goes into the plays of one, and left comes back out | Move the quarterback (past the line of scrimmage he becomes a runner); the ball itself goes to the man whose button you press |
 | A / South | Go into the plays, then call the highlighted one | Snap the ball; then hold to wind up and release to throw to A, tap to pump fake, or spin once you are running |
 | B / East | Back out to the formations | Hold to wind up, release to throw to B; once you are running, hurdle |
-| X / West | — | Open the audible; once the ball is live, throw to X, or dive as a runner |
+| X / West | — | Open the audible over the field; once the ball is live, throw to X, or dive as a runner |
 | Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or stiff-arm as a runner (slide as a quarterback) |
 | Select / Minus | — | Change camera |
+| LT / ZL | — | Dummy count at the line: bark the snap count and try to draw a defender across |
+| RB / ZR | — | On defense, check to another call: three at a time, over the field |
 | Start | — | Pause: resume, camera, quit |
 
 | Keyboard | On the call sheet | At the line and during the play |
@@ -99,6 +101,8 @@ Controls:
 | Z | — | Flip the call; then throw to X, or dive as a runner |
 | C | — | Throw to Y; once you are running, stiff-arm (slide as a quarterback) |
 | Tab or Backspace | — | Change camera |
+| Q | — | Dummy count at the line |
+| E | — | Defensive check at the line |
 | Left Shift | — | Throw the throw-off |
 | Esc | — | Pause: resume, camera, quit |
 
@@ -106,7 +110,7 @@ On defense the same pad does different work:
 
 | Input | Playing defense |
 | --- | --- |
-| D-pad or left stick | Move the defender you are on |
+| D-pad or left stick | Move the defender you are on, before the snap and after it |
 | A / South, Space or Enter | Tackle: go and wrap up the ball carrier |
 | B / East, X | Switch to the next defender, nearest the ball first |
 | X / West, Z | Dive tackle: a lunging hit from a half-yard further out. With the ball in the air the same button is the bat-down |
@@ -213,6 +217,13 @@ DOWN, INTERCEPTION — used to be stamped on the frame the play ended; it now se
 over half a second with the sentence underneath it a beat later, while the men who
 were running coast to a stop instead of freezing mid-stride.
 
+An interception is not a dead ball at all, and now the picture says so. The moment it
+is caught the play turns round: the shot holds for seven tenths of a second while the
+camera swings to face the other goal, and then the pad is on the man who took it. The
+stick follows the picture rather than the snap, so up the screen is up the field again
+and he can run it all the way back for six. Pass it to the other team and you watch him
+go, with the shot turned round the same way.
+
 ### Cameras
 
 SELECT (Tab or Backspace on the keyboard) cycles the shot, at the line and while the
@@ -265,6 +276,32 @@ closes the game anywhere: **QUIT GAME** is the only way out. It used to close on
 spot, which meant the camera setting — the one thing a player does want to change
 mid-drive — was unreachable once the ball was snapped, and a stray press on the call
 sheet ended the whole game.
+
+### At the line
+
+The line of scrimmage is a place to work now, not a menu to get through.
+
+Holding RT at the line is the play preview: the shot lifts over the whole route
+tree and the routes are drawn heavier, with a bigger bar at the end of each one.
+Let go and the picture drops back behind the ball. It is the same drawing that is
+always on the grass before the snap, only readable at a glance.
+
+LT is the dummy count. The quarterback barks the count and the men on the ball
+either bite or they do not: a defender who jumps is five yards and the down is
+replayed, and a defense that sits still has heard the count for nothing.
+
+X opens the audible as a card over the picture, three plays at a time, and the
+stick pages through the rest. The field stays on screen behind it, which matters,
+because the whole reason to audible is the look the defense is showing. On defense
+RB does the same thing with three calls: the offense is not re-lined by a check,
+the defense is.
+
+On defense you walk the man on the pad before the snap. The neutral zone is his to
+lean into -- a yard and a half of it -- and nothing more. Run into an offensive
+player across the line and the flag is on the ground before the snap; still be
+across the line when the ball goes and it is the same flag: encroachment, five
+yards, replay the down. Once the ball is live a defender goes wherever he likes,
+including past the line, because the man with the ball is not going to wait.
 
 ### Passing
 

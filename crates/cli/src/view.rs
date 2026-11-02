@@ -174,6 +174,8 @@ impl WindowView {
             y: key(minifb::Key::C),
             throw: key(minifb::Key::LeftShift) || key(minifb::Key::RightShift),
             select: key(minifb::Key::Tab) || key(minifb::Key::Backspace),
+            dummy: key(minifb::Key::Q),
+            shoulder: key(minifb::Key::E),
             start: key(minifb::Key::Escape),
         };
 
@@ -197,6 +199,8 @@ impl WindowView {
             y: held.y && !self.prev.y,
             throw: held.throw && !self.prev.throw,
             select: held.select && !self.prev.select,
+            dummy: held.dummy && !self.prev.dummy,
+            shoulder: held.shoulder && !self.prev.shoulder,
             start: held.start && !self.prev.start,
         };
         self.prev = held;
