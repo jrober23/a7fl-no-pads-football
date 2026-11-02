@@ -7,10 +7,12 @@
 
 use std::time::{Duration, Instant};
 
+use a7fl_core::game::{GameState, PlayRecord};
 use a7fl_core::math::Rgb;
-use a7fl_core::team::{clubs, Club, Division, TeamRatings};
-use a7fl_render::venues::{self, Venue};
+use a7fl_core::team::{clubs, league_teams, Club, Division, Team, TeamRatings};
 use a7fl_render::raster::Frame;
+use a7fl_render::venues::{self, Venue};
+use a7fl_render::{Broadcast, CameraMode};
 
 use crate::arcade::CAMERA_LABELS;
 use crate::pad::{self, Pad};
@@ -147,13 +149,26 @@ fn footer(frame: &mut Frame, text: &str) {
 
 /// A stick axis with a first tap and then a repeat, so a menu is walked one row
 /// at a time instead of scrolling through itself.
-#[derive(Default)]
 struct Repeat {
     held: f32,
     fired: bool,
+    delay: f32,
+    gap: f32,
+}
+
+impl Default for Repeat {
+    fn default() -> Self {
+        Repeat { held: 0.0, fired: false, delay: 0.30, gap: 0.16 }
+    }
 }
 
 impl Repeat {
+    /// A lazier repeat, for a screen where one press should move one item and
+    /// holding the key should not run away past it.
+    fn slow() -> Self {
+        Repeat { delay: 0.45, gap: 0.24, ..Repeat::default() }
+    }
+
     fn step(&mut self, v: f32, dt: f32) -> i8 {
         let dir = if v > 0.55 {
             1
@@ -172,8 +187,8 @@ impl Repeat {
             self.fired = true;
             return dir;
         }
-        if self.held >= 0.30 {
-            self.held = 0.16;
+        if self.held >= self.delay {
+            self.held = self.delay - self.gap;
             return dir;
         }
         0
@@ -402,8 +417,10 @@ fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
     let yours = pick_team(view, pad, &all, &cards, None, "YOUR TEAM")?.club(&all, None);
     let theirs = pick_team(view, pad, &all, &cards, Some(yours), "THEIR TEAM")?
         .club(&all, Some(yours));
-    let receive = coin_flip(view, pad, &all, yours, theirs)?;
+    // The ground comes before the toss: the player picks where the game is
+    // played, and then stands on it to call the coin.
     let venue = pick_venue(view, pad, yours)?;
+    let receive = coin_flip(view, pad, &all, yours, theirs, venue)?;
     Some(Kickoff { yours, theirs, receive, venue })
 }
 
@@ -419,13 +436,26 @@ fn a7fl_cli_quarter_count() -> isize {
     crate::settings::QUARTER_CHOICES.len() as isize
 }
 
+/// The picker's grid: a picture of each ground, four across and three deep.
+const THUMB_W: usize = 140;
+const THUMB_H: usize = 72;
+const GRID_COLS: usize = 4;
+const GRID_ROWS: usize = 3;
+const CELL_W: i32 = 148;
+const CELL_H: i32 = 86;
+const PAGE: usize = GRID_COLS * GRID_ROWS;
+
 /// The ground. It opens on the home club's own park, because that is where the
-/// game would be played; left and right walk the rest of the list.
+/// game would be played, and shows a still of every ground, so the player picks
+/// the one he wants to see rather than a name he has to remember.
 fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Option<usize> {
-    let first_home = 2 + home;
-    let mut sel = first_home.min(venues::COUNT - 1);
-    let mut nav = Repeat::default();
+    let mut sel = (2 + home).min(venues::COUNT - 1);
+    let mut nav_x = Repeat::slow();
+    let mut nav_y = Repeat::slow();
     let mut last = Instant::now();
+    let teams = league_teams();
+    let preview = venue_preview();
+    let mut thumbs: Vec<Option<Frame>> = (0..venues::COUNT).map(|_| None).collect();
     view.reset();
     loop {
         let now = Instant::now();
@@ -435,85 +465,115 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         if input.pressed.b {
             return None;
         }
-        if let d = nav.step(input.stick.x, dt) {
+        // One ground a press: left and right walk the row, up and down the
+        // column, so the cursor goes where it is pushed and stays there.
+        if let d = nav_x.step(input.stick.x, dt) {
             if d != 0 {
                 sel = wrap(sel, venues::COUNT, d);
+            }
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                sel = wrap(sel, venues::COUNT, d * GRID_COLS as i8);
+            }
+        }
+        let page = sel / PAGE;
+        // The pictures are made one a frame, so the screen fills in while the
+        // player is already reading it instead of stalling on the way in.
+        if let Some((game, record)) = preview.as_ref() {
+            let from = page * PAGE;
+            let to = (from + PAGE).min(venues::COUNT);
+            if let Some(i) = (from..to).find(|&i| thumbs[i].is_none()) {
+                thumbs[i] = Some(venue_thumb(
+                    game,
+                    record,
+                    i,
+                    [teams[0].clone(), teams[1].clone()],
+                ));
             }
         }
         let venue = Venue::from_index(sel);
         let sky = venue.sky();
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
-        frame.gradient_rect(
-            0,
-            0,
-            CANVAS_W as i32,
-            CANVAS_H as i32,
-            sky[0],
-            sky[2],
-        );
-        frame.fill_rect_alpha(0, 0, CANVAS_W as i32, CANVAS_H as i32, Rgb::new(4, 6, 10), 0.55);
-        centered(&mut frame, 26, "WHERE IS IT PLAYED", 2, accent());
-        centered(&mut frame, 92, &venue.name(), 3, paper());
-        centered(&mut frame, 134, &venue.sub(), 2, sky[1].lerp(paper(), 0.45));
-        // The blurb is one sentence, wrapped by hand onto two lines.
-        let words: Vec<&str> = venue.blurb().split(' ').collect();
-        let mut line = String::new();
-        let mut lines = Vec::new();
-        for word in words {
-            if line.len() + word.len() + 1 > 74 && !line.is_empty() {
-                lines.push(line.clone());
-                line.clear();
-            }
-            if !line.is_empty() {
-                line.push(' ');
-            }
-            line.push_str(word);
-        }
-        if !line.is_empty() {
-            lines.push(line);
-        }
-        for (i, text) in lines.iter().enumerate() {
-            centered(&mut frame, 176 + i as i32 * 14, &text.to_uppercase(), 1, paper());
-        }
-        if sel == first_home {
-            centered(&mut frame, 220, "YOUR CLUB'S HOME GROUND", 1, accent());
-        }
-        centered(
-            &mut frame,
-            244,
-            &format!("{} OF {}", sel + 1, venues::COUNT),
+        frame.gradient_rect(0, 0, CANVAS_W as i32, CANVAS_H as i32, sky[0], sky[2]);
+        frame.fill_rect_alpha(0, 0, CANVAS_W as i32, CANVAS_H as i32, Rgb::new(4, 6, 10), 0.62);
+        centered(&mut frame, 8, "WHERE IS IT PLAYED", 2, accent());
+        let note = format!("{} OF {}", sel + 1, venues::COUNT);
+        frame.text_shadowed(
+            CANVAS_W as i32 - 14 - text_width(&note, 1),
+            12,
+            &note,
             1,
             dim(),
+            1,
         );
-        footer(&mut frame, "[LEFT/RIGHT] GROUND   [UP/DOWN] SKIP 16   [A] PLAY   [B] BACK");
+        for row in 0..GRID_ROWS {
+            for col in 0..GRID_COLS {
+                let i = page * PAGE + row * GRID_COLS + col;
+                if i >= venues::COUNT {
+                    break;
+                }
+                let x = 24 + col as i32 * CELL_W;
+                let y = 34 + row as i32 * CELL_H;
+                let on = i == sel;
+                frame.fill_rect(
+                    x - 3,
+                    y - 3,
+                    THUMB_W as i32 + 6,
+                    THUMB_H as i32 + 6,
+                    if on { accent() } else { Rgb::new(28, 42, 62) },
+                );
+                match &thumbs[i] {
+                    Some(shot) => blit(&mut frame, shot, x, y),
+                    None => frame.fill_rect(
+                        x,
+                        y,
+                        THUMB_W as i32,
+                        THUMB_H as i32,
+                        sky[1].scale(0.45),
+                    ),
+                }
+            }
+        }
+        centered(&mut frame, 292, &venue.name(), 2, paper());
+        centered(&mut frame, 314, &venue.sub(), 1, sky[1].lerp(paper(), 0.5));
+        footer(&mut frame, "[ARROWS] GROUND   [A] PLAY   [B] BACK");
         if !view.show(&mut frame, &[]) {
             return None;
-        }
-        // Up and down jump between the practice grounds, the club grounds and
-        // the four one-offs, so the list can be crossed in three presses.
-        if let d = nav.step(input.stick.y, dt) {
-            if d != 0 {
-                sel = if d > 0 {
-                    if sel < 2 {
-                        2
-                    } else if sel < 18 {
-                        18
-                    } else {
-                        0
-                    }
-                } else if sel < 2 {
-                    venues::COUNT - 1
-                } else if sel < 18 {
-                    0
-                } else {
-                    2
-                };
-            }
         }
         if input.pressed.a {
             return Some(sel);
         }
         beat();
+    }
+}
+
+/// A still of one ground, so the picker can show it rather than describe it.
+fn venue_thumb(game: &GameState, record: &PlayRecord, index: usize, teams: [Team; 2]) -> Frame {
+    let mut broadcast = Broadcast::with_venue(THUMB_W, THUMB_H, teams, Venue::from_index(index));
+    broadcast.frame_at_clean(game, record, 0.8, CameraMode::Endzone)
+}
+
+/// The play every ground is photographed at: the first snap of a practice
+/// game, so each still has the same men in the same places.
+fn venue_preview() -> Option<(GameState, PlayRecord)> {
+    let teams = league_teams();
+    let mut game = GameState::new(teams[0].clone(), teams[1].clone(), 0xA7F1_5EED);
+    for _ in 0..80 {
+        let record = game.simulate_next()?;
+        if matches!(record, PlayRecord::Scrimmage(_)) {
+            return Some((game, record));
+        }
+    }
+    None
+}
+
+/// A finished frame, drawn straight onto the canvas.
+fn blit(frame: &mut Frame, src: &Frame, x: i32, y: i32) {
+    for v in 0..src.h {
+        for u in 0..src.w {
+            frame.put(x + u as i32, y + v as i32, src.color[v * src.w + u]);
+        }
     }
 }
 
@@ -764,6 +824,7 @@ fn coin_flip(
     all: &[Club],
     yours: usize,
     theirs: usize,
+    venue: usize,
 ) -> Option<bool> {
     #[derive(Clone, Copy, PartialEq)]
     enum Step {
@@ -845,6 +906,17 @@ fn coin_flip(
                 "{} AT {}",
                 all[yours].full_name().to_uppercase(),
                 all[theirs].full_name().to_uppercase()
+            ),
+            1,
+            dim(),
+        );
+
+        centered(
+            &mut frame,
+            72,
+            &format!(
+                "AT {}",
+                Venue::from_index(venue).name().to_uppercase()
             ),
             1,
             dim(),

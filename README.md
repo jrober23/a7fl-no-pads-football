@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.4-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.5-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -147,6 +147,10 @@ twice and be done.
 The club you take is yours for the whole game, both ways; the scoreboard carries
 `YOU:` against it, so there is never a snap where you are guessing which shirt you
 are in.
+
+Then the ground: twenty-two of them, each with a picture of the field you will be
+looking at, so the stadium is picked before anything else happens on it. Pick it and
+you are standing in it.
 
 Then the toss. Call heads or tails and watch the coin come down. Win it and you
 choose whether to throw the opening throw-off or receive it; lose it and the computer
@@ -623,7 +627,8 @@ Defense is played out on the field, not decided in the dark:
 
 ### The grounds
 
-Twenty-two of them, chosen after the coin toss and before the ball is thrown.
+Twenty-two of them, chosen before the coin toss: you pick the ground you want to
+play on before you call the coin.
 
 The two practice fields are the ones the game shipped with: **the practice field**,
 open air with a full house, and **the closed practice**, the same bowl with the roof
@@ -649,10 +654,14 @@ scoreboard stay the league's.
 
 Then the four the league takes the game to:
 
-- **The Deep** — a clear glass dome on the sea bed. The roof is a pale vault on a
-  frame of ribs, lit down the crown, and the water stands outside it on every side:
-  a school of fish keeps swimming past the glass, moving frame by frame the way the
-  crowd does, and the sea shows through the roof instead of being painted over by it.
+- **The Deep** — a ground on the floor of the ocean, under a clear glass dome. The
+  glass is only its frame — ribs over the vault, a rail at every course, mullions
+  between them — so the sea is seen through it rather than painted over by it. Out
+  on the sand there are coral heads in the colours a reef comes in, forests of kelp
+  standing in the current, dunes and ripples the water has left, and a school of
+  fish crossing past the glass, moving frame by frame the way the crowd does. The
+  water is dark at the sand and turns to daylight towards the surface, and the field
+  sits on it all, lit.
 - **The Back of Beyond** — a field cut into red earth, with mesas, boulders, a water
   tower and a windmill, and nothing else for miles.
 - **The Strand** — the ocean down one sideline, a resort down the other, palms over
@@ -660,9 +669,12 @@ Then the four the league takes the game to:
 - **The Championship** — the final. Both clubs are painted into both end zones in
   their own colours, with bunting down both stands and the confetti already falling.
 
-The ground has its own screen, which opens on the home club's own park and says what
-each one is before the ball is thrown. Left and right walk the list; up and down jump
-between the practice grounds, the club grounds and the four one-offs.
+The ground has its own screen, which opens on the home club's own park: a grid of
+pictures, twelve grounds to a page, each one a still of the ground taken from the
+lens the game is played through. The arrows move the cursor one picture at a time —
+left and right along a row, up and down a row at a time — and the ground under the
+cursor is named underneath, with its own description. Nothing moves on its own and
+nothing is picked for you: the stadium you land on is the stadium you play in.
 
 ### Ratings and the clock
 

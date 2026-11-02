@@ -107,7 +107,7 @@ impl Venue {
             Kind::Practice => "A ground in the suburbs: rooflines and streetlights past the far end, and a crowd in the bowl.",
             Kind::ClosedPractice => "The same field with the roof down and nobody in the seats.",
             Kind::Home(k) => cities().get(k).map(|c| c.blurb).unwrap_or("A home ground."),
-            Kind::Underwater => "A clear dome overhead, the sea beyond it, and the fish swimming past.",
+            Kind::Underwater => "A clear dome on the sand: coral heads, kelp standing in the current, and the fish swimming past.",
             Kind::Outback => "A field cut into the red earth, with the mesas on the horizon.",
             Kind::Beach => "Breakers down one sideline, a hotel down the other, palms over both.",
             Kind::Championship => "The final: both clubs painted into both end zones.",
@@ -129,7 +129,7 @@ impl Venue {
                 .get(k)
                 .map(|c| c.sky)
                 .unwrap_or([Rgb::hex(0x0A1428), Rgb::hex(0x20364E), Rgb::hex(0x7E8F96)]),
-            Kind::Underwater => [Rgb::hex(0x031C29), Rgb::hex(0x06455F), Rgb::hex(0x0B6E86)],
+            Kind::Underwater => [Rgb::hex(0x02121C), Rgb::hex(0x0B5570), Rgb::hex(0x2FA8C0)],
             Kind::Outback => [Rgb::hex(0x3E7FB5), Rgb::hex(0xD9A66B), Rgb::hex(0xE8C08A)],
             Kind::Beach => [Rgb::hex(0x1E7FC4), Rgb::hex(0x63B6DE), Rgb::hex(0xD8F0F6)],
             Kind::Championship => [Rgb::hex(0x120A2A), Rgb::hex(0x3B1E63), Rgb::hex(0xD9A441)],
@@ -149,8 +149,8 @@ impl Venue {
                 light.fog_density = 0.004;
             }
             Kind::Underwater => {
-                light.ambient = 0.62;
-                light.fog_density = 0.013;
+                light.ambient = 0.66;
+                light.fog_density = 0.006;
                 light.bounce = Vec3::new(0.0, 0.0, 1.0);
                 light.bounce_strength = 0.06;
             }
@@ -997,152 +997,241 @@ fn city_scenery(city: City, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn F
     }
 }
 
-fn underwater(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
-    // The water outside the glass: a wall of it on every side, dropping away.
-    let deep = Rgb::hex(0x063D52);
-    let deeper = Rgb::hex(0x03202E);
-    for side in [-1.0f32, 1.0] {
-        let y = side * 66.0;
-        for band in 0..6 {
-            let z0 = band as f32 * 5.0;
-            let c = deep.lerp(deeper, band as f32 / 6.0);
-            let (a, b) = if side < 0.0 { (y - side * 40.0, y) } else { (y, y + 40.0) };
-            mesh.quad_shaded(
-                Vec3::new(-60.0, a, z0),
-                Vec3::new(170.0, a, z0),
-                Vec3::new(170.0, b, z0 + 8.0),
-                Vec3::new(-60.0, b, z0 + 8.0),
-                c,
-                1.0,
+/// A head of coral: a few stubby arms leaning out of the sand with a bulb on
+/// each, so it reads as something growing there rather than as a rock.
+fn coral(mesh: &mut Mesh, at: Vec3, size: f32, color: Rgb, rand: &mut dyn FnMut() -> f32) {
+    let arms = 3 + (rand() * 3.0) as i32;
+    for i in 0..arms {
+        let a = i as f32 / arms as f32 * std::f32::consts::TAU + rand() * 0.7;
+        let lean = 0.3 + rand() * 0.7;
+        let base = at + Vec3::new(a.cos() * size * 0.4, a.sin() * size * 0.4, 0.0);
+        let tip = base
+            + Vec3::new(
+                a.cos() * size * lean,
+                a.sin() * size * lean,
+                size * (1.0 + rand() * 1.1),
             );
-        }
-    }
-    // Seabed, with a few rocks for the light to fall on.
-    mesh.quad_shaded(
-        Vec3::new(-60.0, -110.0, -6.0),
-        Vec3::new(170.0, -110.0, -6.0),
-        Vec3::new(170.0, 110.0, -6.0),
-        Vec3::new(-60.0, 110.0, -6.0),
-        Rgb::hex(0x2A3A34),
-        1.0,
-    );
-    for _ in 0..14 {
-        rock(
-            mesh,
-            Vec3::new(-40.0 + rand() * 180.0, -80.0 + rand() * 160.0, -6.0),
-            2.0 + rand() * 4.0,
-            Rgb::hex(0x3E4A42),
-            rand,
+        mesh.cylinder(base, tip, size * 0.17, size * 0.11, 5, color);
+        mesh.box_shaded(
+            tip,
+            Vec3::new(size * 0.24, size * 0.24, size * 0.18),
+            a,
+            color.lerp(Rgb::WHITE, 0.2),
+            1.0,
         );
     }
-    // The ends, so the shot down the field is water and glass, not a gap.
-    for end in [-1.0f32, 1.0] {
-        let x = if end < 0.0 { -70.0 } else { 160.0 };
-        for band in 0..6 {
-            let z0 = band as f32 * 5.0;
-            let c = deep.lerp(deeper, band as f32 / 6.0);
+}
+
+/// A stalk of kelp: blades off one holdfast, tall enough to lean in the water.
+fn kelp(mesh: &mut Mesh, at: Vec3, height: f32, color: Rgb, rand: &mut dyn FnMut() -> f32) {
+    let fronds = 3 + (rand() * 4.0) as i32;
+    for _ in 0..fronds {
+        let a = rand() * std::f32::consts::TAU;
+        let lean = 0.5 + rand() * 1.2;
+        let base = at + Vec3::new(a.cos() * 0.5, a.sin() * 0.5, 0.0);
+        let mid = base + Vec3::new(a.cos() * lean, a.sin() * lean, height * 0.55);
+        let tip = mid + Vec3::new(a.cos() * lean * 0.7, a.sin() * lean * 0.7, height * 0.45);
+        let tone = color.scale(0.85 + rand() * 0.3);
+        mesh.cylinder(base, mid, 0.34, 0.2, 4, tone);
+        mesh.cylinder(mid, tip, 0.2, 0.03, 4, tone.lerp(Rgb::WHITE, 0.14));
+    }
+}
+
+fn underwater(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
+    let floor = -2.0f32;
+    // The water outside the glass: a wall of it on every side, banded from the
+    // dark at the sand up to the daylight at the surface, so the ground reads as
+    // sitting on the floor of something deep.
+    let shallow = Rgb::hex(0x33B4CC);
+    let deep = Rgb::hex(0x04222F);
+    let top_z = 84.0;
+    let band = |i: usize| -> (f32, f32, Rgb) {
+        let step = (top_z - floor) / 10.0;
+        (
+            floor + i as f32 * step,
+            floor + (i + 1) as f32 * step,
+            deep.lerp(shallow, i as f32 / 9.0),
+        )
+    };
+    for side in [-1.0f32, 1.0] {
+        for i in 0..10 {
+            let (z0, z1, c) = band(i);
             mesh.quad_shaded(
-                Vec3::new(x, -70.0, z0),
-                Vec3::new(x, 70.0, z0),
-                Vec3::new(x - end * 40.0, 70.0, z0 + 8.0),
-                Vec3::new(x - end * 40.0, -70.0, z0 + 8.0),
+                Vec3::new(-300.0, side * 120.0, z0),
+                Vec3::new(420.0, side * 120.0, z0),
+                Vec3::new(420.0, side * 120.0, z1),
+                Vec3::new(-300.0, side * 120.0, z1),
                 c,
                 1.0,
             );
         }
     }
-    // The glass: a clear dome over the field. Pale panes in a light frame, held
-    // up by ribs that follow the vault, so the sea above and the water beyond
-    // read through the roof instead of being painted over by it.
-    let glass = Rgb::hex(0xC8E6EE);
-    let frame = Rgb::hex(0x8FB2BA);
+    for end in [-1.0f32, 1.0] {
+        let x = if end < 0.0 { -170.0 } else { 290.0 };
+        for i in 0..10 {
+            let (z0, z1, c) = band(i);
+            mesh.quad_shaded(
+                Vec3::new(x, -130.0, z0),
+                Vec3::new(x, 130.0, z0),
+                Vec3::new(x, 130.0, z1),
+                Vec3::new(x, -130.0, z1),
+                c,
+                1.0,
+            );
+        }
+    }
+    // The sand the whole ground stands on, out past everything.
+    mesh.quad_shaded(
+        Vec3::new(-280.0, -280.0, floor),
+        Vec3::new(400.0, -280.0, floor),
+        Vec3::new(400.0, 280.0, floor),
+        Vec3::new(-280.0, 280.0, floor),
+        Rgb::hex(0x8A7C52),
+        1.0,
+    );
+    // Dunes under the current, and the ripples they leave.
+    for _ in 0..26 {
+        let w = 8.0 + rand() * 24.0;
+        let h = 1.0 + rand() * 2.4;
+        let at = Vec3::new(
+            -140.0 + rand() * 340.0,
+            if rand() < 0.5 { -1.0 } else { 1.0 } * (34.0 + rand() * 70.0),
+            floor + h * 0.3,
+        );
+        mesh.box_shaded(
+            at,
+            Vec3::new(w, w * (0.5 + rand() * 0.7), h * 0.4),
+            rand() * std::f32::consts::TAU,
+            Rgb::hex(0x9C8C60),
+            1.0,
+        );
+    }
+    for _ in 0..40 {
+        let y = if rand() < 0.5 { -1.0 } else { 1.0 } * (34.0 + rand() * 80.0);
+        let x = -160.0 + rand() * 360.0;
+        let len = 6.0 + rand() * 18.0;
+        mesh.quad_shaded(
+            Vec3::new(x, y, floor + 0.02),
+            Vec3::new(x + len, y, floor + 0.02),
+            Vec3::new(x + len, y + 0.9, floor + 0.02),
+            Vec3::new(x, y + 0.9, floor + 0.02),
+            Rgb::hex(0xA89670),
+            1.0,
+        );
+    }
+    // The reef: coral heads along both sides and off both ends, in the colours
+    // a reef actually comes in.
+    let corals = [
+        0xE8808C, 0xF2A65A, 0xB98AD8, 0x6FD8C8, 0xE8C86A, 0xD8736A, 0xE8A0C0,
+    ];
+    for _ in 0..46 {
+        let side = if rand() < 0.5 { -1.0f32 } else { 1.0 };
+        let at = Vec3::new(-150.0 + rand() * 340.0, side * (36.0 + rand() * 40.0), floor);
+        let color = Rgb::hex(corals[(rand() * corals.len() as f32) as usize % corals.len()]);
+        coral(mesh, at, 6.0 + rand() * 7.0, color, rand);
+    }
+    for _ in 0..18 {
+        let end = if rand() < 0.5 { -1.0f32 } else { 1.0 };
+        let x = if end < 0.0 { -130.0 + rand() * 70.0 } else { 162.0 + rand() * 90.0 };
+        let at = Vec3::new(x, -90.0 + rand() * 180.0, floor);
+        let color = Rgb::hex(corals[(rand() * corals.len() as f32) as usize % corals.len()]);
+        coral(mesh, at, 6.0 + rand() * 7.0, color, rand);
+    }
+    // Kelp standing off the sand, and a few rocks between the heads.
+    for _ in 0..44 {
+        let side = if rand() < 0.5 { -1.0f32 } else { 1.0 };
+        let at = Vec3::new(-150.0 + rand() * 340.0, side * (36.0 + rand() * 44.0), floor);
+        kelp(mesh, at, 18.0 + rand() * 24.0, Rgb::hex(0x2E7A46), rand);
+    }
+    for _ in 0..12 {
+        let at = Vec3::new(
+            -110.0 + rand() * 300.0,
+            if rand() < 0.5 { -1.0 } else { 1.0 } * (36.0 + rand() * 44.0),
+            floor,
+        );
+        rock(mesh, at, 1.2 + rand() * 2.6, Rgb::hex(0x3C4E52), rand);
+    }
+    // The glass is its frame, and nothing else: ribs over the vault, a rail at
+    // every course and mullions between them, so the reef and the fish are seen
+    // through the roof instead of being painted over by a pane.
+    let glazing = Rgb::hex(0xCFEDF2);
     let eave_y = 32.0f32;
     let eave_z = 30.0f32;
     let crown_z = 54.0f32;
-    let strips = 8;
-    // The cross-section of the vault: y across the field, z up to the crown.
+    let strips = 10;
     let curve = |t: f32| {
         let y = -eave_y + 2.0 * eave_y * t;
         (y, eave_z + (crown_z - eave_z) * 4.0 * t * (1.0 - t))
     };
     let mut x = -24.0;
-    let mut bay = 0;
-    while x < 132.0 {
-        let tone = if bay % 2 == 0 { glass } else { glass.scale(0.94) };
-        for s in 0..strips {
-            let (y0, z0) = curve(s as f32 / strips as f32);
-            let (y1, z1) = curve((s + 1) as f32 / strips as f32);
-            mesh.quad_shaded(
-                Vec3::new(x, y0, z0),
-                Vec3::new(x + 13.0, y0, z0),
-                Vec3::new(x + 13.0, y1, z1),
-                Vec3::new(x, y1, z1),
-                tone,
-                1.0,
-            );
-        }
-        // A rib on the bay line, following the vault over the field.
+    while x <= 132.0 {
         let mut prev = curve(0.0);
         for s in 1..=strips {
             let cur = curve(s as f32 / strips as f32);
             mesh.quad_shaded(
-                Vec3::new(x - 0.22, prev.0, prev.1 + 0.06),
-                Vec3::new(x + 0.22, prev.0, prev.1 + 0.06),
-                Vec3::new(x + 0.22, cur.0, cur.1 + 0.06),
-                Vec3::new(x - 0.22, cur.0, cur.1 + 0.06),
-                frame,
+                Vec3::new(x - 0.24, prev.0, prev.1),
+                Vec3::new(x + 0.24, prev.0, prev.1),
+                Vec3::new(x + 0.24, cur.0, cur.1),
+                Vec3::new(x - 0.24, cur.0, cur.1),
+                glazing,
                 1.0,
             );
             prev = cur;
         }
-        x += 13.0;
-        bay += 1;
+        x += 12.0;
     }
-    // The lights down the crown of the vault: clear glass over a lit field.
+    // A rail along the crown, with the lights set in it.
     mesh.quad_shaded(
-        Vec3::new(-24.0, -0.7, crown_z - 0.2),
-        Vec3::new(132.0, -0.7, crown_z - 0.2),
-        Vec3::new(132.0, 0.7, crown_z - 0.2),
-        Vec3::new(-24.0, 0.7, crown_z - 0.2),
+        Vec3::new(-24.0, -0.35, crown_z),
+        Vec3::new(132.0, -0.35, crown_z),
+        Vec3::new(132.0, 0.35, crown_z),
+        Vec3::new(-24.0, 0.35, crown_z),
         Rgb::hex(0xF4F0DA),
         1.0,
     );
-    // Clear glass from the top of the bowl up to the eaves, with a mullion on
-    // every bay so the wall still reads as built.
+    // The eaves: a beam round the top of the bowl, where the walls meet the
+    // vault.
     for side in [-1.0f32, 1.0] {
-        mesh.quad_shaded(
-            Vec3::new(-24.0, side * eave_y, 9.0),
-            Vec3::new(132.0, side * eave_y, 9.0),
-            Vec3::new(132.0, side * eave_y, eave_z),
-            Vec3::new(-24.0, side * eave_y, eave_z),
-            glass.scale(0.9),
+        mesh.box_shaded(
+            Vec3::new(54.0, side * eave_y, eave_z),
+            Vec3::new(78.0, 0.42, 0.42),
+            0.0,
+            glazing,
             1.0,
         );
+    }
+    for end in [-24.0f32, 132.0] {
+        mesh.box_shaded(
+            Vec3::new(end, 0.0, eave_z),
+            Vec3::new(0.42, eave_y, 0.42),
+            0.0,
+            glazing,
+            1.0,
+        );
+    }
+    // The walls: a course rail at each height, and a mullion between them, so
+    // the seam of the building still reads against the water.
+    for side in [-1.0f32, 1.0] {
+        for &z in &[11.0f32, 18.0, 25.0] {
+            mesh.quad_shaded(
+                Vec3::new(-24.0, side * (eave_y - 0.2), z),
+                Vec3::new(132.0, side * (eave_y - 0.2), z),
+                Vec3::new(132.0, side * (eave_y - 0.2), z + 0.32),
+                Vec3::new(-24.0, side * (eave_y - 0.2), z + 0.32),
+                glazing,
+                1.0,
+            );
+        }
         let mut mx = -24.0;
         while mx <= 132.0 {
             mesh.box_shaded(
-                Vec3::new(mx, side * eave_y, (9.0 + eave_z) * 0.5),
-                Vec3::new(0.18, 0.18, (eave_z - 9.0) * 0.5),
+                Vec3::new(mx, side * (eave_y - 0.2), 20.0),
+                Vec3::new(0.16, 0.16, 10.0),
                 0.0,
-                frame,
+                glazing,
                 1.0,
             );
-            mx += 13.0;
-        }
-    }
-    // The ends fill the arch: a pane per strip, from the floor to the vault.
-    for (x, tone) in [(-24.0f32, glass.scale(0.86)), (132.0, glass.scale(0.8))] {
-        for s in 0..strips {
-            let (y0, z0) = curve(s as f32 / strips as f32);
-            let (y1, z1) = curve((s + 1) as f32 / strips as f32);
-            mesh.quad_shaded(
-                Vec3::new(x, y0, 3.0),
-                Vec3::new(x, y1, 3.0),
-                Vec3::new(x, y1, z1),
-                Vec3::new(x, y0, z0),
-                tone,
-                1.0,
-            );
+            mx += 12.0;
         }
     }
 }
@@ -1444,13 +1533,13 @@ pub fn school(seed: u32) -> Vec<FishFigure> {
         Rgb::hex(0xD88AA8),
         Rgb::hex(0xB8C8D8),
     ];
-    (0..34)
+    (0..56)
         .map(|i| FishFigure {
             radius: 34.0 + rand() * 30.0,
-            height: 9.0 + rand() * 16.0,
+            height: 13.0 + rand() * 18.0,
             phase: rand() * std::f32::consts::TAU,
             speed: (0.10 + rand() * 0.14) * if i % 3 == 0 { -1.0 } else { 1.0 },
-            size: 0.5 + rand() * 0.9,
+            size: 1.1 + rand() * 2.0,
             color: palette[(rand() * palette.len() as f32) as usize % palette.len()],
         })
         .collect()
@@ -1461,7 +1550,7 @@ pub fn school_frame(fish: &[FishFigure], t: f32) -> Mesh {
     let mut mesh = Mesh::new();
     for f in fish {
         let a = f.phase + t * f.speed;
-        let at = Vec3::new(50.0 + a.cos() * f.radius, a.sin() * f.radius, f.height);
+        let at = Vec3::new(50.0 + a.cos() * f.radius * 1.7, a.sin() * f.radius, f.height);
         // Facing along the tangent of the circle.
         let dir = Vec3::new(-a.sin(), a.cos(), 0.0) * f.speed.signum();
         let side = Vec3::new(-dir.y, dir.x, 0.0);
