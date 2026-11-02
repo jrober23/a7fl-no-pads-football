@@ -3,7 +3,7 @@ name = "a7fl_cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Command line game client for A7FL No Pads Football"
+description = "Command line game client for 7-on-7 No Pads Football"
 
 [[bin]]
 name = "a7fl"

@@ -1202,7 +1202,7 @@ mod tests {
     fn points_are_only_awarded_in_rulebook_units() {
         let mut g = new_game(7);
         g.simulate_game();
-        // 6, 3? No kicking in the A7FL: every score is 6, 2 (safety) or 1/2 (conversion).
+        // 6, 3? No kicking: every score is 6, 2 (safety) or 1/2 (conversion).
         let total = g.score[0] + g.score[1];
         assert!(total > 0);
         assert!(total < 400, "absurd score {total}");

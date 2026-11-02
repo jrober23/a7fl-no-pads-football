@@ -62,7 +62,7 @@ fn has(args: &[String], name: &str) -> bool {
 }
 
 fn print_help() {
-    println!("A7FL: No Pads Football — 7-on-7 simulation and broadcast renderer");
+    println!("7-on-7 No Pads Football — simulation and broadcast renderer");
     println!();
     println!("USAGE");
     println!("  a7fl sim   [--seed N] [--home IDX] [--away IDX] [--verbose]");
@@ -77,7 +77,7 @@ fn print_help() {
     println!("  film   render broadcast stills and a highlight GIF");
     println!("  arcade play a full game live on a gamepad (this is the default command)");
     println!("  teams  list the league and its rosters");
-    println!("  rules  print the A7FL rules this game enforces");
+    println!("  rules  print the no-pads rules this game enforces");
 }
 
 fn pick_teams(args: &[String]) -> (Team, Team) {
@@ -309,7 +309,7 @@ fn cmd_teams() {
 // ---------------------------------------------------------------------------
 
 fn cmd_rules() {
-    println!("A7FL RULESET IMPLEMENTED");
+    println!("NO PADS FOOTBALL RULESET IMPLEMENTED");
     println!("  field        120 x 37.5 yards, 100 yard field of play, 10 yard end zones, no goal posts");
     println!("  players      7 on 7: QB + 2 down linemen + 4 eligibles vs 2 DL + 2 LB + 3 DB");
     println!("  clock        4 x 15 minutes, 30 second play clock, running clock");
@@ -373,7 +373,7 @@ fn cmd_play(args: &[String]) {
     let seed = num(args, "--seed", 12);
     let (home, away) = pick_teams(args);
     let mut game = GameState::new(home, away, seed);
-    println!("A7FL: NO PADS FOOTBALL — {}", game.teams[0].full_name());
+    println!("7-ON-7 NO PADS FOOTBALL — {}", game.teams[0].full_name());
     println!("vs {}", game.teams[1].full_name());
     println!("Type a play number to call it, 'a' to let the coach call it, 'q' to quit.");
 

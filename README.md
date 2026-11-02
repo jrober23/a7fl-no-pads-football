@@ -1,10 +1,9 @@
-# A7FL: No Pads Football
+# 7-on-7 No Pads Football
 
-A playable American 7s Football League game written in Rust: a complete 7-on-7
-rules engine, a simulated season-length game, and a software-rendered broadcast
-package in the spirit of the ESPN NFL 2K5 presentation — but played under A7FL
-rules, with players in A7FL kit (sleeveless jersey, shorts, bare arms and legs,
-no helmets, no pads).
+A playable no-pads football game written in Rust: a complete 7-on-7 rules engine,
+a simulated season-length game, and a software-rendered broadcast package in the
+spirit of the ESPN NFL 2K5 presentation. Players wear no-pads kit — sleeveless
+jersey, shorts, bare arms and legs, no helmets, no pads.
 
 Everything is pure Rust with no GPU and no audio backend, so
 it builds and runs headless (a cloud VM, a container, a Raspberry Pi) as well as on
@@ -13,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.19.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.20.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -24,7 +23,7 @@ ask you to confirm first (More info → Run anyway).
 
 ```bash
 cargo run -- teams          # the sixteen-club league and every roster
-cargo run -- rules          # the A7FL rule set and the penalty catalog
+cargo run -- rules          # the rule set and the penalty catalog
 cargo run -- sim --seed 7   # simulate a whole game, print the box score
 cargo run -- play --seed 12 # call the plays yourself via a text menu
 cargo run --release         # play a whole game live, in a window, on a gamepad
@@ -48,7 +47,7 @@ built as a second sheet over the skull with an aperture cut for the brows and
 eyes: cloth over the nose, mouth, jaw and neck, hair and beard underneath it.
 Tights are dealt out the same way, per man and stable across replays.
 
-The silhouette is deliberately the one on the A7FL character sheets: shoulders
+The silhouette is deliberately the one on the league's character sheets: shoulders
 and arms carrying the width, a waist you can see, a small head, and a stance with
 the feet wider than the hips. The kit carries the number front and back, trim at
 the armhole, the shorts hem and the sock cuff, gloves, and — depending on the man
@@ -424,9 +423,26 @@ it runs for a fixed time, the tackle mathematics know what he is in the middle o
 there is a short cooldown afterwards so mashing the buttons cannot chain moves into a
 permanent immunity. The active move is named in the text bar while it runs.
 
-### Throw-offs
+### Scoreboard, replays and the picture
 
-The A7FL has no kickoffs: the ball is thrown from your own 35 and has to travel 40
+The scoreboard sits in the top-left corner the way a broadcast's does — both clubs,
+their colours, the score, timeouts, quarter, clock and down — and it gets out of the
+way when the ball is hiked, coming back once the play is dead and the next one is
+set. Classic, the shot from behind the ball, is tilted down a little further than it
+used to be, so the running back behind the quarterback is in the frame instead of
+under it.
+
+Any snap that gains fifteen yards or more, scores, or comes back out of an
+interception gets a replay from the broadcast camera before the card comes up, with
+`REPLAY` in the corner: A skips it. The replay is the play as it was played — the
+frames it was drawn from are kept for it — so the throws, moves and stick work in it
+are the ones you put in.
+
+A man who goes out of bounds stays on the grass side of the advertising boards: the
+picture used to let him run through them and into the front row, which read as
+crossing the bleachers rather than stepping out at the paint.
+
+There are no kickoffs: the ball is thrown from your own 35 and has to travel 40
 yards in the air. It is yours to throw whenever your team is the one throwing it
 off — which is right after you score — and yours to return whenever the other lot
 throw it.
@@ -480,9 +496,9 @@ controller still works (the keyboard and the window do not depend on it).
 
 ## What is implemented
 
-### A7FL rules, not NFL rules
+### No-pads rules, not NFL rules
 
-The rule set follows a7fl.com rather than the NFL rulebook:
+The rule set follows the 7-on-7 no-pads rulebook rather than the NFL's:
 
 - **7 on 7.** Quarterback, two down linemen and four eligibles against two edge
   rushers, two linebackers and three defensive backs.
@@ -571,12 +587,12 @@ and the midfield mark — and the ground pass samples it across the whole field.
 
 Around it stands a stadium: a run-off apron, advertising boards, a bowl of seating
 with a crowd in team colours, a stand behind each end zone, a roof over the far
-side, a scoreboard carrying the league mark and four banks of lights, all placed
+side, a scoreboard carrying the home club's mark and four banks of lights, all placed
 under the height of the broadcast lens so the building is in the picture without
 ever getting between the camera and the ball.
 
 The overlay is 2K5-flavoured: a score bug with possession highlight and timeout
-pips, a down-and-distance card with play clock bar, the A7FL badge, a lower-third
+pips, a down-and-distance card with play clock bar, the league badge, a lower-third
 ticker carrying the play-by-play line, big TOUCHDOWN / TURNOVER / SACK / TACKLE FOR
 LOSS / PASS BATTED DOWN / FLAG banners, the word over the dead ball while the
 players get up off the turf, and a full-screen post-game stats panel.
@@ -641,7 +657,7 @@ crates/render   a7fl_render — depends on `image` (PNG) and `gif`
   font.rs       5x7 bitmap font
   scene.rs      camera, projector, near clipping, mesh primitives, lighting, fog
   fieldtex.rs   the painted turf texture
-  players.rs    the A7FL player meshes and poses
+  players.rs    the 7-on-7 player meshes and poses
   broadcast.rs  camera work and frame assembly
   hud.rs        score bug, banners, ticker, stats panel
   capture.rs    PNG and GIF writers

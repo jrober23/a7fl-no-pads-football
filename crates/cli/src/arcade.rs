@@ -22,6 +22,7 @@ use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use a7fl_core::sim::{DefControl, Phase, PlaySim, QbControl};
 use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use a7fl_render::broadcast::{Broadcast, CameraMode};
+use a7fl_render::hud;
 use a7fl_render::passing::{Badge, Focus, Guide, PassUi, Tone};
 use a7fl_render::callsheet;
 use a7fl_render::defsheet;
@@ -720,7 +721,8 @@ impl Arcade {
             sim.snap_delay = WATCH_SNAP_DELAY;
         }
 
-        let finished = self.drive_throw_off(&mut sim, my_team, &header);
+        let board = hud::Scoreboard::from_game(&self.game);
+        let finished = self.drive_throw_off(&mut sim, my_team, &header, &board);
         if !finished {
             return false;
         }
@@ -746,7 +748,13 @@ impl Arcade {
     }
 
     /// The live throw-off. Returns false when the player has quit.
-    fn drive_throw_off(&mut self, sim: &mut ThrowOffSim, my_team: usize, header: &str) -> bool {
+    fn drive_throw_off(
+        &mut self,
+        sim: &mut ThrowOffSim,
+        my_team: usize,
+        header: &str,
+        board: &hud::Scoreboard,
+    ) -> bool {
         let mut acc = 0.0f64;
         let mut last = Instant::now();
         let mut drew = Instant::now() - FRAME;
@@ -896,6 +904,10 @@ impl Arcade {
                 };
                 let mode = CAMS[self.cam % CAMS.len()];
                 let mut frame = self.broadcast.throw_off_frame_live(sim, mode, &ui);
+
+                if sim.phase == ThrowPhase::Presnap {
+                    hud::draw_scoreboard(&mut frame, board);
+                }
                 let lines = vec![
                     header.to_string(),
                     throw_off_line(self, sim, my_team, aim_y, charging),
@@ -935,6 +947,7 @@ impl Arcade {
         let header = self.header();
         let off_abbr = self.game.teams[self.game.offense()].abbr.clone();
         let book: &[Play] = &self.book;
+        let board = hud::Scoreboard::from_game(&self.game);
 
         let my_team = self.my_team.unwrap_or(self.game.possession);
 
@@ -962,6 +975,7 @@ impl Arcade {
                 &off_abbr,
                 book,
                 my_team,
+                &board,
             );
             if !finished {
                 *quit = true;
@@ -978,6 +992,7 @@ impl Arcade {
         let play = self.cpu_offense();
         let header = self.header();
         let defbook: &[DefCall] = &self.defbook;
+        let board = hud::Scoreboard::from_game(&self.game);
         let game = &mut self.game;
         let broadcast = &mut self.broadcast;
         let view = &mut self.view;
@@ -997,6 +1012,7 @@ impl Arcade {
                 cam,
                 &header,
                 defbook,
+                &board,
             );
             if !finished {
                 *quit = true;
@@ -1425,6 +1441,74 @@ fn pause_menu(
     keep
 }
 
+/// Whether a dead snap is worth running back: fifteen yards of offence, six
+/// points, or a return that came out of a turnover.
+fn worth_a_replay(sim: &PlaySim) -> bool {
+    sim.result
+        .as_ref()
+        .map(|r| r.touchdown || r.yards >= 15.0 || r.return_yards >= 15.0)
+        .unwrap_or(false)
+}
+
+/// Run the taped snap back over the broadcast camera. A (or START) skips it.
+///
+/// The tape holds the played frames themselves rather than re-running the snap:
+/// the player's throws, moves and stick work are all in it, and a re-simulation
+/// would have none of them and would disagree with the result it is replaying.
+fn play_back(
+    tape: &[PlaySim],
+    broadcast: &mut Broadcast,
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+) -> bool {
+    let ui = PassUi {
+        focus: None,
+        badges: Vec::new(),
+        guide: None,
+        power: None,
+        short: false,
+        needed: None,
+    };
+    let started = Instant::now();
+    let mut next = Instant::now();
+    // A play that ran long is sampled rather than run back for as long as it
+    // took: six seconds of tape is a replay, forty is the whole game again.
+    let step = (tape.len() / 360).max(1);
+    for snapshot in tape.iter().step_by(step).take(360) {
+        if started.elapsed() > Duration::from_millis(400) {
+            let input = pad::mix(pad.as_deref_mut(), view.poll());
+            if input.pressed.a || input.pressed.start {
+                return true;
+            }
+        }
+        // The tape was recorded one frame per fixed step, so play it back at
+        // the same rate.
+        loop {
+            if Instant::now() >= next {
+                next += Duration::from_millis(16);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            if started.elapsed() > Duration::from_millis(400) {
+                let input = pad::mix(pad.as_deref_mut(), view.poll());
+                if input.pressed.a || input.pressed.start {
+                    return true;
+                }
+            }
+        }
+        let mut frame = broadcast.live_frame_ui(snapshot, CameraMode::Broadcast, &ui);
+        let tw = a7fl_render::font::text_width("REPLAY", 3) as i32;
+        frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
+        frame.fill_rect(12, 12, 4, 30, hud::RED);
+        frame.text_shadowed(23, 20, "REPLAY", 3, hud::WHITE, 1);
+        let lines = vec!["REPLAY   [A] SKIP".to_string()];
+        if !view.show(&mut frame, &lines) {
+            return false;
+        }
+    }
+    true
+}
+
 fn drive(
     sim: &mut PlaySim,
     broadcast: &mut Broadcast,
@@ -1436,6 +1520,7 @@ fn drive(
     off_abbr: &str,
     book: &[Play],
     my_team: usize,
+    board: &hud::Scoreboard,
 ) -> bool {
     let mut acc = 0.0f64;
     let mut last = Instant::now();
@@ -1447,6 +1532,8 @@ fn drive(
     let mut dead_at: Option<Instant> = None;
     // When the play turned round on an interception, so the screen can swing.
     let mut turn: Option<Instant> = None;
+    // The snap frame by frame, for the replay.
+    let mut tape: Vec<PlaySim> = Vec::new();
 
     loop {
         let now = Instant::now();
@@ -1615,6 +1702,9 @@ fn drive(
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
+                if tape.len() < 2400 {
+                    tape.push(sim.clone());
+                }
             }
         } else {
             acc = 0.0;
@@ -1693,6 +1783,11 @@ fn drive(
             };
 
             let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
+            // The scoreboard is a broadcast bug: it gets out of the way when the
+            // ball is hiked and comes back when the play is dead and reset.
+            if sim.phase == Phase::PreSnap {
+                hud::draw_scoreboard(&mut frame, board);
+            }
             // The call is read off the sim, not off the sheet that was chosen a
             // minute ago: an audible changes the play, and the overlay has to say so.
             let call = format!(
@@ -1780,6 +1875,13 @@ fn drive(
             sim.settle(frame_dt as f32);
             let waited = since.elapsed();
             if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                // A big play gets a second look before the card comes up. The
+                // tape is the play as it was played, not a re-run of it.
+                if worth_a_replay(sim) && view.is_window()
+                    && !play_back(&tape, broadcast, view, pad.as_deref_mut())
+                {
+                    return false;
+                }
                 return true;
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -2026,6 +2128,7 @@ fn drive_defense(
     cam: &mut usize,
     header: &str,
     defbook: &[DefCall],
+    board: &hud::Scoreboard,
 ) -> bool {
     let mut acc = 0.0f64;
     let mut last = Instant::now();
@@ -2033,6 +2136,8 @@ fn drive_defense(
     let mut dead_at: Option<Instant> = None;
     let mut turn: Option<Instant> = None;
     let mut switched = Instant::now() - Duration::from_millis(400);
+    // The snap frame by frame, for the replay.
+    let mut tape: Vec<PlaySim> = Vec::new();
 
     loop {
         let now = Instant::now();
@@ -2106,6 +2211,9 @@ fn drive_defense(
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
+                if tape.len() < 2400 {
+                    tape.push(sim.clone());
+                }
             }
         } else {
             acc = 0.0;
@@ -2134,6 +2242,11 @@ fn drive_defense(
                 needed: None,
             };
             let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
+            // The scoreboard is a broadcast bug: it gets out of the way when the
+            // ball is hiked and comes back when the play is dead and reset.
+            if sim.phase == Phase::PreSnap {
+                hud::draw_scoreboard(&mut frame, board);
+            }
             let role = sim.human_defender_role().map(|r| r.label()).unwrap_or("DEF");
             let who = sim
                 .human_defender
@@ -2196,6 +2309,13 @@ fn drive_defense(
             sim.settle(frame_dt as f32);
             let waited = since.elapsed();
             if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                // A big play gets a second look before the card comes up. The
+                // tape is the play as it was played, not a re-run of it.
+                if worth_a_replay(sim) && view.is_window()
+                    && !play_back(&tape, broadcast, view, pad.as_deref_mut())
+                {
+                    return false;
+                }
                 return true;
             }
             std::thread::sleep(Duration::from_millis(2));

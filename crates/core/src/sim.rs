@@ -66,6 +66,18 @@ pub const PUMP_TIME: f32 = 0.55;
 
 /// How long an interception may be run back before the returner is done.
 pub const RETURN_SECONDS: f32 = 9.0;
+
+/// The beat of daylight the man who just picked it off gets before anybody can
+/// lay a hand on him. The catch happens at the landing spot, which is where the
+/// man the ball was thrown to is standing, so without it the nearest "tackler"
+/// was the receiver he had just taken it from and every interception was booked
+/// dead on the frame the return started.
+pub const RETURN_GRACE: f32 = 0.85;
+
+/// How much room a body is allowed past the paint. The advertising boards stand
+/// 0.55 of a yard beyond the sideline; a man used to be allowed a yard and a
+/// half of run-off, which walked him through the boards and into the front row.
+pub const BODY_APRON: f32 = 0.2;
 /// How long a CPU offense waits at the line when a human is on defence: long
 /// enough to walk a man up, check to another call, and get set.
 pub const PRESNAP_WAIT: f32 = 2.6;
@@ -366,6 +378,7 @@ pub struct ThrowPlan {
     pub power_needed: f32,
 }
 
+#[derive(Clone)]
 pub struct PlaySim<'a> {
     pub setup: SnapSetup,
     pub play: Play,
@@ -436,6 +449,8 @@ pub struct PlaySim<'a> {
     /// The man who picked it off and the spot he caught it, while he runs it back.
     returner: Option<usize>,
     return_spot: f32,
+    /// Seconds since the pick.
+    return_t: f32,
     /// The throw that was intercepted: which arm, and how far it had travelled.
     return_throw: Option<(usize, f32)>,
     /// Where everybody stood when a flip was called. The men who change sides walk
@@ -571,6 +586,7 @@ impl<'a> PlaySim<'a> {
             pump_t: 0.0,
             returner: None,
             return_spot: setup.los,
+            return_t: 0.0,
             return_throw: None,
             shift: None,
             shift_t: 0.0,
@@ -2057,7 +2073,11 @@ impl<'a> PlaySim<'a> {
             p.pos += Vec2::ZERO; // movement already applied in steer
             p.stamina = (p.stamina - p.vel.length() * dt * 0.006).max(0.42);
             // Keep bodies on the planet.
-            p.pos.y = clamp(p.pos.y, -FIELD_HALF_WIDTH - 1.5, FIELD_HALF_WIDTH + 1.5);
+            p.pos.y = clamp(
+                p.pos.y,
+                -FIELD_HALF_WIDTH - BODY_APRON,
+                FIELD_HALF_WIDTH + BODY_APRON,
+            );
         }
         // Simple separation so bodies never merge.
         for a in 0..14 {
@@ -2073,6 +2093,15 @@ impl<'a> PlaySim<'a> {
                     self.players[b].pos += push;
                 }
             }
+        }
+        // A shove runs after the wall, so enforce it once more: nobody ends a
+        // frame standing in the advertising boards.
+        for p in self.players.iter_mut() {
+            p.pos.y = clamp(
+                p.pos.y,
+                -FIELD_HALF_WIDTH - BODY_APRON,
+                FIELD_HALF_WIDTH + BODY_APRON,
+            );
         }
     }
 
@@ -2267,7 +2296,7 @@ impl<'a> PlaySim<'a> {
                 continue;
             }
 
-            // A7FL: a tackle above the nameplate is unnecessary roughness.
+            // No-pads rules: a tackle above the nameplate is unnecessary roughness.
             let high_tackle =
                 self.rng.chance(0.02 * (1.2 - defender_attrs.discipline as f32 / 100.0));
             let spot = clamp(
@@ -3117,6 +3146,7 @@ impl<'a> PlaySim<'a> {
         self.carrier = Some(d);
         self.returner = Some(d);
         self.return_spot = spot;
+        self.return_t = 0.0;
         self.return_throw = Some((thrower, air_yards));
         self.phase = Phase::Return;
         self.intended = None;
@@ -3132,6 +3162,7 @@ impl<'a> PlaySim<'a> {
 
     fn update_return(&mut self, dt: f32) {
         let Some(r) = self.returner else { return };
+        self.return_t += dt;
         let goal = field::opponent_goal_side(-self.dir);
         // The man with the ball answers the pad if it is on him; otherwise he
         // runs for the far corner the way a returner does.
@@ -3192,7 +3223,10 @@ impl<'a> PlaySim<'a> {
         // A hit. Any of the men in the chase close enough to wrap him up ends it.
         let hit = chasers
             .iter()
-            .find(|(i, _)| self.players[*i].pos.dist(self.players[r].pos) <= TACKLE_RADIUS)
+            .find(|(i, _)| {
+                self.return_t >= RETURN_GRACE
+                    && self.players[*i].pos.dist(self.players[r].pos) <= TACKLE_RADIUS
+            })
             .map(|(i, _)| *i);
         if let Some(i) = hit {
             self.players[i].tackle_cooldown = 0.8;
@@ -3811,6 +3845,30 @@ mod tests {
         );
         assert!(r.return_yards >= 0.0, "a return with negative yards");
         assert!(r.turnover, "an interception is not a turnover");
+    }
+
+    #[test]
+    fn the_man_who_just_picked_it_off_gets_a_head_start() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_pass())
+            .expect("no pass play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(45.0, 1, 10.0, 37);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        sim.start_return(7, 45.0, 0, 14.0);
+        // The man the ball was thrown to is standing on top of him: that used to
+        // be an instant tackle and the return never happened.
+        let spot = sim.players[7].pos;
+        sim.players[4].pos = spot;
+        sim.players[4].stun = 0.0;
+        for _ in 0..12 {
+            sim.step(FIXED_DT);
+        }
+        assert!(sim.result.is_none(), "the return was over before it started");
     }
 
     #[test]

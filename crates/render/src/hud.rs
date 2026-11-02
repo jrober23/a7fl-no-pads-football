@@ -178,11 +178,11 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     frame.fill_rect(dx + 18, by + dcard_h - 24, bar_w, 8, if pc < 0.2 { RED } else { YELLOW });
     font::draw_styled(frame, dx + 18, by + dcard_h - 44, "PLAY CLOCK", 2, MUTED, 1, false);
 
-    // ------------------------------ A7FL bug -------------------------------
+    // ---------------------------- league badge -----------------------------
     let lw = 136;
     let lx = w - lw - 28;
     frame.rounded_rect(lx, 24, lw, 46, 8, RED);
-    font::draw_styled(frame, lx + 16, 30, "A7FL", 4, WHITE, 2, true);
+    font::draw_styled(frame, lx + 16, 32, "7-ON-7", 3, WHITE, 2, true);
     font::draw_styled(frame, lx + 16, 58, "NO PADS", 2, WHITE, 1, false);
 
     // ------------------------------- ticker --------------------------------
@@ -255,6 +255,144 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     } else if state.under_two {
         font::draw_centered(frame, w / 2, 96, "UNDER TWO MINUTES", 2, YELLOW, 1);
     }
+}
+
+/// Everything the live scoreboard needs, owned rather than borrowed.
+///
+/// The interactive client takes one of these before the snap instead of holding
+/// on to the game, because the game is lent to the simulation for the whole of
+/// the play and the scoreboard has to stay drawable from inside that loan.
+#[derive(Clone)]
+pub struct Scoreboard {
+    pub abbr: [String; 2],
+    pub primary: [Rgb; 2],
+    pub accent: [Rgb; 2],
+    pub score: [u32; 2],
+    pub timeouts: [u8; 2],
+    pub possession: usize,
+    pub quarter: u8,
+    pub clock: f32,
+    pub down: u8,
+    pub to_go: f32,
+    pub yards_to_goal: f32,
+}
+
+impl Scoreboard {
+    pub fn from_game(game: &GameState) -> Self {
+        Scoreboard {
+            abbr: [
+                game.teams[0].abbr.to_uppercase(),
+                game.teams[1].abbr.to_uppercase(),
+            ],
+            primary: [game.teams[0].primary, game.teams[1].primary],
+            accent: [game.teams[0].accent, game.teams[1].accent],
+            score: game.score,
+            timeouts: game.timeouts,
+            possession: game.possession,
+            quarter: game.quarter,
+            clock: game.clock,
+            down: game.down,
+            to_go: game.to_go,
+            yards_to_goal: game.yards_to_goal(),
+        }
+    }
+
+    fn quarter_text(&self) -> String {
+        match self.quarter {
+            1 => "1ST".to_string(),
+            2 => "2ND".to_string(),
+            3 => "3RD".to_string(),
+            4 => "4TH".to_string(),
+            q => format!("OT{}", q - 4),
+        }
+    }
+
+    fn clock_text(&self) -> String {
+        let c = self.clock.max(0.0);
+        let m = (c / 60.0).floor() as u32;
+        let s = (c - m as f32 * 60.0).floor() as u32;
+        format!("{m}:{s:02}")
+    }
+
+    fn down_text(&self) -> String {
+        let ord = match self.down {
+            1 => "1ST",
+            2 => "2ND",
+            3 => "3RD",
+            _ => "4TH",
+        };
+        if self.yards_to_goal <= self.to_go {
+            format!("{ord} & GOAL")
+        } else if (self.to_go - 10.0).abs() < 0.6 {
+            format!("{ord} & 10")
+        } else {
+            format!("{ord} & {}", self.to_go.round() as i32)
+        }
+    }
+
+    fn ball_on(&self) -> String {
+        let side = if self.yards_to_goal > 50.0 { "OWN" } else { "OPP" };
+        let spot = a7fl_core::field::ball_on_label(self.yards_to_goal);
+        format!("BALL ON {side} {spot}")
+    }
+}
+
+/// The corner scoreboard the interactive client draws over the live picture.
+///
+/// Laid out for the client's 640x360 canvas: two club rows with the possession
+/// highlight, timeouts and score, a clock block beside them and the down and
+/// distance underneath. The client only draws it before the snap and again once
+/// the play is dead and reset, which is where a broadcast's score bug lives too.
+pub fn draw_scoreboard(frame: &mut Frame, s: &Scoreboard) {
+    let x = 10;
+    let y = 8;
+    let row_w = 168;
+    let row_h = 19;
+    let clock_w = 74;
+    let h = row_h * 2 + 14;
+    frame.fill_rect_alpha(x - 4, y - 4, row_w + clock_w + 14, h + 8, INK, 0.74);
+
+    for t in 0..2 {
+        let ty = y + t as i32 * row_h;
+        let has_it = s.possession == t;
+        let bg = if has_it { s.primary[t].scale(0.7) } else { PANEL };
+        frame.fill_rect(x, ty, row_w, row_h - 1, bg);
+        frame.fill_rect(x, ty, 5, row_h - 1, s.primary[t]);
+        frame.fill_rect(x + 5, ty, 2, row_h - 1, s.accent[t]);
+        let ink = if has_it && s.primary[t].luma() > 150.0 { INK } else { WHITE };
+        font::draw_styled(frame, x + 12, ty + 5, &s.abbr[t], 2, ink, 1, false);
+        if has_it {
+            // Possession: a small ball beside the name.
+            frame.fill_rect(x + 12 + font::text_width(&s.abbr[t], 2) as i32 + 6, ty + 8, 4, 4, ink);
+        }
+        // Timeout pips, then the score.
+        for i in 0..3 {
+            let filled = (i as u8) < s.timeouts[t];
+            let px = x + row_w - 86 + i * 8;
+            frame.fill_rect(
+                px,
+                ty + row_h / 2 - 3,
+                5,
+                5,
+                if filled { s.accent[t] } else { PANEL_EDGE },
+            );
+        }
+        font::draw_right(frame, x + row_w - 10, ty + 2, &format!("{}", s.score[t]), 3, WHITE, 1);
+    }
+
+    // Clock block, beside the clubs the way a broadcast puts it.
+    let cx = x + row_w + 6;
+    frame.fill_rect(cx, y, clock_w, row_h * 2 - 1, INK);
+    font::draw_styled(frame, cx + 8, y + 4, &s.quarter_text(), 1, MUTED, 1, false);
+    font::draw_styled(frame, cx + 8, y + 13, &s.clock_text(), 2, WHITE, 1, false);
+    font::draw_styled(frame, cx + 8, y + 29, "PLAY CLOCK", 1, MUTED, 1, false);
+
+    // Down and distance under the whole bar.
+    let dy = y + row_h * 2;
+    frame.fill_rect(x, dy, row_w + clock_w + 6, 13, INK);
+    font::draw_styled(frame, x + 6, dy + 3, &s.down_text(), 1, YELLOW, 1, false);
+    let ball = s.ball_on();
+    font::draw_right(frame, x + row_w + clock_w + 2, dy + 3, &ball, 1, MUTED, 1);
 }
 
 /// Full-screen statistical panel, shown at halftime and after the game.
@@ -333,4 +471,26 @@ pub fn draw_stats_panel(frame: &mut Frame, game: &GameState, title: &str) {
 fn format_time(seconds: f32) -> String {
     let total = seconds.max(0.0) as u32;
     format!("{}:{:02}", total / 60, total % 60)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use a7fl_core::team::league_teams;
+
+    #[test]
+    fn the_scoreboard_draws_over_the_picture_inside_the_canvas() {
+        let teams = league_teams();
+        let game = GameState::new(teams[0].clone(), teams[1].clone(), 5);
+        let board = Scoreboard::from_game(&game);
+        let mut frame = Frame::new(640, 360);
+        draw_scoreboard(&mut frame, &board);
+        let painted = frame
+            .color
+            .iter()
+            .filter(|c| **c != Rgb::new(0, 0, 0))
+            .count();
+        assert!(painted > 4_000, "the scoreboard is a speck: {painted} px");
+        assert_eq!(frame.w, 640, "the scoreboard changed the canvas");
+    }
 }

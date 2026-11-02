@@ -842,9 +842,12 @@ impl Broadcast {
             // Behind the ball and looking past it: the old version was pinned to
             // the line of scrimmage, so the further the runner got the smaller he
             // was in the corner of a shot still framing the snap.
+            // Tilted down a touch more than it used to be: the running back
+            // lines up behind the ball, and the old lens had his feet under the
+            // bottom of the frame.
             CameraMode::Classic => (
-                Vec3::new(action.x - d * 11.0, action.y * 0.5, 10.2),
-                Vec3::new(action.x + d * 8.0, action.y * 0.8, 0.9),
+                Vec3::new(action.x - d * 11.0, action.y * 0.5, 11.2),
+                Vec3::new(action.x + d * 8.0, action.y * 0.8, 0.1),
                 42f32,
             ),
             CameraMode::BehindQb => (
@@ -1175,7 +1178,7 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
             color,
         );
     };
-    centred("A7FL", 0.55, 8.8, Rgb::hex(0xE8EAE2), &mut mesh);
+    centred(&teams[0].abbr.to_uppercase(), 0.55, 8.8, Rgb::hex(0xE8EAE2), &mut mesh);
     centred("NO PADS", 0.26, 6.5, teams[0].accent, &mut mesh);
 
     // ------------------------------------------------------------------
@@ -1223,7 +1226,7 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
 fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode) -> Camera {
     let (dist, height, lead, fov): (f32, f32, f32, f32) = match mode {
         // Low and close, behind the ball, like a sideline camera that gave chase.
-        CameraMode::Classic => (7.5, 5.6, 6.0, 36.0),
+        CameraMode::Classic => (7.5, 6.1, 6.0, 36.0),
         // Overhead: the one view where the whole return is readable.
         CameraMode::SkyCam => (4.0, 24.0, 3.0, 42.0),
         // The workhorse: a runner's height, close enough to see hands and feet,
@@ -1231,7 +1234,7 @@ fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode) -> Camera {
         _ => (10.0, 7.0, 6.0, 33.0),
     };
     let pos = Vec3::new(focus.x - dir * dist, focus.y * 0.55, height);
-    let look = Vec3::new(focus.x + dir * lead, focus.y * 0.72, 1.0);
+    let look = Vec3::new(focus.x + dir * lead, focus.y * 0.72, 0.35);
     let mut cam = Camera::new(pos, 0.0, 0.0);
     cam.fov = fov.to_radians();
     cam.look_at(look);

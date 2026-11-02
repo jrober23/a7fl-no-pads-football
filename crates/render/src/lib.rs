@@ -1,9 +1,9 @@
-//! Software broadcast renderer for the A7FL game.
+//! Software broadcast renderer for the game.
 //!
 //! The renderer is deliberately dependency-light (just `image` for PNG and `gif`
 //! for the highlight package) and draws everything on the CPU: perspective
 //! projection, z-buffered triangle rasterisation, a painted field texture and
-//! procedural player models wearing A7FL kit — jerseys and shorts, no pads and no
+//! procedural player models in no-pads kit — jerseys and shorts, no pads and no
 //! helmets.
 //!
 //! [`broadcast`] ties it together: given a [`a7fl_core::game::GameState`] and one of

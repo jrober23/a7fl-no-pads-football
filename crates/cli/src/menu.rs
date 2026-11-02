@@ -216,9 +216,9 @@ fn start_screen(
 
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
         night(&mut frame);
-        centered(&mut frame, 46, "A7FL", 7, accent());
-        centered(&mut frame, 112, "NO PADS FOOTBALL", 2, paper());
-        centered(&mut frame, 134, "SEVEN ON SEVEN", 1, dim());
+        centered(&mut frame, 34, "7-ON-7", 7, accent());
+        centered(&mut frame, 100, "NO PADS FOOTBALL", 2, paper());
+        centered(&mut frame, 122, "SEVEN ON SEVEN", 1, dim());
         frame.fill_rect(150, 168, 340, 1, Rgb::new(48, 92, 148));
         for (i, label) in labels.iter().enumerate() {
             let y = 192 + i as i32 * 30;
