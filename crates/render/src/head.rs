@@ -296,7 +296,7 @@ impl<'a> Head<'a> {
             let tau = std::f32::consts::TAU;
             let patches: [(f32, f32, f32, f32, usize); 3] = [
                 (0.700, 1.000, 0.0, tau, 3),
-                (0.012, 0.560, 0.0, tau, 5),
+                (0.000, 0.560, 0.0, tau, 5),
                 (0.560, 0.700, 0.760, tau - 0.760, 2),
             ];
             for (v0, v1, u0, u1, prings) in patches {
@@ -365,7 +365,7 @@ impl<'a> Head<'a> {
             let hem: Vec<(Vec3, f32)> = (0..=segs)
                 .map(|i| {
                     let u = i as f32 / segs as f32 * tau;
-                    (self.masked_point(off, u, 0.012), hr * 0.018)
+                    (self.masked_point(off, u, 0.000), hr * 0.018)
                 })
                 .collect();
             mesh.tube(&hem, if fine { 5 } else { 3 }, cloth, false);
