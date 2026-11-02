@@ -270,7 +270,9 @@ impl<'a> Head<'a> {
         // The underside of the jaw, narrowing into the neck. A ball under the
         // chin is a second head; a taper that gathers to the neck's own width
         // sits down into the collar.
-        let under = skin.scale(0.90);
+        // Under a balaclava the underside of the jaw is cloth: the mask wraps
+        // under the chin and meets the bare neck where the taper runs inside it.
+        let under = self.mask.unwrap_or_else(|| skin.scale(0.90));
         mesh.tube(
             &[
                 (c + Vec3::new(-0.008, 0.0, -hr * 0.985), hr * 0.300),
