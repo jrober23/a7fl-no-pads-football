@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 
 use a7fl_core::ai;
 use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
-use a7fl_core::math::{Rng, Vec2, Vec3};
+use a7fl_core::math::{Rgb, Rng, Vec2, Vec3};
 use a7fl_core::moves::Kind;
 use a7fl_core::playbook::{
     def_calls_in, defensive_playbook, formations_in, fronts_in, playbook, plays_in, DefCall,
@@ -30,6 +30,7 @@ use a7fl_render::playsheet::Dir;
 use a7fl_render::terminal;
 
 use crate::pad::{self, Input, Pad};
+use crate::settings::Settings;
 use crate::view::{View, CANVAS_H, CANVAS_W};
 
 /// Picture refresh for live play. The field is drawn at the full canvas size, so
@@ -254,6 +255,9 @@ pub struct Arcade {
     quit: bool,
     /// Penalty insurance: some pads report the stick's Y the other way round.
     flip_y: bool,
+    /// The settings this game was started with, kept so a lens moved in the pause
+    /// menu is still there the next time the game opens.
+    settings: Option<Settings>,
 }
 
 impl Arcade {
@@ -278,6 +282,7 @@ impl Arcade {
             cam: 0,
             quit: false,
             flip_y: false,
+            settings: None,
         }
     }
 
@@ -299,6 +304,13 @@ impl Arcade {
         self
     }
 
+    /// The settings the game was opened with. The lens lives on the picture while
+    /// the game is running, and moves are written back here when it closes.
+    pub fn with_settings(mut self, settings: Settings) -> Self {
+        self.settings = Some(settings);
+        self
+    }
+
     /// The side of the ball the player runs, chosen in exhibition.
     pub fn with_my_team(mut self, side: usize) -> Self {
         self.my_team = Some(side.min(1));
@@ -315,6 +327,18 @@ impl Arcade {
         if terminal_mode {
             print!("{}", terminal::leave());
             io::stdout().flush().ok();
+        }
+        // A lens moved in the pause menu is the player's lens too: it goes back
+        // into the settings file rather than lasting only as long as this game.
+        if let Some(settings) = &mut self.settings {
+            let (zoom, tilt) = self.broadcast.lens();
+            if (settings.lens_zoom - zoom).abs() > 0.001
+                || (settings.lens_tilt - tilt).abs() > 0.001
+            {
+                settings.lens_zoom = zoom;
+                settings.lens_tilt = tilt;
+                settings.save();
+            }
         }
     }
 
@@ -426,7 +450,13 @@ impl Arcade {
                 // The call sheet is where a player spends most of the game, so this
                 // is the door to the camera setting and to quitting, not an instant
                 // exit the way it used to be.
-                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                if !pause_menu(
+                    &mut self.view,
+                    self.pad.as_mut(),
+                    &mut self.cam,
+                    &mut self.broadcast,
+                    PausedShot::None,
+                ) {
                     self.quit = true;
                     return None;
                 }
@@ -542,7 +572,13 @@ impl Arcade {
             }
             let input = self.input();
             if input.pressed.start {
-                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                if !pause_menu(
+                    &mut self.view,
+                    self.pad.as_mut(),
+                    &mut self.cam,
+                    &mut self.broadcast,
+                    PausedShot::None,
+                ) {
                     self.quit = true;
                     return None;
                 }
@@ -679,7 +715,13 @@ impl Arcade {
             }
             let input = self.input();
             if input.pressed.start {
-                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                if !pause_menu(
+                    &mut self.view,
+                    self.pad.as_mut(),
+                    &mut self.cam,
+                    &mut self.broadcast,
+                    PausedShot::None,
+                ) {
                     self.quit = true;
                     return false;
                 }
@@ -785,7 +827,13 @@ impl Arcade {
             let input = pad::mix(self.pad.as_mut(), self.view.poll());
             if input.pressed.start {
                 // START pauses: the camera setting and quitting both live behind it.
-                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                if !pause_menu(
+                    &mut self.view,
+                    self.pad.as_mut(),
+                    &mut self.cam,
+                    &mut self.broadcast,
+                    PausedShot::ThrowOff(&*sim),
+                ) {
                     self.quit = true;
                     return false;
                 }
@@ -1126,7 +1174,13 @@ impl Arcade {
             }
             let input = self.input();
             if input.pressed.start {
-                if !pause_menu(&mut self.view, self.pad.as_mut(), &mut self.cam) {
+                if !pause_menu(
+                    &mut self.view,
+                    self.pad.as_mut(),
+                    &mut self.cam,
+                    &mut self.broadcast,
+                    PausedShot::None,
+                ) {
                     self.quit = true;
                     return None;
                 }
@@ -1390,15 +1444,78 @@ impl Arcade {
 /// START used to close the game on the spot, which put the camera setting — the
 /// one thing a player wants to change in the middle of a drive — out of reach
 /// once the ball was snapped.
+/// What the pause screen can put behind its menu: the call sheet and the
+/// between-plays cards have no live picture, but a snap and a throw-off do.
+enum PausedShot<'s, 'a> {
+    None,
+    Play(&'s PlaySim<'a>),
+    ThrowOff(&'s ThrowOffSim<'a>),
+}
+
+/// A still of the game as the lens currently sees it.
+fn paused_still(
+    broadcast: &mut Broadcast,
+    shot: &PausedShot<'_, '_>,
+    mode: CameraMode,
+) -> Option<a7fl_render::Frame> {
+    match shot {
+        PausedShot::None => None,
+        PausedShot::Play(sim) => Some(broadcast.live_frame(sim, mode)),
+        PausedShot::ThrowOff(sim) => {
+            let ui = PassUi {
+                focus: None,
+                badges: Vec::new(),
+                guide: None,
+                power: None,
+                short: false,
+                needed: None,
+            };
+            Some(broadcast.throw_off_frame_live(sim, mode, &ui))
+        }
+    }
+}
+
+/// The menu, set over the frozen picture rather than on a page of their own.
+fn draw_pause_lines(frame: &mut a7fl_render::Frame, lines: &[String]) {
+    let line_h = 18;
+    let h = lines.len() as i32 * line_h + 20;
+    let y0 = ((frame.h as i32 - h) / 2).max(0);
+    frame.fill_rect_alpha(34, y0, frame.w as i32 - 68, h, Rgb::new(8, 12, 18), 0.80);
+    for (i, line) in lines.iter().enumerate() {
+        frame.text_shadowed(
+            50,
+            y0 + 10 + i as i32 * line_h,
+            line,
+            2,
+            Rgb::new(232, 238, 246),
+            1,
+        );
+    }
+}
+
+/// The pause screen. Returns false when the player chose to quit the game.
+///
+/// START used to close the game on the spot, which put the camera setting — the
+/// one thing a player wants to change in the middle of a drive — out of reach
+/// once the ball was snapped. The lens is here too now: a player can zoom and
+/// tilt the game he is already watching, on the frozen picture, and the shot he
+/// leaves behind is the shot the rest of the game is played in.
 fn pause_menu(
     view: &mut View,
     mut pad: Option<&mut Pad>,
     cam: &mut usize,
+    broadcast: &mut Broadcast,
+    shot: PausedShot<'_, '_>,
 ) -> bool {
-    const ITEMS: usize = 3;
+    const ITEMS: usize = 4;
     let mut nav = Nav::default();
     let mut pick = 0usize;
+    // The lens sub-screen: the stick on the camera, the frozen picture in front
+    // of it, exactly like the lens screen in the settings.
+    let mut tuning = false;
     let mut last = Instant::now();
+    // The picture as the lens last saw it, redrawn only when the lens moves.
+    let mut still: Option<a7fl_render::Frame> = None;
     // A button still held from the game must not select the first item.
     view.reset();
     let keep = loop {
@@ -1407,38 +1524,100 @@ fn pause_menu(
         last = now;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.start || input.pressed.b {
-            break true;
-        }
-        match nav.step(input.stick, dt) {
-            Some(Dir::Up) => pick = (pick + ITEMS - 1) % ITEMS,
-            Some(Dir::Down) => pick = (pick + 1) % ITEMS,
-            _ => {}
-        }
-        let mark = |on: bool| if on { ">>" } else { "  " };
-        let lines = vec![
-            String::new(),
-            String::new(),
-            "  PAUSED".to_string(),
-            String::new(),
-            format!("    {} RESUME", mark(pick == 0)),
-            format!(
-                "    {} CAMERA    {:<9}   [A] CHANGE",
-                mark(pick == 1),
-                cam_name(CAMS[*cam % CAMS.len()])
-            ),
-            format!("    {} QUIT GAME", mark(pick == 2)),
-            String::new(),
-            "  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string(),
-        ];
-        if !view.page(&lines) {
-            break false;
-        }
-        if input.pressed.a {
-            match pick {
-                0 => break true,
-                1 => *cam = (*cam + 1) % CAMS.len(),
-                _ => break false,
+            // B backs out of the lens without leaving the game paused behind it.
+            if tuning {
+                tuning = false;
+            } else {
+                break true;
             }
+        }
+        if tuning {
+            let (mut zoom, mut tilt) = broadcast.lens();
+            let mut changed = false;
+            if input.stick.x.abs() > 0.25 {
+                zoom = (zoom + input.stick.x * dt * 0.8).clamp(0.6, 1.8);
+                changed = true;
+            }
+            if input.stick.y.abs() > 0.25 {
+                tilt = (tilt - input.stick.y * dt * 0.6).clamp(-0.35, 0.45);
+                changed = true;
+            }
+            if input.pressed.x {
+                zoom = 1.0;
+                tilt = 0.0;
+                changed = true;
+            }
+            if changed {
+                broadcast.set_lens(zoom, tilt);
+                still = None;
+            }
+            if input.pressed.a {
+                tuning = false;
+            }
+        } else {
+            match nav.step(input.stick, dt) {
+                Some(Dir::Up) => pick = (pick + ITEMS - 1) % ITEMS,
+                Some(Dir::Down) => pick = (pick + 1) % ITEMS,
+                _ => {}
+            }
+            if input.pressed.a {
+                match pick {
+                    0 => break true,
+                    1 => {
+                        *cam = (*cam + 1) % CAMS.len();
+                        still = None;
+                    }
+                    2 => tuning = true,
+                    _ => break false,
+                }
+            }
+        }
+        let (zoom, tilt) = broadcast.lens();
+        let mark = |on: bool| if on { ">>" } else { "  " };
+        let lines = if tuning {
+            vec![
+                String::new(),
+                "  LENS".to_string(),
+                String::new(),
+                format!("  ZOOM {zoom:.2}    TILT {tilt:+.2}"),
+                String::new(),
+                "  [STICK] ZOOM / TILT   [X] RESET   [A] DONE".to_string(),
+            ]
+        } else {
+            vec![
+                String::new(),
+                "  PAUSED".to_string(),
+                String::new(),
+                format!("    {} RESUME", mark(pick == 0)),
+                format!(
+                    "    {} CAMERA    {:<9}   [A] CHANGE",
+                    mark(pick == 1),
+                    cam_name(CAMS[*cam % CAMS.len()])
+                ),
+                format!("    {} LENS      {zoom:.2} / {tilt:+.2}   [A] ADJUST", mark(pick == 2)),
+                format!("    {} QUIT GAME", mark(pick == 3)),
+                String::new(),
+                "  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string(),
+            ]
+        };
+        // The picture behind the menu, unless there is none or this is the
+        // terminal, where a page of text is the only thing that reads.
+        let mut shown = false;
+        if view.is_window() && !matches!(shot, PausedShot::None) {
+            if still.is_none() {
+                still = paused_still(broadcast, &shot, CAMS[*cam % CAMS.len()]);
+            }
+            if let Some(base) = &still {
+                let mut frame = base.clone();
+                draw_pause_lines(&mut frame, &lines);
+                shown = true;
+                if !view.show(&mut frame, &[]) {
+                    break false;
+                }
+            }
+        }
+        if !shown && !view.page(&lines) {
+            break false;
         }
         std::thread::sleep(Duration::from_millis(16));
     };
@@ -1583,7 +1762,7 @@ fn drive(
 
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.start {
-            if !pause_menu(view, pad.as_deref_mut(), cam) {
+            if !pause_menu(view, pad.as_deref_mut(), cam, broadcast, PausedShot::Play(&*sim)) {
                 return false;
             }
             // The whole pause was spent inside the wall clock: do not run the play
@@ -2190,7 +2369,7 @@ fn drive_defense(
 
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.start {
-            if !pause_menu(view, pad.as_deref_mut(), cam) {
+            if !pause_menu(view, pad.as_deref_mut(), cam, broadcast, PausedShot::Play(&*sim)) {
                 return false;
             }
             last = Instant::now();

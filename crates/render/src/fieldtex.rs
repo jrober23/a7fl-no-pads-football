@@ -10,7 +10,7 @@ use a7fl_core::field::{
 use a7fl_core::math::{Rgb, Rng};
 use a7fl_core::team::Team;
 
-use crate::font::{self, draw_rot90};
+use crate::font::{self, draw_flat, draw_rot90};
 use crate::raster::{Frame, Texture};
 
 pub const TEX_X0: f32 = -15.0;
@@ -179,10 +179,11 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
         frame.fill_rect(turf_x0 as i32, y - 1, (turf_x1 - turf_x0) as i32, 1, PAINT);
     }
 
-    // Painted numbers every ten yards, on both sides of the field. Each set faces
-    // the sideline it belongs to, so it reads left to right for the men standing
-    // on that side. The second fifty used to be mirrored as well, which left half
-    // the numbers on both sidelines reading backwards.
+    // Painted numbers every ten yards, on both sides of the field. A number's
+    // feet stand on the sideline it belongs to and its top points at midfield, so
+    // a fan in that stand reads it left to right; the two sets are half a turn
+    // apart, the way they are painted on a real field. They used to be turned
+    // through the width of the field, which no stand could read.
     let numbers: [(f32, u32); 9] = [
         (10.0, 40),
         (20.0, 30),
@@ -197,16 +198,18 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
     for (yard, value) in numbers {
         let label = format!("{value}");
         let scale = 4;
-        let glyph_w = font::text_width(&label, scale) as f32;
+        let wide = font::text_width(&label, scale) as i32;
         for side in [-1.0f32, 1.0] {
-            let y_center = side * (FIELD_HALF_WIDTH - 5.0);
-            let x = px(yard) as i32;
-            let y = (py(y_center) - glyph_w * 0.5) as i32;
-            let color = Rgb::hex(0xE8EAE2);
-            // The far set is the near set turned half a turn, which is what a
-            // number painted for its own sideline looks like from across the field.
-            let dir = if side > 0.0 { 1 } else { -1 };
-            draw_rot90(&mut frame, x - 14, y, &label, scale, color, dir, 1);
+            // Left to right for a fan on `side` runs toward `-side` in x, and the
+            // top of the letters points away from that stand, at midfield.
+            let dir = if side > 0.0 { -1 } else { 1 };
+            let up = if side > 0.0 { -1 } else { 1 };
+            let cx = px(yard) as i32;
+            let x = if dir > 0 { cx - wide / 2 } else { cx + wide / 2 };
+            // The feet sit three yards in from the paint, between the sideline and
+            // the inbound line, so the number is clear of both.
+            let y = py(side * (FIELD_HALF_WIDTH - 3.0)) as i32;
+            draw_flat(&mut frame, x, y, &label, scale, Rgb::hex(0xE8EAE2), dir, up, 1);
         }
     }
 
@@ -278,6 +281,60 @@ pub fn coverage() -> (f32, f32, f32, f32) {
 mod tests {
     use super::*;
     use a7fl_core::team::league_teams;
+
+    /// The numbers are painted for the stand they belong to: feet toward that
+    /// sideline, top toward midfield, and straddling the yard line between the
+    /// two digits.
+    #[test]
+    fn the_yard_numbers_stand_with_their_feet_on_their_sideline() {
+        let teams = league_teams();
+        let tex = build_field_texture(&teams[0], &teams[1]);
+        for side in [-1.0f32, 1.0] {
+            let (mut lo, mut hi, mut x_lo, mut x_hi) =
+                (f32::MAX, f32::MIN, f32::MAX, f32::MIN);
+            let mut x = 28.8f32;
+            while x <= 31.2 {
+                // The yard line is white and crosses the whole width; the digits
+                // sit either side of it.
+                if (x - 30.0).abs() > 0.3 {
+                    let mut y = 14.4f32;
+                    while y <= 18.0 {
+                        let u = (x - TEX_X0) / (TEX_X1 - TEX_X0);
+                        let v = (y * side - TEX_Y0) / (TEX_Y1 - TEX_Y0);
+                        let c = tex.sample(u, v);
+                        if c.r > 170 && c.g > 170 {
+                            lo = lo.min(y);
+                            hi = hi.max(y);
+                            x_lo = x_lo.min(x);
+                            x_hi = x_hi.max(x);
+                        }
+                        y += 0.05;
+                    }
+                }
+                x += 0.05;
+            }
+            assert!(hi > 0.0, "no number painted on side {side}");
+            let feet = FIELD_HALF_WIDTH - hi;
+            assert!(
+                (2.6..3.5).contains(&feet),
+                "the feet of the numbers are {feet:.2} yards from the sideline"
+            );
+            assert!(
+                hi - lo > 1.0,
+                "the number is only {:.2} yards tall",
+                hi - lo
+            );
+            assert!(
+                x_lo < 29.6 && x_hi > 30.4,
+                "the number does not straddle the 30-yard line: {x_lo}..{x_hi}"
+            );
+            // The top of the letters is the far side of the band from the paint.
+            assert!(
+                FIELD_HALF_WIDTH - lo > 4.0,
+                "the numbers are not turning their tops to midfield: {lo:.2}..{hi:.2}"
+            );
+        }
+    }
 
     #[test]
     fn texture_is_painted_and_sized_sensibly() {

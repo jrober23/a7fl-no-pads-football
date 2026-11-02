@@ -117,6 +117,45 @@ pub fn draw_rot90(
     }
 }
 
+/// Text laid flat on the ground: `dir` runs the word along `x` (+1 or -1) and
+/// `up` points the top of the letters along `y` (+1 or -1).
+///
+/// The painted yard numbers use it. They stand with their feet on the sideline
+/// and their tops toward midfield, running down the field, which is what a fan
+/// sitting in that stand reads left to right.
+pub fn draw_flat(
+    frame: &mut Frame,
+    x: i32,
+    y: i32,
+    text: &str,
+    scale: usize,
+    color: Rgb,
+    dir: i32,
+    up: i32,
+    weight: usize,
+) {
+    let scale = scale.max(1) as i32;
+    let mut pen = 0i32;
+    for ch in text.chars() {
+        let rows = glyph(ch);
+        for (ry, bits) in rows.iter().enumerate() {
+            for rx in 0..GLYPH_W {
+                if bits & (1 << (GLYPH_W - 1 - rx)) != 0 {
+                    let gx = pen + rx as i32 * scale;
+                    let gy = (GLYPH_H as i32 - 1 - ry as i32) * scale;
+                    let px = if dir >= 0 { x + gx } else { x - gx - scale };
+                    let py = if up >= 0 { y + gy } else { y - gy - scale };
+                    for w in 0..weight.max(1) as i32 {
+                        let off = if dir >= 0 { w } else { -w };
+                        frame.fill_rect(px + off, py, scale, scale, color);
+                    }
+                }
+            }
+        }
+        pen += (GLYPH_W as i32 + 1) * scale;
+    }
+}
+
 pub fn text_width(text: &str, scale: usize) -> usize {
     if text.is_empty() {
         return 0;
@@ -196,4 +235,27 @@ pub fn draw_centered(frame: &mut Frame, cx: i32, y: i32, text: &str, scale: usiz
 pub fn draw_right(frame: &mut Frame, right: i32, y: i32, text: &str, scale: usize, color: Rgb, weight: usize) {
     let w = text_width(text, scale) as i32;
     draw_styled(frame, right - w, y, text, scale, color, weight, false);
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ink(frame: &Frame, x: i32, y: i32) -> bool {
+        frame.get(x, y) != Rgb::new(0, 0, 0)
+    }
+
+    #[test]
+    fn flat_text_stands_on_its_feet_and_runs_the_way_it_is_told() {
+        let mut frame = Frame::new(40, 40);
+        // Reading toward -x with the tops of the letters toward -y: how a number
+        // painted for the near sideline is laid on the turf.
+        draw_flat(&mut frame, 30, 20, "L", 2, Rgb::new(255, 0, 0), -1, -1, 1);
+        // The stem is the glyph's first column, at the far end of the word.
+        assert!(ink(&frame, 28, 6), "the top of the stem is missing");
+        // The foot runs along the baseline back toward where the word starts.
+        assert!(ink(&frame, 20, 18), "the foot of the L is missing");
+        assert!(!ink(&frame, 20, 6), "the L painted a foot it does not have");
+    }
 }

@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.21.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.22.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -284,6 +284,11 @@ is the ball carrier's right hand, which means the mapping turns around with the 
 when they change ends. It used to be broadcast's mapping for all three, so in Classic
 and Sky pushing up ran the man into the sideline.
 
+The lens sits on top of all of it. The zoom and tilt tuned in the settings, or at
+the pause screen, are applied to every camera — Classic, Broadcast, Sky, the
+throw-off shot and the replay — so the shot the player set is the shot the whole
+game is played in, rather than one framing at the line and another on the kickoff.
+
 Every one of them anchors on the ball: wherever it goes, that is what the picture is
 about, and the aim lags a few frames behind it the way a heavy lens does instead of
 snapping from spot to spot. That is what keeps a long run in the frame — the shot used
@@ -307,7 +312,13 @@ START (Esc on the keyboard) pauses the game:
 * **RESUME** — back to it.
 * **CAMERA** — cycles the same three shots, so the framing can be changed in the middle
   of a drive rather than only between plays.
+* **LENS** — the lens screen from the settings, on the frozen game: left and right
+  zoom, up and down tilt, X resets, A returns to the menu. The picture behind it is
+  the game you are paused in, not a formation, so what you see is what you get.
 * **QUIT GAME** — closes the game.
+
+The lens is saved when the game closes, so a shot tuned at the half is still there
+the next time it opens.
 
 It works on the call sheet and on the fourth-down choice as well, and START no longer
 closes the game anywhere: **QUIT GAME** is the only way out. It used to close on the
@@ -440,9 +451,12 @@ interception gets a replay from the broadcast camera before the card comes up, w
 frames it was drawn from are kept for it — so the throws, moves and stick work in it
 are the ones you put in.
 
-A man who goes out of bounds stays on the grass side of the advertising boards: the
-picture used to let him run through them and into the front row, which read as
-crossing the bleachers rather than stepping out at the paint.
+A man who goes out of bounds stays on the grass side of the advertising boards. The
+boards stand on the bleacher line rather than on the paint, with a run-off apron
+between them and the white sideline, so the sideline is still the field's edge and
+the barrier is the base of the stand: one straight line the length of the ground.
+The picture used to let a man run through the boards and into the front row, which
+read as crossing the bleachers rather than stepping out at the paint.
 
 There are no kickoffs: the ball is thrown from your own 35 and has to travel 40
 yards in the air. It is yours to throw whenever your team is the one throwing it
@@ -513,8 +527,9 @@ numbers are saved and applied to every camera mode.
 The crowd is built man by man now, and it moves: every body bobs on its own phase,
 and a few put their arms up on the cheer. The bleachers also sit five yards further
 back from the advertising boards, so a man running out of bounds is not standing in
-the front row any more. Field numbers are painted for the sideline they belong to,
-so each set reads left to right from its own side of the ground.
+the front row any more. Field numbers stand with their feet on the sideline they belong
+to and their tops toward midfield, reading left to right from that stand. The two
+sets are therefore half a turn apart, which is how a real field is painted.
 
 Replays start at the snap rather than at the line. When the tape runs out the picture
 holds on the last frame, then sinks to black before the call sheet comes back. While

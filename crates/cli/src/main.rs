@@ -837,7 +837,8 @@ fn cmd_arcade(args: &[String]) {
     let mut arcade = arcade::Arcade::new(game, pad, view)
         .with_flip_y(flip_y)
         .with_camera(settings.camera)
-        .with_lens(settings.lens_zoom, settings.lens_tilt);
+        .with_lens(settings.lens_zoom, settings.lens_tilt)
+        .with_settings(settings);
     if let Some(mine) = mine {
         arcade = arcade.with_my_team(mine);
     }

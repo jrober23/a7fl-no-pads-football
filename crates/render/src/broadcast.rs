@@ -159,6 +159,11 @@ impl Broadcast {
         self.announce = ease.clamp(0.0, 1.0);
     }
 
+    /// The lens the game is using right now, so a menu can move it.
+    pub fn lens(&self) -> (f32, f32) {
+        (self.lens_zoom, self.lens_tilt)
+    }
+
     /// The lens the player tuned on the settings screen. Zoom pulls the camera
     /// back from the action, tilt drops it so the picture looks further down.
     pub fn set_lens(&mut self, zoom: f32, tilt: f32) {
@@ -347,7 +352,12 @@ impl Broadcast {
             }
             let (players, ball) = Broadcast::throw_off_players(&sim);
             // A replay has no eased lens: the shot sits on the ball itself.
-            let camera = throw_off_camera(&sim, sim.ball_position().0, mode);
+            let camera = throw_off_camera(
+                &sim,
+                sim.ball_position().0,
+                mode,
+                (self.lens_zoom, self.lens_tilt),
+            );
             (players, ball, camera)
         };
         let mut frame = self.paint_throw_off(&players, ball, camera);
@@ -515,7 +525,7 @@ impl Broadcast {
             self.focus = Focus::default();
         }
         let focus = self.focus.track_with(ball.0, FOLLOW_AIR);
-        let camera = throw_off_camera(sim, focus, mode);
+        let camera = throw_off_camera(sim, focus, mode, (self.lens_zoom, self.lens_tilt));
         let mut frame = self.paint_throw_off(&players, ball, camera.clone());
         ui.draw(&mut frame, &camera, &self.scene.projector);
         frame
@@ -979,10 +989,7 @@ impl Broadcast {
         };
         // The tuned lens sits on top of every shot, so a zoom the player likes
         // carries across the camera modes instead of having to be set three times.
-        let anchor = Vec3::new(action.x, action.y, 0.0);
-        let pos = anchor + (pos - anchor) * self.lens_zoom;
-        let pos = Vec3::new(pos.x, pos.y, pos.z * (1.0 + self.lens_tilt * 1.4));
-        let look = Vec3::new(look.x, look.y, look.z + self.lens_tilt * 2.2);
+        let (pos, look) = lens_shift(pos, look, action, self.lens_zoom, self.lens_tilt);
         let mut cam = Camera::new(pos, 0.0, 0.0);
         cam.look_at(look);
         cam.fov = fov.to_radians();
@@ -1006,6 +1013,18 @@ pub fn role_label(role: OffRole) -> &'static str {
 /// The lights of a night game: a warm key from above the far stand, a green
 /// bounce off the turf, and enough edge light to draw the silhouette of a man
 /// against the crowd.
+/// The player's lens, laid over any shot: the picture pulls back from the action
+/// by `zoom`, then tips by `tilt` so it looks further down the field. Every camera
+/// goes through it -- the scrimmage shots, the throw-off, the replay -- so one
+/// setting is the whole game's lens rather than a per-camera one.
+fn lens_shift(pos: Vec3, look: Vec3, anchor: Vec2, zoom: f32, tilt: f32) -> (Vec3, Vec3) {
+    let a = Vec3::new(anchor.x, anchor.y, 0.0);
+    let pos = a + (pos - a) * zoom;
+    let pos = Vec3::new(pos.x, pos.y, pos.z * (1.0 + tilt * 1.4));
+    let look = Vec3::new(look.x, look.y, look.z + tilt * 2.2);
+    (pos, look)
+}
+
 fn stadium_lighting() -> Lighting {
     Lighting {
         sun: Vec3::new(-0.30, 0.26, 0.92).normalize_or_zero(),
@@ -1094,8 +1113,8 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
         mesh.quad(
             Vec3::new(x0, side * FIELD_HALF_WIDTH, 0.004),
             Vec3::new(x1, side * FIELD_HALF_WIDTH, 0.004),
-            Vec3::new(x1, side * (FIELD_HALF_WIDTH + 5.0), 0.004),
-            Vec3::new(x0, side * (FIELD_HALF_WIDTH + 5.0), 0.004),
+            Vec3::new(x1, side * (FIELD_HALF_WIDTH + 4.8), 0.004),
+            Vec3::new(x0, side * (FIELD_HALF_WIDTH + 4.8), 0.004),
             Rgb::hex(0x35503C),
         );
     }
@@ -1110,7 +1129,9 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
             _ => Rgb::hex(0xE8EAE2),
         };
         for side in [-1.0f32, 1.0] {
-            let y = side * (FIELD_HALF_WIDTH + 0.55);
+            // On the bleacher line, not on the paint: one barrier at the foot of
+            // the stand, and a run-off apron between it and the white sideline.
+            let y = side * (FIELD_HALF_WIDTH + 4.8);
             mesh.quad(
                 Vec3::new(x, y, 0.0),
                 Vec3::new(x + 5.7, y, 0.0),
@@ -1322,7 +1343,7 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
 /// a dot travel toward a dot, and the men doing anything about it were the small
 /// end of the picture. `dir` is the way the camera should point -- downfield with
 /// the throw, and behind the returner once he has it.
-fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode) -> Camera {
+fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode, lens: (f32, f32)) -> Camera {
     let (dist, height, lead, fov): (f32, f32, f32, f32) = match mode {
         // Low and close, behind the ball, like a sideline camera that gave chase.
         CameraMode::Classic => (7.5, 6.1, 6.0, 36.0),
@@ -1334,13 +1355,19 @@ fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode) -> Camera {
     };
     let pos = Vec3::new(focus.x - dir * dist, focus.y * 0.55, height);
     let look = Vec3::new(focus.x + dir * lead, focus.y * 0.72, 0.35);
+    let (pos, look) = lens_shift(pos, look, focus, lens.0, lens.1);
     let mut cam = Camera::new(pos, 0.0, 0.0);
     cam.fov = fov.to_radians();
     cam.look_at(look);
     cam
 }
 
-fn throw_off_camera(sim: &ThrowOffSim, focus: Vec2, mode: CameraMode) -> Camera {
+fn throw_off_camera(
+    sim: &ThrowOffSim,
+    focus: Vec2,
+    mode: CameraMode,
+    lens: (f32, f32),
+) -> Camera {
     // Before the catch the shot belongs to the ball going downfield; after it, to
     // the man running it back, so the lens swings behind whichever is live.
     let dir = if matches!(
@@ -1351,7 +1378,7 @@ fn throw_off_camera(sim: &ThrowOffSim, focus: Vec2, mode: CameraMode) -> Camera 
     } else {
         sim.setup.throwing_direction() as f32
     };
-    throw_off_lens(dir, focus, mode)
+    throw_off_lens(dir, focus, mode, lens)
 }
 
 #[cfg(test)]
@@ -1505,7 +1532,7 @@ mod tests {
         for mode in [CameraMode::Classic, CameraMode::Broadcast, CameraMode::SkyCam] {
             for (x, y) in [(20.0, 0.0), (60.0, -12.0), (95.0, 9.0)] {
                 let ball = Vec2::new(x, y);
-                let cam = throw_off_lens(1.0, ball, mode);
+                let cam = throw_off_lens(1.0, ball, mode, (1.0, 0.0));
                 let lens = crate::scene::Projector::new(640, 360, cam.fov);
                 let (sx, sy, _) = lens
                     .project(cam.view(Vec3::new(x, y, 1.0)))
@@ -1525,8 +1552,8 @@ mod tests {
         }
         // And it has to travel: a ball ninety-five yards downfield is shot from
         // ninety-five yards downfield, not from where the throw-off was taken.
-        let near = throw_off_lens(1.0, Vec2::new(20.0, 0.0), CameraMode::Broadcast);
-        let far = throw_off_lens(1.0, Vec2::new(95.0, 0.0), CameraMode::Broadcast);
+        let near = throw_off_lens(1.0, Vec2::new(20.0, 0.0), CameraMode::Broadcast, (1.0, 0.0));
+        let far = throw_off_lens(1.0, Vec2::new(95.0, 0.0), CameraMode::Broadcast, (1.0, 0.0));
         assert!(
             (far.pos.x - near.pos.x - 75.0).abs() < 0.01,
             "the throw-off shot stays put: {:.1} -> {:.1}",
