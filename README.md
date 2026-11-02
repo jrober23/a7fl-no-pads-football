@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.20.0-windows-x86_64.zip` from the
+Grab `a7fl-v0.20.1-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -42,10 +42,12 @@ gloved fist; the legs are lofted the same way with a quadriceps sweep, a knee an
 a calf that swells and tapers into the sock. The jersey goes over the top of the
 shoulder and is cut inside the deltoid, so the sleeve cap is cloth and the arm is
 bare beneath it — except on the men dealt a long white undershirt, whose sleeves
-run from the cap to the wristband. Every head wears a balaclava in club colour,
-built as a second sheet over the skull with an aperture cut for the brows and
-eyes: cloth over the nose, mouth, jaw and neck, hair and beard underneath it.
-Tights are dealt out the same way, per man and stable across replays.
+run from the cap to the wristband. A couple of men a side are dealt a balaclava in
+club colour — one or two out of the seven, not the whole team — built as a second
+sheet over the skull with an aperture cut for the brows and eyes: cloth over the
+nose, mouth, jaw and neck, hair and beard underneath it. Everybody else plays
+bare-headed, with his hair and beard built. Tights are dealt out the same way, per
+man and stable across replays.
 
 The silhouette is deliberately the one on the league's character sheets: shoulders
 and arms carrying the width, a waist you can see, a small head, and a stance with

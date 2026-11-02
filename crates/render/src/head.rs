@@ -68,7 +68,8 @@ pub struct Head<'a> {
     pub player: &'a Player,
     pub skin: Rgb,
     pub accent: Rgb,
-    /// The balaclava, in club colour. Every man wears one.
+    /// The balaclava, in club colour, for the one or two men a side who wear
+    /// one. When it is `None` the face and hair are built instead of cloth.
     pub mask: Option<Rgb>,
 }
 

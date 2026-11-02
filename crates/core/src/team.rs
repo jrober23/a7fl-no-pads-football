@@ -271,6 +271,10 @@ pub struct Player {
     pub build: f32,
     /// 0.0 = clean shaven, 1.0 = full beard, for the face textures.
     pub beard: f32,
+    /// Whether he pulls the balaclava down over his face. A couple of men a
+    /// side do; it is decided once, when the roster is built, so every replay
+    /// shows the same faces masked.
+    pub balaclava: bool,
 }
 
 impl Player {
@@ -710,6 +714,7 @@ fn generate_roster(seed: u64, level: i32) -> Vec<Player> {
                 hair_color: *rng.pick(HAIR_COLORS).unwrap_or(&Rgb::hex(0x241A12)),
                 build,
                 beard: if rng.chance(0.45) { rng.range(0.3, 1.0) } else { 0.0 },
+                balaclava: false,
             });
             id += 1;
         }
@@ -807,7 +812,7 @@ fn team_from_spec(spec: Club) -> Team {
         Rgb::hex(0x15171B),
         spec.pattern,
     );
-    Team {
+    let mut team = Team {
         id: 0,
         city: spec.city.to_string(),
         name: spec.name.to_string(),
@@ -818,6 +823,45 @@ fn team_from_spec(spec: Club) -> Team {
         home,
         away,
         roster,
+    };
+
+    // A couple of men a side wear the balaclava: two of the seven who take the
+    // field on offence and one on defence, chosen per club from the men who
+    // actually start. Everybody used to wear one, which made a team read as a
+    // single masked unit; two a side reads as a few individuals instead. Picked
+    // once, here, so a replay shows the same faces.
+    let off = team.offense_personnel();
+    let def = team.defense_personnel();
+    let mut rng = Rng::new(spec.seed ^ 0xBACA_1A7A);
+    let pick = |rng: &mut Rng, n: usize| (rng.f32() * n as f32) as usize % n;
+    let a = pick(&mut rng, 7);
+    // A second starter, never the same man twice.
+    let b = (a + 1 + pick(&mut rng, 6)) % 7;
+    let c = pick(&mut rng, 7);
+    for i in [off.players[a], off.players[b], def.players[c]] {
+        team.roster[i].balaclava = true;
+    }
+    team
+}
+
+#[cfg(test)]
+mod balaclava_tests {
+    use super::*;
+
+    #[test]
+    fn a_couple_of_men_a_side_wear_the_balaclava() {
+        for club in clubs() {
+            let team = team_from_spec(club);
+            let off = team.offense_personnel();
+            let def = team.defense_personnel();
+            let masked = |idx: &[usize; 7]| {
+                idx.iter()
+                    .filter(|&&i| team.roster[i].balaclava)
+                    .count()
+            };
+            assert_eq!(masked(&off.players), 2, "{} offence", team.abbr);
+            assert_eq!(masked(&def.players), 1, "{} defence", team.abbr);
+        }
     }
 }
 

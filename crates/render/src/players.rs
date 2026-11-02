@@ -1377,17 +1377,20 @@ pub fn build_mesh_at(
             mesh.tube(&[(base, 0.024 * bulk), (top, 0.015)], 5, skin.scale(1.02), false);
         }
     }
+    // A couple of men a side wear the balaclava; the roster decided which when
+    // the club was built, so the same faces are masked in every replay.
+    let masked = player.balaclava;
     Head {
         center: head_center,
         radius: head_r,
         player,
         skin,
         accent,
-        mask: Some(jersey),
+        mask: if masked { Some(jersey) } else { None },
     }
     .build(&mut mesh, detail.quality());
 
-    // Helmet? Never. The A7FL plays without them.
+    // Helmet? Never. This is no-pads football.
 
     // A man on the ground got there over the top of a hit, and that is what the
     // figure has to show: the hips drop first, then the chest follows the shoulder
