@@ -32,6 +32,13 @@ pub const WRAP_SECONDS: f32 = 0.42;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
+/// How long a runner may go without gaining a yard before the play is dead. A
+/// man who is still moving the ball is playing; a man who is not is stuck in a
+/// pile, and the clock is the wrong thing to measure him by.
+pub const STALL_SECONDS: f32 = 3.6;
+/// The absolute backstop for a run, long enough for a run the length of the field
+/// at a jog. Only a physics bug should ever reach it.
+pub const RUN_PLAY_LIMIT: f32 = 40.0;
 pub const FIXED_DT: f32 = 1.0 / 60.0;
 /// Ground covered by one full stride cycle (two steps). Drives the run animation:
 /// about 3.2 yards at speed, which is five or so steps a second flat out.
@@ -340,6 +347,10 @@ pub struct PlaySim<'a> {
     /// an offset from these, so a long look at the defence cannot walk the whole
     /// formation down the field.
     presnap: Vec<Vec2>,
+    /// Furthest downfield the ball has been this snap, and how long it has been
+    /// since it last got further. This is what decides that a run has stalled.
+    best_spot: f32,
+    stall: f32,
     /// The move the carrier is in the middle of, if somebody asked for one.
     carrier_moves: CarrierMove,
     pub events: Vec<SimEvent>,
@@ -472,6 +483,8 @@ impl<'a> PlaySim<'a> {
             human_defender: None,
             awaiting_snap: false,
             presnap: Vec::new(),
+            best_spot: f32::NEG_INFINITY,
+            stall: 0.0,
             carrier_moves: CarrierMove::default(),
             throw_away: false,
             pass_caught: false,
@@ -834,13 +847,81 @@ impl<'a> PlaySim<'a> {
         self.resolve_blocks(dt);
         self.resolve_tackles(dt);
         self.update_ball(dt);
-        if self.result.is_none() && self.t > SNAP_DELAY + MAX_PLAY_TIME {
-            let msg = "The play dies after an eternity of scrambling.".to_string();
-            let spot = self.players[self.qb].pos.x;
-            self.finish(PlayOutcome::PassIncomplete, self.los, msg);
-            let _ = spot;
+        // A runner who keeps gaining ground is not a play that has gone stale.
+        //
+        // The old rule was a flat thirteen seconds from the snap, and it booked
+        // whatever was happening as an incomplete pass at the line of scrimmage.
+        // So a run that broke through the defense and was still going at thirteen
+        // seconds came back as "the play dies after an eternity of scrambling",
+        // the whole gain was thrown away, and the next down started where this one
+        // had. What makes a play dead is the ball going nowhere, not the clock.
+        if self.result.is_none() && self.carrier.is_some() && self.face_buttons_are_moves() {
+            let progress = (self.ball.pos.x - self.los) * self.dirf();
+            if progress > self.best_spot + 0.75 {
+                self.best_spot = progress;
+                self.stall = 0.0;
+            } else {
+                self.stall += dt;
+            }
+        } else {
+            self.stall = 0.0;
+        }
+        if self.result.is_none() {
+            let running = self.carrier.is_some() && self.face_buttons_are_moves();
+            let limit = if running { RUN_PLAY_LIMIT } else { MAX_PLAY_TIME };
+            let stalled = running && self.stall > STALL_SECONDS;
+            if stalled || self.t > SNAP_DELAY + limit {
+                self.abandon_play(stalled);
+            }
         }
         self.result.as_ref()
+    }
+
+    /// End a play that has run out of ground or time, and book it as what it
+    /// actually was. A runner caught from behind after forty yards gets forty
+    /// yards; he does not get an incomplete pass at the line of scrimmage.
+    fn abandon_play(&mut self, stalled: bool) {
+        let Some(h) = self.ball.holder else {
+            let msg = "The throw hangs up there and comes down to nobody.".to_string();
+            self.finish(PlayOutcome::PassIncomplete, self.los, msg);
+            return;
+        };
+        let spot = clamp(
+            self.players[h].pos.x,
+            -field::ENDZONE_DEPTH,
+            FIELD_LENGTH + field::ENDZONE_DEPTH,
+        );
+        let gain = (spot - self.los) * self.dirf();
+        let name = self.name_of(h);
+        let running = self.carrier == Some(h) && self.face_buttons_are_moves();
+        if running {
+            let outcome = if self.pass_caught {
+                PlayOutcome::PassComplete
+            } else if self.scramble_started && h == self.qb {
+                PlayOutcome::QbScramble
+            } else {
+                PlayOutcome::Run
+            };
+            let msg = if gain < -0.5 {
+                format!(
+                    "{name} is caught {} yards behind the line.",
+                    (-gain).round() as i32
+                )
+            } else if stalled {
+                format!("{name} is caught from behind after {} yards.", gain.round() as i32)
+            } else {
+                format!(
+                    "{name} finally runs out of field after {} yards.",
+                    gain.round() as i32
+                )
+            };
+            self.finish(outcome, spot, msg);
+        } else {
+            // Still in the pocket with nowhere to go: a sack in all but name, and
+            // it should cost him the ground he lost getting there.
+            let msg = format!("{name} is hauled down before he can get rid of it.");
+            self.finish(PlayOutcome::Sack, spot, msg);
+        }
     }
 
     fn snap(&mut self) {
@@ -2782,6 +2863,113 @@ mod tests {
     /// Contact is not the end of the play: the defender wraps, the carrier goes
     /// over the top of it, and only then is the ball dead. A card one frame after
     /// the hit is a card over two men still on their feet.
+    #[test]
+    fn a_run_that_keeps_gaining_ground_survives_the_thirteen_second_wall() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_run())
+            .expect("no run play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(20.0, 1, 10.0, 31);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        for _ in 0..90 {
+            sim.step(FIXED_DT);
+            if sim.carrier.is_some() {
+                break;
+            }
+        }
+        let carrier = sim.carrier.expect("nobody took the handoff");
+        // Nobody gets to him, and he keeps moving the ball downfield at a jog.
+        let mut t = 0.0f32;
+        while t < MAX_PLAY_TIME + 3.0 {
+            for d in 7..14 {
+                sim.players[d].pos = Vec2::new(-40.0, 39.0);
+                sim.players[d].stun = 1.0;
+            }
+            let spot = s.los + t * 1.2;
+            sim.players[carrier].pos.x = spot;
+            sim.step(FIXED_DT);
+            t += FIXED_DT;
+            if sim.result.is_some() {
+                break;
+            }
+        }
+        assert!(
+            sim.result.is_none(),
+            "the run was cut off at the old wall: {:?}",
+            sim.result.as_ref().map(|r| r.description.clone())
+        );
+    }
+
+    #[test]
+    fn a_run_that_stops_gaining_ground_is_booked_where_it_stands() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_run())
+            .expect("no run play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(30.0, 1, 10.0, 37);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        for _ in 0..90 {
+            sim.step(FIXED_DT);
+            if sim.carrier.is_some() {
+                break;
+            }
+        }
+        let carrier = sim.carrier.expect("nobody took the handoff");
+        // He breaks one, gets to the second level, and is caught: the ball stops
+        // moving well short of the end zone and the pile sits on him.
+        let spot = s.los + 22.0;
+        let mut t = 0.0f32;
+        while t < STALL_SECONDS + 2.0 && sim.result.is_none() {
+            for d in 7..14 {
+                sim.players[d].pos = Vec2::new(-40.0, 39.0);
+                sim.players[d].stun = 1.0;
+            }
+            sim.players[carrier].pos = Vec2::new(spot, 0.0);
+            sim.step(FIXED_DT);
+            t += FIXED_DT;
+        }
+        let result = sim.result.clone().expect("the stalled run was never ended");
+        assert!(!result.incomplete, "a run was booked as an incompletion: {}", result.description);
+        assert!(result.yards > 15.0, "the whole gain was thrown away: {}", result.description);
+        assert!(
+            (result.end_spot - spot).abs() < 2.0,
+            "the ball was spotted at {} instead of {}: {}",
+            result.end_spot,
+            spot,
+            result.description
+        );
+    }
+
+    #[test]
+    fn a_passer_who_never_throws_still_runs_out_of_time() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family == PlayFamily::DropbackPass)
+            .expect("no dropback play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(30.0, 1, 10.0, 41);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        sim.request_snap();
+        // A human holding the ball and never throwing it.
+        sim.set_control(Some(QbControl::default()));
+        let mut t = 0.0f32;
+        while t < MAX_PLAY_TIME + 6.0 && sim.result.is_none() {
+            sim.step(FIXED_DT);
+            t += FIXED_DT;
+        }
+        assert!(sim.result.is_some(), "the pocket never ended");
+    }
+
     #[test]
     fn the_snap_waits_for_the_button() {
         let (off, def) = teams();
