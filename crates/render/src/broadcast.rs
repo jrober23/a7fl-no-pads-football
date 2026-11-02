@@ -243,6 +243,7 @@ impl Broadcast {
         if let Some((bp, bz)) = flying_ball {
             let ball = players::ball_mesh(Vec3::new(bp.x, bp.y, bz));
             self.scene.draw_mesh(&mut frame, &ball, &camera);
+            self.paint_ball_marker(&mut frame, &camera, bp, bz);
         }
 
         if overlay {
@@ -384,6 +385,20 @@ impl Broadcast {
         (players, ball)
     }
 
+    /// The ball has no shadow once it is above head height, and a throw-off
+    /// sends it forty yards up. A ring on the turf under it is the only way to
+    /// read where it is coming down, so it is drawn for every ball in flight --
+    /// scrimmage, throw-off, live play and replay alike -- rather than only on
+    /// the throw-off.
+    fn paint_ball_marker(&self, frame: &mut Frame, camera: &Camera, at: Vec2, z: f32) {
+        // At rest on the tee or in a carrier's hands there is nothing to track.
+        if z < 1.15 {
+            return;
+        }
+        self.scene
+            .draw_ground_ring(frame, camera, Vec3::new(at.x, at.y, 0.0), 0.62, hud::YELLOW);
+    }
+
     fn paint_throw_off(
         &mut self,
         players: &[RenderPlayer],
@@ -398,6 +413,7 @@ impl Broadcast {
             let mesh = players::ball_mesh(Vec3::new(ball.0.x, ball.0.y, ball.1));
             self.scene.draw_mesh(&mut frame, &mesh, &camera);
         }
+        self.paint_ball_marker(&mut frame, &camera, ball.0, ball.1);
         frame
     }
 
@@ -488,6 +504,7 @@ impl Broadcast {
         if sim.ball.flight.is_some() || sim.ball.holder.is_none() {
             let ball = players::ball_mesh(Vec3::new(ball_pos.x, ball_pos.y, ball_z.max(0.2)));
             self.scene.draw_mesh(&mut frame, &ball, &camera);
+            self.paint_ball_marker(&mut frame, &camera, ball_pos, ball_z);
         }
         if let Some(result) = &sim.result {
             self.paint_result_word(&mut frame, result);
@@ -1201,6 +1218,25 @@ mod tests {
         let grass = frame.color.iter().filter(|c| c.g > c.r && c.g > c.b).count();
         let total = frame.w * frame.h;
         assert!(grass > total / 6, "almost no turf in the live frame: {grass}/{total}");
+    }
+
+    /// A ball above head height casts no shadow, so it gets a ring on the turf
+    /// under it -- and a ball on the grass gets nothing, because there is
+    /// nothing to track.
+    #[test]
+    fn a_ball_in_the_air_gets_a_ring_on_the_turf() {
+        let teams = league_teams();
+        let mut b = Broadcast::new(320, 200, [teams[0].clone(), teams[1].clone()]);
+        let mut cam = Camera::new(Vec3::new(5.0, -4.0, 7.0), 0.0, 0.0);
+        cam.look_at(Vec3::ZERO);
+        let mut high = Frame::new(320, 200);
+        b.paint_ball_marker(&mut high, &cam, Vec2::new(0.0, 0.0), 6.0);
+        let lit = high.color.iter().filter(|c| **c == hud::YELLOW).count();
+        assert!(lit > 80, "no ring under a ball in the air: {lit} pixels");
+        let mut low = Frame::new(320, 200);
+        b.paint_ball_marker(&mut low, &cam, Vec2::new(0.0, 0.0), 0.40);
+        let lit_low = low.color.iter().filter(|c| **c == hud::YELLOW).count();
+        assert_eq!(lit_low, 0, "a ball on the grass should not carry a marker");
     }
 
     /// A foul does not stop the snap any more, so the picture is the only warning

@@ -725,6 +725,63 @@ impl SceneRenderer {
             );
         }
     }
+
+    /// A ring on the turf under the ball. Nothing on this field casts a shadow
+    /// from above head height, so a ball in flight gets a marker instead: without
+    /// one the eye has no way to tell where it is going to come down until it is
+    /// already on the ground.
+    pub fn draw_ground_ring(
+        &self,
+        frame: &mut Frame,
+        cam: &Camera,
+        center: Vec3,
+        radius: f32,
+        color: Rgb,
+    ) {
+        const SEG: usize = 26;
+        let Some((cx, cy, _)) = self.projector.project(cam.view(center)) else {
+            return;
+        };
+        let mut pts: Vec<(f32, f32, f32)> = Vec::with_capacity(SEG);
+        for i in 0..SEG {
+            let a = i as f32 / SEG as f32 * std::f32::consts::TAU;
+            let p = Vec3::new(
+                center.x + a.cos() * radius,
+                center.y + a.sin() * radius,
+                0.03,
+            );
+            match self.projector.project(cam.view(p)) {
+                Some(v) => pts.push(v),
+                None => return,
+            }
+        }
+        // A wash inside the ring so it reads on the paint as well as the turf,
+        // then a hard edge and four ticks: the ticks are what make it a target
+        // and not a puddle.
+        for i in 0..SEG {
+            frame.flat_tri_alpha(
+                [(cx, cy, 1.0), pts[i], pts[(i + 1) % SEG]],
+                color,
+                0.14,
+            );
+        }
+        for i in 0..SEG {
+            let a = pts[i];
+            let b = pts[(i + 1) % SEG];
+            frame.line(a.0 as i32, a.1 as i32, b.0 as i32, b.1 as i32, color, 2);
+        }
+        for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            frame.line(
+                cx as i32,
+                cy as i32,
+                (cx + dx * 14.0) as i32,
+                (cy + dy * 14.0) as i32,
+                color,
+                2,
+            );
+        }
+        frame.fill_rect(cx as i32 - 2, cy as i32 - 2, 4, 4, color);
+    }
 }
 
 fn clip_poly_near(poly: &[(Vec3, f32, f32)], near: f32) -> Vec<(Vec3, f32, f32)> {

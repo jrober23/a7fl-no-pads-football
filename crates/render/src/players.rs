@@ -753,8 +753,11 @@ pub fn build_mesh_at(
     let body_sides = detail.body_sides();
     let h = player.height_yards().clamp(1.55, 2.05);
     // Body mass is the difference between a wire frame and a football player.
-    let bulk = player.build.clamp(0.9, 1.1) * 1.06;
-    let shoulder_w = (player.shoulder_width() * 1.10).clamp(0.42, 0.68);
+    let bulk = player.build.clamp(0.9, 1.1) * 1.00;
+    // Shoulder span, not a chest measurement: the sheets under this one are
+    // drawn to human proportions, and a half-width much past this stops being a
+    // man and starts being the cartoon bodybuilder the last pass was building.
+    let shoulder_w = (player.shoulder_width() * 0.92).clamp(0.42, 0.54);
     let skin = player.skin.rgb();
     let jersey = uniform.jersey;
     let accent = uniform.jersey_accent;
@@ -770,17 +773,19 @@ pub fn build_mesh_at(
     // Legs a little shorter and the trunk a little longer than life: the
     // cartoon-athlete proportion the whole look hangs off. A figure with a long
     // shin and a short chest reads as a mannequin however well it is modelled.
-    let leg_len = h * 0.455;
+    let leg_len = h * 0.475;
     let thigh_len = leg_len * 0.52;
     let shin_len = leg_len * 0.48;
-    let torso_len = h * 0.35;
+    let torso_len = h * 0.315;
     // A head that fits the shoulders, and a neck thick enough to carry it: a
     // pinhead on a wide body is a doll, and a big head on a narrow one is a child.
     // Small head, wide shoulders: the reference sheets are drawn with a head about
     // a fifth of the shoulder span, which is what makes the chest look like a
     // chest and not a torso with a person on top of it.
-    let head_r = h * 0.060;
-    let hip_lateral = shoulder_w * (0.22 + 0.08 * pose.strafe.clamp(0.0, 1.0));
+    let head_r = h * 0.068;
+    // The pelvis is narrower than the shoulders, but not by the canyon the old
+    // number left: hips carry the stride and the shorts sit on them.
+    let hip_lateral = shoulder_w * (0.26 + 0.08 * pose.strafe.clamp(0.0, 1.0));
 
     // ---------------- legs ----------------
     // Half a cycle between them, so one foot is always cycling toward the ground
@@ -811,10 +816,10 @@ pub fn build_mesh_at(
     // Legs sized off the body, not off a bodybuilder: the thigh was thick enough
     // that the shorts sat out wider than the shoulders, which is what made the
     // figure read as bottom-heavy rather than athletic.
-    let thigh_r = 0.152 * bulk;
-    let knee_r = 0.082 * bulk;
-    let calf_r = 0.118 * bulk;
-    let ankle_r = 0.053 * bulk;
+    let thigh_r = 0.108 * bulk;
+    let knee_r = 0.060 * bulk;
+    let calf_r = 0.084 * bulk;
+    let ankle_r = 0.044 * bulk;
 
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
         let [thigh, knee, foot] = legs[i];
@@ -955,13 +960,13 @@ pub fn build_mesh_at(
     let seat = [
         Ring::new(
             pelvis + Vec3::new(0.0, 0.0, -h * 0.035),
-            0.098 * bulk,
+            0.086 * bulk,
             hip_lateral * 0.90,
             hip_yaw * 0.6,
         ),
         Ring::new(
             pelvis + Vec3::new(0.0, 0.0, h * 0.005),
-            0.114 * bulk,
+            0.100 * bulk,
             hip_lateral * 0.98,
             hip_yaw,
         ),
@@ -1003,13 +1008,13 @@ pub fn build_mesh_at(
     // digits on the cloth when he leans. `(height along the spine, half depth,
     // half width)`.
     let profile: [(f32, f32, f32); 7] = [
-        (0.02, 0.118, 0.350),
-        (0.20, 0.112, 0.315),
-        (0.38, 0.130, 0.355),
-        (0.56, 0.160, 0.455),
-        (0.74, 0.176, 0.525),
-        (0.88, 0.166, 0.585),
-        (1.00, 0.138, 0.575),
+        (0.02, 0.088, 0.268),
+        (0.20, 0.082, 0.242),
+        (0.38, 0.096, 0.278),
+        (0.56, 0.114, 0.328),
+        (0.74, 0.126, 0.360),
+        (0.88, 0.124, 0.378),
+        (1.00, 0.104, 0.370),
     ];
     let torso: Vec<Ring> = profile
         .iter()
@@ -1070,11 +1075,11 @@ pub fn build_mesh_at(
     loft(&mut mesh, &torso, body_sides, TORSO_ROUND, true, true, cloth);
 
     // Hem of the jersey, on top of the shorts.
-    let hem_lo = Ring::new(spine(0.0), 0.114 * bulk, shoulder_w * 0.355, hip_yaw * 0.9);
+    let hem_lo = Ring::new(spine(0.0), 0.090 * bulk, shoulder_w * 0.276, hip_yaw * 0.9);
     let hem_hi = Ring::new(
         spine(0.07) + spine_dir * 0.001,
-        0.116 * bulk,
-        shoulder_w * 0.36,
+        0.092 * bulk,
+        shoulder_w * 0.280,
         hip_yaw * 0.8,
     );
     loft(&mut mesh, &[hem_lo, hem_hi], body_sides, TORSO_ROUND, false, false, |_, _| {
@@ -1087,7 +1092,7 @@ pub fn build_mesh_at(
         let number_color = uniform.readable_number_color();
         // Sized off the shirt, not off a poster: a jersey number is about a hand
         // and a half wide and sits across the chest.
-        let cell = 0.032 * (h / 1.85);
+        let cell = 0.047 * shoulder_w * (h / 1.85);
         // Where the cloth is at any height, straight off the torso profile. A
         // patch of paint that is not measured against this ends up as a flat card
         // floating in front of the sternum, or buried in the ribs.
@@ -1133,15 +1138,15 @@ pub fn build_mesh_at(
     let upper_len = h * 0.15;
     let fore_len = h * 0.135;
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
-        let shoulder = shoulder_zone + Vec3::new(0.0, side * (shoulder_w * 0.515 - 0.010), -0.022);
+        let shoulder = shoulder_zone + Vec3::new(0.0, side * (shoulder_w * 0.420), -0.020);
         // Trapezius, sloping from the neck out to the shoulder. Blends bare
         // skin into the jersey and squares off the shoulders.
         if detail.fine() {
             taper3(
                 &mut mesh,
                 shoulder.lerp(shoulder_zone, 0.5) + Vec3::new(0.0, 0.0, 0.004),
-                Vec3::new(0.070, 0.060, 0.024),
-                Vec3::new(0.052, 0.090, 0.020),
+                Vec3::new(0.052, 0.046, 0.020),
+                Vec3::new(0.040, 0.070, 0.017),
                 0.0,
                 chest_yaw,
                 skin,
@@ -1153,7 +1158,7 @@ pub fn build_mesh_at(
         // boulder, not a ball: wide across the top, deeper than it is tall.
         mesh.sphere(
             shoulder,
-            Vec3::new(0.122 * bulk, 0.118 * bulk, 0.104 * bulk),
+            Vec3::new(0.078 * bulk, 0.074 * bulk, 0.068 * bulk),
             if detail.fine() { 4 } else { 2 },
             if detail.fine() { 12 } else { 6 },
             skin,
@@ -1164,8 +1169,8 @@ pub fn build_mesh_at(
         // the figure looks like it is wearing a vest that has slipped off both
         // shoulders.
         mesh.sphere(
-            shoulder + Vec3::new(-0.004, 0.0, 0.042 * bulk),
-            Vec3::new(0.098 * bulk, 0.090 * bulk, 0.050 * bulk),
+            shoulder + Vec3::new(-0.004, 0.0, 0.026 * bulk),
+            Vec3::new(0.072 * bulk, 0.070 * bulk, 0.038 * bulk),
             if detail.fine() { 5 } else { 2 },
             if detail.fine() { 14 } else { 6 },
             jersey,
@@ -1221,13 +1226,13 @@ pub fn build_mesh_at(
         mesh.tube(
             &smooth_profile(
                 &[
-                    (shoulder, 0.096 * bulk),
-                    (bicep, 0.118 * bulk),
-                    (above_elbow, 0.088 * bulk),
-                    (elbow, 0.072 * bulk),
-                    (fore_hi, 0.090 * bulk),
-                    (fore_mid, 0.064 * bulk),
-                    (hand, 0.046 * bulk),
+                    (shoulder, 0.062 * bulk),
+                    (bicep, 0.074 * bulk),
+                    (above_elbow, 0.058 * bulk),
+                    (elbow, 0.048 * bulk),
+                    (fore_hi, 0.058 * bulk),
+                    (fore_mid, 0.044 * bulk),
+                    (hand, 0.036 * bulk),
                 ],
                 detail.rings(),
             ),
@@ -1239,7 +1244,7 @@ pub fn build_mesh_at(
         if detail.fine() {
             mesh.sphere(
                 elbow,
-                Vec3::new(0.076 * bulk, 0.076 * bulk, 0.070 * bulk),
+                Vec3::new(0.052 * bulk, 0.052 * bulk, 0.048 * bulk),
                 2,
                 8,
                 skin,
@@ -1252,8 +1257,8 @@ pub fn build_mesh_at(
             &mut mesh,
             wrist,
             wrist + fore_dir * 0.046,
-            0.058,
-            0.054,
+            0.042,
+            0.040,
             sides,
             accent,
         );
@@ -1267,7 +1272,7 @@ pub fn build_mesh_at(
         };
         mesh.sphere(
             hand + fore_dir * 0.002,
-            Vec3::new(0.062, 0.058, 0.064),
+            Vec3::new(0.046, 0.042, 0.048),
             if detail.fine() { 5 } else { 3 },
             if detail.fine() { 9 } else { 6 },
             glove,
@@ -1275,7 +1280,7 @@ pub fn build_mesh_at(
         // Thumb, laid along the inside of the fist, so the glove has a hand in it.
         mesh.sphere(
             hand + fore_dir * 0.002 + Vec3::new(0.0, side * -0.040, 0.010),
-            Vec3::new(0.024, 0.021, 0.028),
+            Vec3::new(0.018, 0.016, 0.021),
             2,
             6,
             glove,
@@ -1284,10 +1289,10 @@ pub fn build_mesh_at(
         // no gap between the arm and the hand when the arm swings.
         limb(
             &mut mesh,
-            hand - fore_dir * 0.044,
+            hand - fore_dir * 0.042,
             hand - fore_dir * 0.018,
-            0.052,
-            0.054,
+            0.040,
+            0.042,
             sides,
             accent,
         );
@@ -1316,8 +1321,8 @@ pub fn build_mesh_at(
     let head_center = neck_base + head_dir * (head_r * 1.92);
     mesh.tube(
         &[
-            (neck_base, 0.082 * bulk),
-            (neck_base + head_dir * (head_r * 1.02), 0.046 * bulk),
+            (neck_base, 0.058 * bulk),
+            (neck_base + head_dir * (head_r * 1.02), 0.038 * bulk),
         ],
         sides,
         skin,
@@ -1329,7 +1334,7 @@ pub fn build_mesh_at(
         for side in [-1.0f32, 1.0] {
             let base = neck_base + Vec3::new(0.03, side * 0.02, 0.0);
             let top = neck_base + head_dir * (head_r * 0.92) + Vec3::new(0.02, side * 0.05, 0.0);
-            mesh.tube(&[(base, 0.030 * bulk), (top, 0.018)], 5, skin.scale(1.02), false);
+            mesh.tube(&[(base, 0.024 * bulk), (top, 0.015)], 5, skin.scale(1.02), false);
         }
     }
     Head {
@@ -1522,11 +1527,15 @@ mod tests {
         let mesh = figure(None, 0.0);
         let (_, _, _, _, z_min, z_max) = bounds(&mesh);
         let h = z_max - z_min;
-        let waist = width_between(&mesh, z_min + h * 0.50, z_min + h * 0.56);
+        // A hanging arm is the widest thing at waist height, so this band
+        // measures the whole figure there rather than the cloth. The sheet's V is
+        // shoulders over hips, and it is a real one: about eighteen inches of
+        // shorts under a twenty-one inch shoulder span.
+        let waist = width_between(&mesh, z_min + h * 0.58, z_min + h * 0.64);
         let delts = width_between(&mesh, z_min + h * 0.80, z_min + h * 0.86);
         assert!(waist > 0.10, "no waist to judge against: {waist:.3}");
         assert!(
-            delts > waist * 1.35,
+            delts > waist * 1.08,
             "the V is not there: {delts:.3} across the shoulders against {waist:.3} at the waist"
         );
     }
@@ -1557,8 +1566,8 @@ mod tests {
         let mesh = figure(None, 0.0);
         let (_, _, _, _, z_min, z_max) = bounds(&mesh);
         let h = z_max - z_min;
-        let waist = width_between(&mesh, z_min + h * 0.50, z_min + h * 0.58);
-        let chest = width_between(&mesh, z_min + h * 0.68, z_min + h * 0.76);
+        let waist = width_between(&mesh, z_min + h * 0.58, z_min + h * 0.64);
+        let chest = width_between(&mesh, z_min + h * 0.68, z_min + h * 0.74);
         let shoulders = width_between(&mesh, z_min + h * 0.80, z_min + h * 0.86);
         let head = width_between(&mesh, z_min + h * 0.93, z_max);
         assert!(waist > 0.10, "no body at the waist: {waist:.3}");
@@ -1567,11 +1576,11 @@ mod tests {
             "the chest has to be at least as wide as the waist: {chest:.3} vs {waist:.3}"
         );
         assert!(
-            shoulders > waist * 1.15,
+            shoulders > waist * 1.08,
             "shoulders should overhang the waist: {shoulders:.3} vs {waist:.3}"
         );
         assert!(
-            head < shoulders * 0.72,
+            head < shoulders * 0.82,
             "the head is too big for the shoulders: {head:.3} vs {shoulders:.3}"
         );
     }
