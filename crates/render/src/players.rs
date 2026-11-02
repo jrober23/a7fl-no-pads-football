@@ -94,6 +94,18 @@ impl Detail {
         }
     }
 
+    /// How finely a limb profile is split between its control rings. This is
+    /// the subdivision level: it is what turns a cage of primitives into one
+    /// smooth surface instead of a stack of cones.
+    fn rings(self) -> usize {
+        match self {
+            Detail::Close => 3,
+            Detail::Full => 2,
+            Detail::Mid => 2,
+            Detail::Far => 1,
+        }
+    }
+
     /// Eyes, brows, the quadriceps bulge, knee caps, trapezius wedges.
     fn fine(self) -> bool {
         !matches!(self, Detail::Far)
@@ -436,6 +448,43 @@ fn limb(mesh: &mut Mesh, from: Vec3, to: Vec3, r0: f32, r1: f32, sides: usize, c
 /// Built as a sole, an upper and a toe box rather than one tapered crate: a shoe
 /// is the shape a viewer checks a low-poly figure against, and a block with a
 /// corner on it is the first thing that reads as a model rather than a player.
+/// Resample a chain of `(point, radius)` through a uniform Catmull-Rom spline.
+///
+/// A limb built from three or four rings with different radii has corners in
+/// it: the surface steps from the bicep onto the elbow, and the light reads the
+/// step as a plate edge. Subdivision is what makes a cage of primitives into a
+/// body, so the profile gets subdivided too — every span becomes `per` smooth
+/// steps, which rounds the swell of a calf or a deltoid into the joint below it.
+fn smooth_profile(points: &[(Vec3, f32)], per: usize) -> Vec<(Vec3, f32)> {
+    if per < 2 || points.len() < 3 {
+        return points.to_vec();
+    }
+    let n = points.len() as isize;
+    let at = |i: isize| points[i.clamp(0, n - 1) as usize];
+    let mut out = Vec::with_capacity((points.len() - 1) * per + 1);
+    for i in 0..n - 1 {
+        let (p0, r0) = at(i - 1);
+        let (p1, r1) = at(i);
+        let (p2, r2) = at(i + 1);
+        let (p3, r3) = at(i + 2);
+        for k in 0..per {
+            let t = k as f32 / per as f32;
+            let t2 = t * t;
+            let t3 = t2 * t;
+            let w0 = -0.5 * t3 + t2 - 0.5 * t;
+            let w1 = 1.5 * t3 - 2.5 * t2 + 1.0;
+            let w2 = -1.5 * t3 + 2.0 * t2 + 0.5 * t;
+            let w3 = 0.5 * t3 - 0.5 * t2;
+            out.push((
+                p0 * w0 + p1 * w1 + p2 * w2 + p3 * w3,
+                r0 * w0 + r1 * w1 + r2 * w2 + r3 * w3,
+            ));
+        }
+    }
+    out.push(*points.last().unwrap());
+    out
+}
+
 fn shoe(mesh: &mut Mesh, ankle: Vec3, pitch: f32, color: Rgb) {
     let (sp, cp) = pitch.sin_cos();
     let heel = Vec3::new(ankle.x - 0.066, ankle.y, 0.032);
@@ -730,7 +779,7 @@ pub fn build_mesh_at(
     // Small head, wide shoulders: the reference sheets are drawn with a head about
     // a fifth of the shoulder span, which is what makes the chest look like a
     // chest and not a torso with a person on top of it.
-    let head_r = h * 0.055;
+    let head_r = h * 0.060;
     let hip_lateral = shoulder_w * (0.22 + 0.08 * pose.strafe.clamp(0.0, 1.0));
 
     // ---------------- legs ----------------
@@ -786,11 +835,14 @@ pub fn build_mesh_at(
         // swimmer instead.
         let hem = hip.lerp(knee_pos, 0.72);
         mesh.tube(
-            &[
-                (hip, thigh_r * 1.00),
-                (hip.lerp(knee_pos, 0.40), thigh_r * 1.05),
-                (hem, thigh_r * 0.97),
-            ],
+            &smooth_profile(
+                &[
+                    (hip, thigh_r * 1.00),
+                    (hip.lerp(knee_pos, 0.40), thigh_r * 1.05),
+                    (hem, thigh_r * 0.97),
+                ],
+                detail.rings(),
+            ),
             sides,
             shorts,
             true,
@@ -800,8 +852,8 @@ pub fn build_mesh_at(
             &mut mesh,
             hem.lerp(hip, 0.07),
             hem,
-            thigh_r * 1.06,
-            thigh_r * 1.05,
+            thigh_r * 1.03,
+            thigh_r * 1.02,
             sides,
             accent,
         );
@@ -811,11 +863,14 @@ pub fn build_mesh_at(
         // over the knee, and one cone between them reads as a tube with a crease.
         let quad = hem.lerp(knee_pos, 0.40);
         mesh.tube(
-            &[
-                (hem, thigh_r * 1.00),
-                (quad, thigh_r * 0.96),
-                (knee_pos, knee_r),
-            ],
+            &smooth_profile(
+                &[
+                    (hem, thigh_r * 1.00),
+                    (quad, thigh_r * 0.96),
+                    (knee_pos, knee_r),
+                ],
+                detail.rings(),
+            ),
             sides,
             skin,
             true,
@@ -850,17 +905,23 @@ pub fn build_mesh_at(
         let belly = knee_pos.lerp(ankle, 0.46);
         let lower = knee_pos.lerp(ankle, 0.66);
         mesh.tube(
-            &[(knee_pos, knee_r * 1.02), (belly, calf_r), (lower, calf_r * 0.86)],
+            &smooth_profile(
+                &[(knee_pos, knee_r * 1.02), (belly, calf_r), (lower, calf_r * 0.86)],
+                detail.rings(),
+            ),
             sides,
             skin,
             false,
         );
         mesh.tube(
-            &[
-                (belly, calf_r * 1.01),
-                (lower, calf_r * 0.88),
-                (ankle, ankle_r),
-            ],
+            &smooth_profile(
+                &[
+                    (belly, calf_r * 1.01),
+                    (lower, calf_r * 0.88),
+                    (ankle, ankle_r),
+                ],
+                detail.rings(),
+            ),
             sides,
             socks,
             false,
@@ -1103,10 +1164,10 @@ pub fn build_mesh_at(
         // the figure looks like it is wearing a vest that has slipped off both
         // shoulders.
         mesh.sphere(
-            shoulder + Vec3::new(0.0, 0.0, 0.034 * bulk),
-            Vec3::new(0.120 * bulk, 0.116 * bulk, 0.070 * bulk),
-            if detail.fine() { 3 } else { 2 },
-            if detail.fine() { 10 } else { 6 },
+            shoulder + Vec3::new(-0.004, 0.0, 0.042 * bulk),
+            Vec3::new(0.098 * bulk, 0.090 * bulk, 0.050 * bulk),
+            if detail.fine() { 5 } else { 2 },
+            if detail.fine() { 14 } else { 6 },
             jersey,
         );
 
@@ -1138,7 +1199,7 @@ pub fn build_mesh_at(
             flex += (1.20 - flex) * wrap;
         }
 
-        let up_dir = Vec3::new(swing.sin(), side * 0.12, -swing.cos()).normalize_or_zero();
+        let up_dir = Vec3::new(swing.sin(), side * 0.05, -swing.cos()).normalize_or_zero();
         let elbow = shoulder + up_dir * upper_len;
         // A flexed elbow carries the forearm forward and up, not backward.
         let fore_angle = swing + flex + 0.12;
@@ -1158,15 +1219,18 @@ pub fn build_mesh_at(
         // elbow is a pinch, and the forearm flares under it before it tapers into
         // the glove. Built as separate cylinders, the seams read as rings of tape.
         mesh.tube(
-            &[
-                (shoulder, 0.096 * bulk),
-                (bicep, 0.118 * bulk),
-                (above_elbow, 0.088 * bulk),
-                (elbow, 0.072 * bulk),
-                (fore_hi, 0.090 * bulk),
-                (fore_mid, 0.064 * bulk),
-                (hand, 0.046 * bulk),
-            ],
+            &smooth_profile(
+                &[
+                    (shoulder, 0.096 * bulk),
+                    (bicep, 0.118 * bulk),
+                    (above_elbow, 0.088 * bulk),
+                    (elbow, 0.072 * bulk),
+                    (fore_hi, 0.090 * bulk),
+                    (fore_mid, 0.064 * bulk),
+                    (hand, 0.046 * bulk),
+                ],
+                detail.rings(),
+            ),
             sides,
             skin,
             true,
@@ -1592,11 +1656,13 @@ mod tests {
             "the figure has gone back to being a stack of boxes: {} tris",
             full.tris.len()
         );
-        // Measured, not guessed: the full figure is 20.5 ms a frame at 640x360
-        // with fourteen men on the field. The close tier only ever covers the men
+        // Measured, not guessed: at v0.18.0 the full figure was 20.5 ms a frame
+        // at 640x360 with fourteen men on the field. Subdividing the limb
+        // profiles adds the rings that stop a leg reading as a stack of plates,
+        // and that is worth paying for. The close tier only ever covers the men
         // within seven yards of the lens — at most two — so it can carry the face.
         assert!(
-            full.tris.len() < 4600,
+            full.tris.len() < 5400,
             "the figure is too heavy to draw seven times a frame: {} tris",
             full.tris.len()
         );
