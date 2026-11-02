@@ -22,8 +22,9 @@
 
 use a7fl_core::math::{Rgb, Vec3};
 use a7fl_core::moves::Kind;
-use a7fl_core::team::{HairStyle, JerseyPattern, Player, Uniform};
+use a7fl_core::team::{JerseyPattern, Player, Uniform};
 
+use crate::head::Head;
 use crate::scene::Mesh;
 
 /// Ankle height above the turf when the foot is planted: sole plus cleat.
@@ -49,6 +50,8 @@ const BODY_SIDES: usize = 22;
 /// a match head.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Detail {
+    /// The men nearest the lens, the only level with a modelled face.
+    Close,
     Full,
     Mid,
     Far,
@@ -62,7 +65,9 @@ impl Detail {
     /// the one that decides how the game looks, and it got the bigger share of
     /// the polygon budget.
     pub fn for_distance(yards: f32) -> Detail {
-        if yards < 20.0 {
+        if yards < 7.0 {
+            Detail::Close
+        } else if yards < 20.0 {
             Detail::Full
         } else if yards < 38.0 {
             Detail::Mid
@@ -73,6 +78,7 @@ impl Detail {
 
     fn sides(self) -> usize {
         match self {
+            Detail::Close => 16,
             Detail::Full => LIMB_SIDES,
             Detail::Mid => 9,
             Detail::Far => 6,
@@ -81,6 +87,7 @@ impl Detail {
 
     fn body_sides(self) -> usize {
         match self {
+            Detail::Close => 28,
             Detail::Full => BODY_SIDES,
             Detail::Mid => 14,
             Detail::Far => 8,
@@ -94,7 +101,17 @@ impl Detail {
 
     /// Painted numbers and the seams of the hair.
     fn paint(self) -> bool {
-        matches!(self, Detail::Full | Detail::Mid)
+        !matches!(self, Detail::Far)
+    }
+
+    /// How much face to build: 3 is the modelled head, 0 is a head-shaped lump.
+    fn quality(self) -> u8 {
+        match self {
+            Detail::Close => 3,
+            Detail::Full => 1,
+            Detail::Mid => 1,
+            Detail::Far => 0,
+        }
     }
 }
 
@@ -1092,18 +1109,6 @@ pub fn build_mesh_at(
             if detail.fine() { 10 } else { 6 },
             jersey,
         );
-        // Trim along the armhole, where the cloth ends and the arm starts.
-        if detail.fine() {
-            mesh.tube(
-                &[
-                    (shoulder + Vec3::new(0.0, 0.0, 0.008 * bulk), 0.118 * bulk),
-                    (shoulder - Vec3::new(0.0, 0.0, 0.034 * bulk), 0.114 * bulk),
-                ],
-                sides,
-                accent,
-                false,
-            );
-        }
 
 
         // Each arm swings against the leg on the other side of the body. The
@@ -1244,194 +1249,34 @@ pub fn build_mesh_at(
     let head_lean = lean * 0.45;
     let head_dir = Vec3::new(head_lean.sin(), 0.0, head_lean.cos());
     let neck_base = shoulder_zone - spine_dir * head_r * 0.4;
-    let head = neck_base + head_dir * (head_r * 2.05);
+    let head_center = neck_base + head_dir * (head_r * 1.92);
     mesh.tube(
         &[
-            (neck_base, 0.086 * bulk),
-            (neck_base + head_dir * (head_r * 1.05), 0.072 * bulk),
+            (neck_base, 0.082 * bulk),
+            (neck_base + head_dir * (head_r * 1.02), 0.046 * bulk),
         ],
         sides,
         skin,
         false,
     );
-    let head_rings = if detail.fine() { 9 } else { 5 };
-    let head_segs = if detail.fine() { 16 } else { 8 };
-    mesh.sphere(
-        head,
-        Vec3::new(head_r, head_r * 0.94, head_r * 1.1),
-        head_rings,
-        head_segs,
-        skin,
-    );
-    // Jaw and chin, which is what gives a head a face rather than an egg.
-    mesh.sphere(
-        head + Vec3::new(head_r * 0.34, 0.0, -head_r * 0.52),
-        Vec3::new(head_r * 0.62, head_r * 0.74, head_r * 0.48),
-        if detail.fine() { 4 } else { 2 },
-        head_segs,
-        skin,
-    );
-    // Mouth: a dark line under the nose, so a face is a face and not an egg with
-    // two dots on it.
+    // Sternocleidomastoid: the cord up the side of the neck. Without it the head
+    // sits on a stalk; with it, it sits on a man.
     if detail.fine() {
-        box3(
-            &mut mesh,
-            head + Vec3::new(head_r * 0.87, 0.0, -head_r * 0.34),
-            Vec3::new(head_r * 0.055, head_r * 0.15, head_r * 0.020),
-            0.0,
-            0.0,
-            Rgb::hex(0x4A241F),
-            0.95,
-        );
+        for side in [-1.0f32, 1.0] {
+            let base = neck_base + Vec3::new(0.03, side * 0.02, 0.0);
+            let top = neck_base + head_dir * (head_r * 0.92) + Vec3::new(0.02, side * 0.05, 0.0);
+            mesh.tube(&[(base, 0.030 * bulk), (top, 0.018)], 5, skin.scale(1.02), false);
+        }
     }
-    // Nose, so the profile is not a sphere.
-    mesh.sphere(
-        head + Vec3::new(head_r * 0.93, 0.0, -head_r * 0.12),
-        Vec3::new(head_r * 0.15, head_r * 0.11, head_r * 0.13),
-        2,
-        7,
+    Head {
+        center: head_center,
+        radius: head_r,
+        player,
         skin,
-    );
-    for side in [-1.0f32, 1.0] {
-        mesh.sphere(
-            Vec3::new(head.x - 0.01, side * head_r * 0.96, head.z),
-            Vec3::new(0.018, 0.020, 0.030),
-            2,
-            5,
-            skin,
-        );
-        // Eyes: two dark dots set into the brow. They cost four triangles and
-        // they are the difference between a head and a ball at close range.
-        if detail.fine() {
-            // Eye: a white with a dark pupil on it. A single dark dot reads as a
-            // hole in the head at any distance; the pair of tones reads as a
-            // face, which is the point of putting them there at all.
-            mesh.sphere(
-                head + Vec3::new(head_r * 0.82, side * head_r * 0.34, head_r * 0.30),
-                Vec3::new(head_r * 0.11, head_r * 0.17, head_r * 0.10),
-                2,
-                6,
-                Rgb::hex(0xF2EDE4),
-            );
-            mesh.sphere(
-                head + Vec3::new(head_r * 0.92, side * head_r * 0.34, head_r * 0.29),
-                Vec3::new(head_r * 0.05, head_r * 0.09, head_r * 0.06),
-                2,
-                5,
-                Rgb::hex(0x2A2420),
-            );
-            // Brow, so the face has a shadow line above the eyes.
-            taper3(
-                &mut mesh,
-                head + Vec3::new(head_r * 0.72, side * head_r * 0.34, head_r * 0.50),
-                Vec3::new(0.014, head_r * 0.32, 0.008),
-                Vec3::new(0.014, head_r * 0.32, 0.008),
-                0.0,
-                0.0,
-                skin.scale(0.82),
-                1.0,
-            );
-        }
+        accent,
     }
-    match player.hair {
-        HairStyle::Bald => {}
-        HairStyle::Buzz => {
-            // A hairline is the one part of a head you cannot fake with a low
-            // segment count: it is a curve, and a nine-sided one is a helmet.
-            mesh.sphere(
-                Vec3::new(head.x - 0.005, 0.0, head.z + head_r * 0.42),
-                Vec3::new(head_r, head_r * 0.94, head_r * 0.68),
-                if detail.fine() { 5 } else { 3 },
-                if detail.fine() { 16 } else { 9 },
-                player.hair_color,
-            );
-        }
-        HairStyle::Fade => {
-            mesh.sphere(
-                Vec3::new(head.x - 0.005, 0.0, head.z + head_r * 0.5),
-                Vec3::new(head_r * 1.02, head_r * 0.96, head_r * 0.7),
-                if detail.fine() { 5 } else { 3 },
-                if detail.fine() { 16 } else { 9 },
-                player.hair_color,
-            );
-        }
-        HairStyle::Locs => {
-            mesh.sphere(
-                Vec3::new(head.x - 0.01, 0.0, head.z + head_r * 0.55),
-                Vec3::new(head_r * 1.05, head_r, head_r * 0.78),
-                if detail.fine() { 5 } else { 3 },
-                if detail.fine() { 16 } else { 9 },
-                player.hair_color,
-            );
-            let strands = if detail.fine() { 7 } else { 0 };
-            for i in 0..strands {
-                let a = i as f32 / 7.0 * std::f32::consts::TAU;
-                let base = Vec3::new(
-                    head.x - head_r * 0.4,
-                    head.y + a.cos() * head_r * 0.8,
-                    head.z + head_r * 0.4,
-                );
-                let tip = base + Vec3::new(-head_r * 0.9, a.cos() * 0.03, -head_r * 1.4);
-                limb(&mut mesh, base, tip, 0.024, 0.014, 4, player.hair_color);
-            }
-        }
-        HairStyle::TwistOut => {
-            mesh.sphere(
-                Vec3::new(head.x - 0.01, 0.0, head.z + head_r * 0.7),
-                Vec3::new(head_r * 1.18, head_r * 1.1, head_r * 0.9),
-                4,
-                9,
-                player.hair_color,
-            );
-        }
-        HairStyle::HighTop => {
-            // A high top is a shape, not a crate on the head: it is cut flat on
-            // top, but the sides follow the skull and the corners are round.
-            mesh.sphere(
-                Vec3::new(head.x - 0.01, 0.0, head.z + head_r * 0.92),
-                Vec3::new(head_r * 0.96, head_r * 0.94, head_r * 0.72),
-                4,
-                10,
-                player.hair_color,
-            );
-        }
-    }
-    // A headband, on the men the sheets give one to. It is a thin band of cloth
-    // across the brow: a flattened ring through the skull, so only its rim shows.
-    if player.id % 3 == 0 {
-        let band = if player.id % 2 == 0 { accent } else { Rgb::hex(0xEDEAE0) };
-        mesh.sphere(
-            head + Vec3::new(head_r * 0.06, 0.0, head_r * 0.50),
-            Vec3::new(head_r * 1.03, head_r * 0.99, head_r * 0.085),
-            2,
-            if detail.fine() { 14 } else { 8 },
-            band,
-        );
-    }
-    // Beard: jaw, chin and moustache, not a dark ball on the chin. The sheets'
-    // faces are most of what makes them look like men and not mannequins.
-    if player.beard > 0.2 {
-        let full = player.beard.clamp(0.0, 1.0);
-        mesh.sphere(
-            head + Vec3::new(head_r * 0.50, 0.0, -head_r * 0.42),
-            Vec3::new(head_r * 0.42, head_r * (0.66 + 0.16 * full), head_r * 0.50),
-            3,
-            if detail.fine() { 9 } else { 6 },
-            player.hair_color,
-        );
-        if detail.fine() {
-            // Moustache across the top lip.
-            box3(
-                &mut mesh,
-                head + Vec3::new(head_r * 0.80, 0.0, -head_r * 0.20),
-                Vec3::new(head_r * 0.045, head_r * (0.20 + 0.10 * full), head_r * 0.035),
-                0.0,
-                0.0,
-                player.hair_color,
-                0.92,
-            );
-        }
-    }
+    .build(&mut mesh, detail.quality());
+
     // Helmet? Never. The A7FL plays without them.
 
     // A man on the ground got there over the top of a hit, and that is what the
@@ -1736,13 +1581,55 @@ mod tests {
             tris > 1200,
             "the figure has gone back to being a stack of boxes: {tris} tris"
         );
-        // The smooth limb surfaces cost a few hundred triangles, and 3600 is
-        // where the measured cost is: 19.4 ms a frame at 640x360 with fourteen
-        // men on the field, against 17.2 ms before the arms were lofted. Past
-        // this the software rasteriser starts dropping frames on the far hash.
+        let teams = a7fl_core::team::league_teams();
+        let player = &teams[0].roster[0];
+        let uniform = &teams[0].home;
+        let pose = Pose { run_phase: 0.3, speed: 0.75, carrying: true, ..Default::default() };
+        let full = build_mesh_at(player, uniform, &pose, 0, Detail::Full);
+        let close = build_mesh_at(player, uniform, &pose, 0, Detail::Close);
         assert!(
-            tris < 3600,
-            "the figure is too heavy to draw seven times a frame: {tris} tris"
+            full.tris.len() > 1200,
+            "the figure has gone back to being a stack of boxes: {} tris",
+            full.tris.len()
+        );
+        // Measured, not guessed: the full figure is 20.5 ms a frame at 640x360
+        // with fourteen men on the field. The close tier only ever covers the men
+        // within seven yards of the lens — at most two — so it can carry the face.
+        assert!(
+            full.tris.len() < 4600,
+            "the figure is too heavy to draw seven times a frame: {} tris",
+            full.tris.len()
+        );
+        assert!(
+            close.tris.len() < 9000,
+            "the close figure is too heavy to draw twice: {} tris",
+            close.tris.len()
+        );
+    }
+
+    /// The head is a face: a modelled surface with eyes, a nose, a mouth and
+    /// ears, smooth-shaded rather than a ball with dots on it.
+    #[test]
+    fn the_head_is_a_face_and_not_a_ball() {
+        let teams = a7fl_core::team::league_teams();
+        let player = &teams[0].roster[0];
+        let uniform = &teams[0].home;
+        let pose = Pose { run_phase: 0.3, speed: 0.0, ..Default::default() };
+        let mesh = build_mesh_at(player, uniform, &pose, 0, Detail::Close);
+        let (_, _, _, _, z_min, z_max) = bounds(&mesh);
+        let h = z_max - z_min;
+        let head: Vec<_> = mesh.tris.iter().filter(|t| t.a.z > z_min + h * 0.905).collect();
+        assert!(head.len() > 500, "the head is only {} faces", head.len());
+        let eye_white = head.iter().filter(|t| t.color == Rgb::hex(0xEFE8DC)).count();
+        assert!(eye_white >= 6, "no eyes on the head: {eye_white} faces");
+        let smooth = head
+            .iter()
+            .filter(|t| (t.na - t.nb).length() > 0.01 || (t.na - t.nc).length() > 0.01)
+            .count();
+        assert!(
+            smooth > head.len() * 6 / 10,
+            "the head is flat-shaded: {smooth} of {} faces carry a surface normal",
+            head.len()
         );
     }
 

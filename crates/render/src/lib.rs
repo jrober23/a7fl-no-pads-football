@@ -12,6 +12,7 @@
 //! the text play-by-play.
 
 pub mod broadcast;
+mod head;
 pub mod callsheet;
 pub mod capture;
 pub mod defsheet;

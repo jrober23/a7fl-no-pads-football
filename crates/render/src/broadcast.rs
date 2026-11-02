@@ -561,6 +561,7 @@ impl Broadcast {
             self.scene
                 .draw_shadow(frame, camera, Vec3::new(p.pos.x, p.pos.y, 0.0), radius, 0.42);
         }
+        let mut close_builds = 0;
         for p in bodies {
             let roster = &self.teams[p.team].roster[p.roster];
             let uniform = &self.uniforms[p.team];
@@ -580,7 +581,16 @@ impl Broadcast {
             // A man a long way from the lens is built cheaply: at that size the
             // eyes and the quadriceps are less than a pixel each.
             let dist = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
-            let detail = players::Detail::for_distance(dist);
+            let mut detail = players::Detail::for_distance(dist);
+            // The modelled face is worth two men. A pile-up would otherwise ask
+            // for six of them at once and spend the frame on the far hash.
+            if detail == players::Detail::Close {
+                if close_builds >= 2 {
+                    detail = players::Detail::Full;
+                } else {
+                    close_builds += 1;
+                }
+            }
             let mut mesh = players::build_mesh_at(roster, uniform, &pose, p.roster as u32, detail);
             mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
             self.scene.draw_mesh(frame, &mesh, camera);
