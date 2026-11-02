@@ -93,6 +93,9 @@ const CAMS: [CameraMode; 3] = [
     CameraMode::SkyCam,
 ];
 
+/// The cameras in the order `CAMS` holds them, for the settings screen.
+pub const CAMERA_LABELS: [&str; 3] = ["CLASSIC", "BROADCAST", "SKY"];
+
 fn cam_name(mode: CameraMode) -> &'static str {
     match mode {
         CameraMode::Classic => "CLASSIC",
@@ -280,6 +283,18 @@ impl Arcade {
     /// Reverse the stick's vertical axis, for pads that report it inverted.
     pub fn with_flip_y(mut self, flip: bool) -> Self {
         self.flip_y = flip;
+        self
+    }
+
+    /// The camera the picture starts on, from the settings screen.
+    pub fn with_camera(mut self, cam: usize) -> Self {
+        self.cam = cam % CAMS.len();
+        self
+    }
+
+    /// The side of the ball the player runs, chosen in exhibition.
+    pub fn with_my_team(mut self, side: usize) -> Self {
+        self.my_team = Some(side.min(1));
         self
     }
 

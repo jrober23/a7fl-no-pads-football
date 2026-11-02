@@ -12,6 +12,7 @@ use a7fl_render::raster::Frame;
 use a7fl_render::terminal::{self, Screen};
 
 use crate::pad::{Buttons, Input};
+use crate::settings::Settings;
 
 pub const CANVAS_W: usize = 640;
 pub const CANVAS_H: usize = 360;
@@ -35,9 +36,9 @@ pub enum View {
 
 impl View {
     /// Try a window first; fall back to the terminal when there is no display.
-    pub fn open(force_terminal: bool) -> View {
+    pub fn open(force_terminal: bool, settings: &Settings) -> View {
         if !force_terminal {
-            if let Some(window) = WindowView::open() {
+            if let Some(window) = WindowView::open(settings) {
                 return View::Window(window);
             }
         }
@@ -46,6 +47,17 @@ impl View {
 
     pub fn is_window(&self) -> bool {
         matches!(self, View::Window(_))
+    }
+
+    /// Rebuild the window at the size and mode the settings ask for. minifb has
+    /// no resize call, so the window is made again rather than nudged.
+    pub fn apply(&mut self, settings: &Settings) {
+        if !self.is_window() {
+            return;
+        }
+        if let Some(window) = WindowView::open(settings) {
+            *self = View::Window(window);
+        }
     }
 
     pub fn describe(&self) -> String {
@@ -111,15 +123,16 @@ pub struct WindowView {
 }
 
 impl WindowView {
-    fn open() -> Option<WindowView> {
+    fn open(settings: &Settings) -> Option<WindowView> {
         let mut window = minifb::Window::new(
             "A7FL: No Pads Football",
-            CANVAS_W,
-            CANVAS_H,
+            settings.width,
+            settings.height,
             minifb::WindowOptions {
-                resize: true,
-                scale: minifb::Scale::X2,
+                resize: !settings.fullscreen,
+                scale: minifb::Scale::X1,
                 scale_mode: minifb::ScaleMode::AspectRatioStretch,
+                borderless: settings.fullscreen,
                 ..Default::default()
             },
         )

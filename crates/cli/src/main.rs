@@ -23,7 +23,9 @@ use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
 use a7fl_render::raster::Frame;
 
 mod arcade;
+mod menu;
 mod pad;
+mod settings;
 mod view;
 
 fn main() {
@@ -519,8 +521,9 @@ fn read_choice(valid: &[&str]) -> Option<String> {
 
 fn cmd_arcade(args: &[String]) {
     let seed = num(args, "--seed", 12);
+    let mut settings = settings::Settings::load();
     let (home, away) = pick_teams(args);
-    let game = GameState::new(home, away, seed);
+    let mut game = GameState::new(home, away, seed);
 
     // Frame-time check for the canvas the arcade client draws on.
     if has(args, "--bench") {
@@ -792,8 +795,8 @@ fn cmd_arcade(args: &[String]) {
         return;
     }
 
-    let view = view::View::open(has(args, "--terminal"));
-    let pad = pad::open();
+    let mut view = view::View::open(has(args, "--terminal"), &settings);
+    let mut pad = pad::open();
     if pad.is_none() && !view.is_window() {
         eprintln!("No controller and no display.");
         #[cfg(feature = "gamepad")]
@@ -802,20 +805,38 @@ fn cmd_arcade(args: &[String]) {
         eprintln!("This build has no controller support: rebuild with the `gamepad` feature.");
         return;
     }
-    match &pad {
-        Some(pad) => println!("Controller: {}", pad.name()),
-        None => println!("No controller detected - playing on the keyboard."),
+
+    // Naming the clubs on the command line skips the front end, which is what
+    // the film and timing paths want. Everything else opens the menu.
+    let scripted = has(args, "--home") || has(args, "--away");
+    let mut mine = None;
+    if scripted {
+        match &pad {
+            Some(pad) => println!("Controller: {}", pad.name()),
+            None => println!("No controller detected - playing on the keyboard."),
+        }
+        println!("Display: {}", view.describe());
+        println!("Starting in a moment.");
+        std::thread::sleep(std::time::Duration::from_millis(900));
+    } else {
+        match menu::run(&mut view, pad.as_mut(), &mut settings) {
+            Some(kick) => {
+                let teams = league_teams();
+                game = GameState::new(teams[kick.home].clone(), teams[kick.away].clone(), seed);
+                mine = Some(kick.mine);
+            }
+            None => return,
+        }
     }
-    println!("Display: {}", view.describe());
-    println!("  move: stick / arrows+WASD");
-    println!("  snap, call, confirm: A / Space");
-    println!("  pass: hold A, B, X or Y (Space / X / Z / C) and release; the stick aims it");
-    println!("  ask the coach: Y / C      quit: START / Esc");
-    println!("Starting in a moment.");
-    std::thread::sleep(std::time::Duration::from_millis(900));
 
     let flip_y = has(args, "--flip-y");
-    arcade::Arcade::new(game, pad, view).with_flip_y(flip_y).run();
+    let mut arcade = arcade::Arcade::new(game, pad, view)
+        .with_flip_y(flip_y)
+        .with_camera(settings.camera);
+    if let Some(mine) = mine {
+        arcade = arcade.with_my_team(mine);
+    }
+    arcade.run();
 }
 
 fn cmd_film(args: &[String]) {

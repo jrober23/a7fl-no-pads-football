@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.18.8-windows-x86_64.zip` from the
+Grab `a7fl-v0.19.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -23,7 +23,7 @@ ask you to confirm first (More info → Run anyway).
 ## Running it
 
 ```bash
-cargo run -- teams          # the ten-team league and every roster
+cargo run -- teams          # the sixteen-club league and every roster
 cargo run -- rules          # the A7FL rule set and the penalty catalog
 cargo run -- sim --seed 7   # simulate a whole game, print the box score
 cargo run -- play --seed 12 # call the plays yourself via a text menu
@@ -120,15 +120,37 @@ On defense the same pad does different work:
 | Select / Minus, Tab | Change camera |
 | Start, Esc | Pause |
 
-### Choosing your team
+### The start menu
 
-The first screen is the kickoff card, and it asks which of the two teams is yours:
-push the stick to swap the highlight, A to kick off. The team you pick is the one you
-run for the rest of the game, both ways; the other is the computer's, and its calls
-are its own. Every screen that carries the score carries `YOU: NEW` (or whichever
-team you took), so there is never a snap where you are guessing which shirt you are
-in. Pick the throwing side and you throw the opening throw-off and then defend it;
-pick the receiving side and you run it back and take the field on offense.
+Bare `a7fl` opens on the start menu: **EXHIBITION**, **SETTINGS**, **QUIT**. The
+stick moves, A selects, START leaves. `a7fl arcade --home 3 --away 7` skips the
+front end and goes straight to kickoff with the clubs named, which is what the film
+and timing paths use.
+
+### Exhibition
+
+The league is sixteen clubs in four divisions — North, South, East and West — and
+the picker rolls them like a carousel: the badge in the middle, the city and the
+nickname underneath it, the clubs either side waiting their turn. Up and down change
+division, left and right roll through the four clubs in it, A takes the card you are
+on. You pick the home side, then the away side, and then a third screen asks which of
+the two you want to run: the marker slides to that side of the ball and START kicks
+off. The side you take is yours for the whole game, both ways, and the scoreboard
+carries `YOU:` against it so there is never a snap where you are guessing which
+shirt you are in.
+
+The cities are real; every nickname, mark and colour set is invented for this game,
+so nothing on a jersey belongs to a club somebody already owns.
+
+### Settings
+
+Three things, all of them changed without leaving the screen: the default camera
+(CLASSIC, BROADCAST or SKY), the window resolution (960x540, 1280x720, 1600x900,
+1920x1080) and whether the game runs in a window or borderless fullscreen. Left and
+right walk a value and A cycles it. Changes apply as you make them and are written
+to `%APPDATA%\a7fl\settings.cfg` on Windows (`~/.config/a7fl/settings.cfg`
+elsewhere), so the next launch opens the way you left it. Delete that file to go back
+to the defaults; a hand-edited or half-written file falls back to them as well.
 
 ### Calling plays
 
@@ -600,7 +622,7 @@ crates/core     a7fl_core   — no dependencies
   math.rs       vectors, colours, deterministic PCG random
   field.rs      canonical field geometry (100 yards + two 10-yard end zones, 37.5 wide)
   rules.rs      penalty catalog and enforcement
-  team.rs       attributes, appearance, uniforms, the ten-team league
+  team.rs       attributes, appearance, uniforms, the sixteen-club league
   playbook.rs   22 offensive plays, 6 formations, 9 defensive calls in 3 fronts
   sim.rs        the 7-on-7 snap engine
   throwoff.rs   the throw-off engine

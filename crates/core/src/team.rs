@@ -717,16 +717,50 @@ fn generate_roster(seed: u64, level: i32) -> Vec<Player> {
     roster
 }
 
-struct TeamSpec {
-    city: &'static str,
-    name: &'static str,
-    abbr: &'static str,
-    primary: Rgb,
-    secondary: Rgb,
-    accent: Rgb,
-    pattern: JerseyPattern,
-    seed: u64,
-    level: i32,
+/// The four divisions the league is split into. The exhibition picker walks
+/// them in this order, four clubs in each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Division {
+    North,
+    South,
+    East,
+    West,
+}
+
+impl Division {
+    pub const ALL: [Division; 4] =
+        [Division::North, Division::South, Division::East, Division::West];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Division::North => "NORTH",
+            Division::South => "SOUTH",
+            Division::East => "EAST",
+            Division::West => "WEST",
+        }
+    }
+}
+
+/// One club as the menu sees it: everything needed to draw its badge and to
+/// build its roster, without generating sixteen rosters to show a card.
+#[derive(Clone, Debug)]
+pub struct Club {
+    pub city: &'static str,
+    pub name: &'static str,
+    pub abbr: &'static str,
+    pub division: Division,
+    pub primary: Rgb,
+    pub secondary: Rgb,
+    pub accent: Rgb,
+    pub pattern: JerseyPattern,
+    pub seed: u64,
+    pub level: i32,
+}
+
+impl Club {
+    pub fn full_name(&self) -> String {
+        format!("{} {}", self.city, self.name)
+    }
 }
 
 fn build_uniform(
@@ -751,7 +785,7 @@ fn build_uniform(
     }
 }
 
-fn team_from_spec(spec: TeamSpec) -> Team {
+fn team_from_spec(spec: Club) -> Team {
     let roster = generate_roster(spec.seed, spec.level);
     let home = build_uniform(
         spec.primary,
@@ -787,130 +821,38 @@ fn team_from_spec(spec: TeamSpec) -> Team {
     }
 }
 
-/// The ten fictional clubs of the A7FL-inspired league. Real A7FL markets, made-up
-/// nicknames so nothing here touches a real team's marks.
+/// The sixteen clubs of the league, four to a division. Cities are real; every
+/// nickname, mark and colour set here is invented, so nothing on a jersey
+/// belongs to a club somebody already owns.
+pub fn clubs() -> Vec<Club> {
+    use JerseyPattern::*;
+    vec![
+        // North
+        Club { city: "Boston", name: "Lanterns", abbr: "BOS", division: Division::North, primary: Rgb::hex(0x0B3D2E), secondary: Rgb::hex(0x082A20), accent: Rgb::hex(0xE8B44A), pattern: ShoulderStripe, seed: 0xA7F1_0001, level: 8 },
+        Club { city: "Chicago", name: "Foundry", abbr: "CHI", division: Division::North, primary: Rgb::hex(0x8C2F1B), secondary: Rgb::hex(0x5E1F12), accent: Rgb::hex(0xF2C14E), pattern: Solid, seed: 0xA7F1_0002, level: 5 },
+        Club { city: "Detroit", name: "Assembly", abbr: "DET", division: Division::North, primary: Rgb::hex(0x1F3A5F), secondary: Rgb::hex(0x14263F), accent: Rgb::hex(0xFF6B35), pattern: SidePanel, seed: 0xA7F1_0003, level: 3 },
+        Club { city: "Minneapolis", name: "Northwind", abbr: "MIN", division: Division::North, primary: Rgb::hex(0x2E4A7D), secondary: Rgb::hex(0x1B2E50), accent: Rgb::hex(0xC8E6FF), pattern: Hoops, seed: 0xA7F1_0004, level: 6 },
+        // South
+        Club { city: "Atlanta", name: "Fireflies", abbr: "ATL", division: Division::South, primary: Rgb::hex(0x3B1F5E), secondary: Rgb::hex(0x261340), accent: Rgb::hex(0xFFD166), pattern: Sash, seed: 0xA7F1_0005, level: 4 },
+        Club { city: "Miami", name: "Riptide", abbr: "MIA", division: Division::South, primary: Rgb::hex(0x0FA3B1), secondary: Rgb::hex(0x0B6E77), accent: Rgb::hex(0xF6F7EB), pattern: Hoops, seed: 0xA7F1_0006, level: 3 },
+        Club { city: "Dallas", name: "Rustlers", abbr: "DAL", division: Division::South, primary: Rgb::hex(0x7A2E1E), secondary: Rgb::hex(0x4E1C12), accent: Rgb::hex(0xE9C46A), pattern: ShoulderStripe, seed: 0xA7F1_0007, level: 7 },
+        Club { city: "Nashville", name: "Brass", abbr: "NSH", division: Division::South, primary: Rgb::hex(0xA8761F), secondary: Rgb::hex(0x6E4C12), accent: Rgb::hex(0x1B1B1B), pattern: Solid, seed: 0xA7F1_0008, level: 5 },
+        // East
+        Club { city: "New York", name: "Beacons", abbr: "NYC", division: Division::East, primary: Rgb::hex(0x1B2A6B), secondary: Rgb::hex(0x101A45), accent: Rgb::hex(0xF4D35E), pattern: ShoulderStripe, seed: 0xA7F1_0009, level: 6 },
+        Club { city: "Philadelphia", name: "Anvils", abbr: "PHI", division: Division::East, primary: Rgb::hex(0x2B2B2B), secondary: Rgb::hex(0x161616), accent: Rgb::hex(0xC0C0C0), pattern: SidePanel, seed: 0xA7F1_000A, level: 8 },
+        Club { city: "Washington", name: "Monuments", abbr: "WAS", division: Division::East, primary: Rgb::hex(0x12284C), secondary: Rgb::hex(0x0A1930), accent: Rgb::hex(0xD62828), pattern: Solid, seed: 0xA7F1_000B, level: 4 },
+        Club { city: "Charlotte", name: "Aviators", abbr: "CLT", division: Division::East, primary: Rgb::hex(0x2F5D8C), secondary: Rgb::hex(0x1C3A59), accent: Rgb::hex(0x9BD1F0), pattern: Hoops, seed: 0xA7F1_000C, level: 2 },
+        // West
+        Club { city: "Los Angeles", name: "Comets", abbr: "LAX", division: Division::West, primary: Rgb::hex(0x5B2A86), secondary: Rgb::hex(0x3A1A57), accent: Rgb::hex(0xC8FF00), pattern: Sash, seed: 0xA7F1_000D, level: 3 },
+        Club { city: "Phoenix", name: "Sandstorm", abbr: "PHX", division: Division::West, primary: Rgb::hex(0xB5651D), secondary: Rgb::hex(0x7A4413), accent: Rgb::hex(0xF2E8CF), pattern: ShoulderStripe, seed: 0xA7F1_000E, level: 6 },
+        Club { city: "Seattle", name: "Rainmakers", abbr: "SEA", division: Division::West, primary: Rgb::hex(0x14532D), secondary: Rgb::hex(0x0C3520), accent: Rgb::hex(0x7FD1AE), pattern: Solid, seed: 0xA7F1_000F, level: 5 },
+        Club { city: "Denver", name: "Altitude", abbr: "DEN", division: Division::West, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xE0E7F1), pattern: SidePanel, seed: 0xA7F1_0010, level: 7 },
+    ]
+}
+
+/// The league, rosters and all, in the order the clubs are listed.
 pub fn league_teams() -> Vec<Team> {
-    let specs = vec![
-        TeamSpec {
-            city: "Newark",
-            name: "Nighthawks",
-            abbr: "NEW",
-            primary: Rgb::hex(0x111318),
-            secondary: Rgb::hex(0x2A2E36),
-            accent: Rgb::hex(0xF2C14E),
-            pattern: JerseyPattern::ShoulderStripe,
-            seed: 0xA7F1_0001,
-            level: 8,
-        },
-        TeamSpec {
-            city: "Paterson",
-            name: "Forge",
-            abbr: "PAT",
-            primary: Rgb::hex(0x4A5568),
-            secondary: Rgb::hex(0x2D3748),
-            accent: Rgb::hex(0xFF6B35),
-            pattern: JerseyPattern::SidePanel,
-            seed: 0xA7F1_0002,
-            level: 5,
-        },
-        TeamSpec {
-            city: "Jersey City",
-            name: "Havoc",
-            abbr: "JC",
-            primary: Rgb::hex(0x5B2A86),
-            secondary: Rgb::hex(0x3A1A57),
-            accent: Rgb::hex(0xC8FF00),
-            pattern: JerseyPattern::Sash,
-            seed: 0xA7F1_0003,
-            level: 2,
-        },
-        TeamSpec {
-            city: "Baltimore",
-            name: "Iron",
-            abbr: "BAL",
-            primary: Rgb::hex(0x2B2D42),
-            secondary: Rgb::hex(0x8D99AE),
-            accent: Rgb::hex(0xE63946),
-            pattern: JerseyPattern::ShoulderStripe,
-            seed: 0xA7F1_0004,
-            level: 4,
-        },
-        TeamSpec {
-            city: "Washington",
-            name: "Sentinels",
-            abbr: "WAS",
-            primary: Rgb::hex(0x12284C),
-            secondary: Rgb::hex(0x0A1930),
-            accent: Rgb::hex(0xD62828),
-            pattern: JerseyPattern::Solid,
-            seed: 0xA7F1_0005,
-            level: 6,
-        },
-        TeamSpec {
-            city: "Miami",
-            name: "Riptide",
-            abbr: "MIA",
-            primary: Rgb::hex(0x0FA3B1),
-            secondary: Rgb::hex(0x0B6E77),
-            accent: Rgb::hex(0xF6F7EB),
-            pattern: JerseyPattern::Hoops,
-            seed: 0xA7F1_0006,
-            level: 3,
-        },
-        TeamSpec {
-            city: "Cincinnati",
-            name: "Stampede",
-            abbr: "CIN",
-            primary: Rgb::hex(0xA4161A),
-            secondary: Rgb::hex(0x6B0F12),
-            accent: Rgb::hex(0xF2C14E),
-            pattern: JerseyPattern::ShoulderStripe,
-            seed: 0xA7F1_0007,
-            level: 7,
-        },
-        TeamSpec {
-            city: "Las Vegas",
-            name: "Vipers",
-            abbr: "LV",
-            primary: Rgb::hex(0xC0C6CC),
-            secondary: Rgb::hex(0x8A929C),
-            accent: Rgb::hex(0xD7263D),
-            pattern: JerseyPattern::SidePanel,
-            seed: 0xA7F1_0008,
-            level: 1,
-        },
-        TeamSpec {
-            city: "Camden",
-            name: "Cyclones",
-            abbr: "CAM",
-            primary: Rgb::hex(0x1B998B),
-            secondary: Rgb::hex(0x12726A),
-            accent: Rgb::hex(0xEDF7F6),
-            pattern: JerseyPattern::Sash,
-            seed: 0xA7F1_0009,
-            level: 0,
-        },
-        TeamSpec {
-            city: "Trenton",
-            name: "Thunder",
-            abbr: "TRE",
-            primary: Rgb::hex(0xE0A526),
-            secondary: Rgb::hex(0xA87A16),
-            accent: Rgb::hex(0x1A1C20),
-            pattern: JerseyPattern::Solid,
-            seed: 0xA7F1_000A,
-            level: 3,
-        },
-    ];
-    specs
-        .into_iter()
-        .enumerate()
-        .map(|(i, s)| {
-            let mut t = team_from_spec(s);
-            t.id = i as u8;
-            t
-        })
-        .collect()
+    clubs().into_iter().map(team_from_spec).collect()
 }
 
 #[cfg(test)]
@@ -920,7 +862,7 @@ mod tests {
     #[test]
     fn rosters_are_legal_and_unique() {
         let teams = league_teams();
-        assert_eq!(teams.len(), 10);
+        assert_eq!(teams.len(), 16);
         for t in &teams {
             assert!(t.roster.len() >= 14, "{} roster too small", t.abbr);
             let mut numbers: Vec<u8> = t.roster.iter().map(|p| p.number).collect();
@@ -937,6 +879,31 @@ mod tests {
                     assert!((41..=99).contains(&v), "attribute out of range: {v}");
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_league_is_sixteen_clubs_in_four_divisions() {
+        let all = clubs();
+        assert_eq!(all.len(), 16);
+        for d in Division::ALL {
+            let n = all.iter().filter(|c| c.division == d).count();
+            assert_eq!(n, 4, "{} has {n} clubs", d.label());
+        }
+        let mut marks: Vec<&str> = all.iter().map(|c| c.abbr).collect();
+        marks.sort_unstable();
+        marks.dedup();
+        assert_eq!(marks.len(), 16, "two clubs share a mark");
+        let mut names: Vec<String> = all.iter().map(|c| c.full_name()).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), 16, "two clubs share a name");
+        // The menu picks by index, so the built league has to be in the same
+        // order as the club list it draws.
+        let teams = league_teams();
+        assert_eq!(teams.len(), all.len());
+        for (i, club) in all.iter().enumerate() {
+            assert_eq!(teams[i].full_name(), club.full_name(), "club {i} is out of order");
         }
     }
 
