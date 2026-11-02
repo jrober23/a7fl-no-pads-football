@@ -11,6 +11,7 @@
 //! * [`stats`] — box score, drive charts.
 
 pub mod ai;
+pub mod difficulty;
 pub mod field;
 pub mod game;
 pub mod math;

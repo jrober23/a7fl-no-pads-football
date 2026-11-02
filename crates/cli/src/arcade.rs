@@ -293,6 +293,12 @@ impl Arcade {
         self
     }
 
+    /// The lens the player tuned on the settings screen.
+    pub fn with_lens(mut self, zoom: f32, tilt: f32) -> Self {
+        self.broadcast.set_lens(zoom, tilt);
+        self
+    }
+
     /// The side of the ball the player runs, chosen in exhibition.
     pub fn with_my_team(mut self, side: usize) -> Self {
         self.my_team = Some(side.min(1));
@@ -1506,6 +1512,40 @@ fn play_back(
             return false;
         }
     }
+
+    // The whistle is not the end of the replay. Hold on the last frame a beat so
+    // the play reads as finished rather than cut off mid-stride, then sink to
+    // black and hand the picture back to the call sheet.
+    let Some(last) = tape.last() else {
+        return true;
+    };
+    let mut frame = broadcast.live_frame_ui(last, CameraMode::Broadcast, &ui);
+    let tw = a7fl_render::font::text_width("END OF PLAY", 3) as i32;
+    frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
+    frame.fill_rect(12, 12, 4, 30, hud::RED);
+    frame.text_shadowed(23, 20, "END OF PLAY", 3, hud::WHITE, 1);
+    if !view.show(&mut frame, &["REPLAY DONE   [A] CONTINUE".to_string()]) {
+        return false;
+    }
+    let hold = Instant::now();
+    while hold.elapsed() < Duration::from_millis(1200) {
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.a || input.pressed.start {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(4));
+    }
+    // A cut on the whistle reads as the game having fallen over, so the picture
+    // goes down to the ink over a quarter of a second first.
+    let fade = Instant::now();
+    while fade.elapsed() < Duration::from_millis(280) {
+        let t = (fade.elapsed().as_secs_f32() / 0.28).clamp(0.0, 1.0);
+        let mut frame = broadcast.live_frame_ui(last, CameraMode::Broadcast, &ui);
+        frame.fill_rect_alpha(0, 0, frame.w as i32, frame.h as i32, hud::INK, t);
+        if !view.show(&mut frame, &[]) {
+            return false;
+        }
+    }
     true
 }
 
@@ -1702,7 +1742,9 @@ fn drive(
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
-                if tape.len() < 2400 {
+                // The tape starts with the snap: the shuffle at the line is not
+                // the part of the play anybody rewinds for.
+                if sim.phase != Phase::PreSnap && tape.len() < 2400 {
                     tape.push(sim.clone());
                 }
             }
@@ -1784,8 +1826,9 @@ fn drive(
 
             let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
             // The scoreboard is a broadcast bug: it gets out of the way when the
-            // ball is hiked and comes back when the play is dead and reset.
-            if sim.phase == Phase::PreSnap {
+            // ball is hiked, and while the route tree is up for the preview, and
+            // comes back when the play is dead and reset.
+            if sim.phase == Phase::PreSnap && !sim.previewing() {
                 hud::draw_scoreboard(&mut frame, board);
             }
             // The call is read off the sim, not off the sheet that was chosen a
@@ -2211,7 +2254,9 @@ fn drive_defense(
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
-                if tape.len() < 2400 {
+                // The tape starts with the snap: the shuffle at the line is not
+                // the part of the play anybody rewinds for.
+                if sim.phase != Phase::PreSnap && tape.len() < 2400 {
                     tape.push(sim.clone());
                 }
             }
@@ -2243,8 +2288,9 @@ fn drive_defense(
             };
             let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
             // The scoreboard is a broadcast bug: it gets out of the way when the
-            // ball is hiked and comes back when the play is dead and reset.
-            if sim.phase == Phase::PreSnap {
+            // ball is hiked, and while the route tree is up for the preview, and
+            // comes back when the play is dead and reset.
+            if sim.phase == Phase::PreSnap && !sim.previewing() {
                 hud::draw_scoreboard(&mut frame, board);
             }
             let role = sim.human_defender_role().map(|r| r.label()).unwrap_or("DEF");

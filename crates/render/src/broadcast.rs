@@ -115,6 +115,15 @@ pub struct Broadcast {
     /// this up over half a second so the announcement does not cut onto the
     /// frame the play ended; recordings and replays leave it at 1.
     announce: f32,
+    /// The lens the player tuned on the settings screen. 1.0 / 0.0 is the shot
+    /// the game shipped with, so a fresh settings file changes nothing.
+    lens_zoom: f32,
+    lens_tilt: f32,
+    /// How far the route-tree preview has eased out of the live shot, 0..1.
+    preview_ease: f32,
+    /// The crowd, one man at a time, so it can move.
+    crowd: Vec<CrowdFigure>,
+    crowd_t: f32,
 }
 
 impl Broadcast {
@@ -124,6 +133,7 @@ impl Broadcast {
         let mut scene = SceneRenderer::new(w, h, 46f32.to_radians());
         scene.lighting = stadium_lighting();
         let stands = build_stadium(&teams);
+        let crowd = build_crowd(&teams);
         Broadcast {
             w,
             h,
@@ -134,6 +144,11 @@ impl Broadcast {
             stands,
             focus: Focus::default(),
             announce: 1.0,
+            lens_zoom: 1.0,
+            lens_tilt: 0.0,
+            preview_ease: 0.0,
+            crowd,
+            crowd_t: 0.0,
         }
     }
 
@@ -142,6 +157,13 @@ impl Broadcast {
     /// the picture instead of appearing on it.
     pub fn set_announce(&mut self, ease: f32) {
         self.announce = ease.clamp(0.0, 1.0);
+    }
+
+    /// The lens the player tuned on the settings screen. Zoom pulls the camera
+    /// back from the action, tilt drops it so the picture looks further down.
+    pub fn set_lens(&mut self, zoom: f32, tilt: f32) {
+        self.lens_zoom = if zoom.is_finite() { zoom.clamp(0.6, 1.8) } else { 1.0 };
+        self.lens_tilt = if tilt.is_finite() { tilt.clamp(-0.35, 0.45) } else { 0.0 };
     }
 
     /// Render one frame of a recorded play at time `t` (seconds after the snap).
@@ -558,8 +580,17 @@ impl Broadcast {
         let dir = sim.facing();
         // Holding the preview at the line lifts the shot over the whole route
         // tree instead of the sliver of it a runner's camera holds.
-        let mode = if sim.previewing() { CameraMode::SkyCam } else { mode };
-        let camera = self.camera_for(mode, focus, dir, sim.los, sim.setup.ball_y);
+        // The preview is a zoom out of the shot the player is already watching,
+        // not a cut to another camera: the eye keeps its bearings while the route
+        // tree opens up in front of it, and it eases back the moment LT is let go.
+        let want = if sim.previewing() { 1.0 } else { 0.0 };
+        self.preview_ease += (want - self.preview_ease) * 0.14;
+        if (self.preview_ease - want).abs() < 0.002 {
+            self.preview_ease = want;
+        }
+        let shot = self.camera_for(mode, focus, dir, sim.los, sim.setup.ball_y);
+        let wide = self.camera_for(CameraMode::SkyCam, focus, dir, sim.los, sim.setup.ball_y);
+        let camera = blend_camera(&shot, &wide, smooth(self.preview_ease));
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
         self.paint_environment(&mut frame, &camera);
@@ -704,6 +735,77 @@ impl Broadcast {
         }
     }
 
+    /// The crowd for this frame: everybody bobbing on his own phase, with a few
+    /// arms up. Two quads a man, doubled over so the far side of the ground is
+    /// not invisible to a backface cull.
+    fn crowd_frame(&mut self) -> Mesh {
+        let t = self.crowd_t;
+        self.crowd_t += 1.0 / 60.0;
+        let mut mesh = Mesh::new();
+        mesh.tris.reserve(self.crowd.len() * 8);
+        for f in &self.crowd {
+            let bob = (t * 1.7 + f.phase).sin() * 0.05;
+            let cheer = (t * 2.4 + f.phase).sin().max(0.0);
+            let lift = if f.arms { cheer * 0.18 } else { 0.0 };
+            let z = f.at.z + bob + lift;
+            let (x, y) = (f.at.x, f.at.y);
+            let w = 0.20;
+            let body = f.color;
+            mesh.quad(
+                Vec3::new(x - w, y, z),
+                Vec3::new(x + w, y, z),
+                Vec3::new(x + w, y, z + f.tall),
+                Vec3::new(x - w, y, z + f.tall),
+                body,
+            );
+            mesh.quad(
+                Vec3::new(x - w, y, z + f.tall),
+                Vec3::new(x + w, y, z + f.tall),
+                Vec3::new(x + w, y, z),
+                Vec3::new(x - w, y, z),
+                body,
+            );
+            let head = body.scale(1.18);
+            mesh.quad(
+                Vec3::new(x - 0.10, y, z + f.tall),
+                Vec3::new(x + 0.10, y, z + f.tall),
+                Vec3::new(x + 0.10, y, z + f.tall + 0.17),
+                Vec3::new(x - 0.10, y, z + f.tall + 0.17),
+                head,
+            );
+            mesh.quad(
+                Vec3::new(x + 0.10, y, z + f.tall + 0.17),
+                Vec3::new(x - 0.10, y, z + f.tall + 0.17),
+                Vec3::new(x - 0.10, y, z + f.tall),
+                Vec3::new(x + 0.10, y, z + f.tall),
+                head,
+            );
+            if f.arms {
+                let up = cheer * 0.30;
+                let arm = body.scale(0.9);
+                for s in [-1.0f32, 1.0] {
+                    let ax = x + s * (w + 0.03);
+                    let top = z + f.tall + 0.10 + up;
+                    mesh.quad(
+                        Vec3::new(ax, y, z + f.tall * 0.55),
+                        Vec3::new(ax - s * 0.04, y, z + f.tall * 0.55),
+                        Vec3::new(ax - s * 0.04, y, top),
+                        Vec3::new(ax, y, top),
+                        arm,
+                    );
+                    mesh.quad(
+                        Vec3::new(ax, y, top),
+                        Vec3::new(ax - s * 0.04, y, top),
+                        Vec3::new(ax - s * 0.04, y, z + f.tall * 0.55),
+                        Vec3::new(ax, y, z + f.tall * 0.55),
+                        arm,
+                    );
+                }
+            }
+        }
+        mesh
+    }
+
     fn banner_for_scrimmage(&self, record: &ScrimmageRecord) -> Option<Banner> {
         let off = record.setup.offense_team;
         if record.result.touchdown {
@@ -784,6 +886,10 @@ impl Broadcast {
         let (x0, x1, y0, y1) = fieldtex::coverage();
         self.scene.draw_ground(frame, &self.field, camera, x0, x1, y0, y1, 2.2);
         self.scene.draw_mesh(frame, &self.stands, camera);
+        // The crowd moves: bodies bob on their own phases and a few put their
+        // arms up. It is rebuilt every frame because placing a mesh bakes it.
+        let crowd = self.crowd_frame();
+        self.scene.draw_mesh(frame, &crowd, camera);
     }
 
     /// Yellow line of scrimmage and blue first-down marker, painted on the turf.
@@ -871,6 +977,12 @@ impl Broadcast {
                 38f32,
             ),
         };
+        // The tuned lens sits on top of every shot, so a zoom the player likes
+        // carries across the camera modes instead of having to be set three times.
+        let anchor = Vec3::new(action.x, action.y, 0.0);
+        let pos = anchor + (pos - anchor) * self.lens_zoom;
+        let pos = Vec3::new(pos.x, pos.y, pos.z * (1.0 + self.lens_tilt * 1.4));
+        let look = Vec3::new(look.x, look.y, look.z + self.lens_tilt * 2.2);
         let mut cam = Camera::new(pos, 0.0, 0.0);
         cam.look_at(look);
         cam.fov = fov.to_radians();
@@ -982,8 +1094,8 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
         mesh.quad(
             Vec3::new(x0, side * FIELD_HALF_WIDTH, 0.004),
             Vec3::new(x1, side * FIELD_HALF_WIDTH, 0.004),
-            Vec3::new(x1, side * (FIELD_HALF_WIDTH + 2.6), 0.004),
-            Vec3::new(x0, side * (FIELD_HALF_WIDTH + 2.6), 0.004),
+            Vec3::new(x1, side * (FIELD_HALF_WIDTH + 5.0), 0.004),
+            Vec3::new(x0, side * (FIELD_HALF_WIDTH + 5.0), 0.004),
             Rgb::hex(0x35503C),
         );
     }
@@ -1028,7 +1140,9 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
     let tread = 1.30f32;
     let riser = 0.62f32;
     let mut z = 1.18f32;
-    let mut y_front = FIELD_HALF_WIDTH + 2.2;
+    // Sits back from the boards: the old front row was close enough that a man
+    // running out of bounds looked like he was standing in the crowd.
+    let mut y_front = FIELD_HALF_WIDTH + 4.8;
     for row in 0..rows {
         let z_top = z + riser;
         let y_back = y_front + tread;
@@ -1049,23 +1163,8 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
                 Vec3::new(x0, side * y_back, z_top),
                 tone.scale(0.92),
             );
-            // The crowd: blocks of people shoulder to shoulder on the tread.
-            let mut px_i = x0;
-            while px_i < x1 {
-                let len = 2.0 + rand() * 1.4;
-                let color = crowd_colors[(rand() * crowd_colors.len() as f32) as usize
-                    % crowd_colors.len()];
-                let height = 0.52 + rand() * 0.16;
-                let y_crowd = (y_front + 0.30 + rand() * 0.25) * side;
-                mesh.quad(
-                    Vec3::new(px_i, y_crowd, z_top),
-                    Vec3::new(px_i + len, y_crowd, z_top),
-                    Vec3::new(px_i + len, y_crowd, z_top + height),
-                    Vec3::new(px_i, y_crowd, z_top + height),
-                    color.scale(0.85 + rand() * 0.25),
-                );
-                px_i += len + 0.22;
-            }
+            // The crowd is drawn by the broadcast, one body at a time, so it can
+            // move; the stand itself is just concrete here.
         }
         z = z_top;
         y_front = y_back;
@@ -1084,7 +1183,7 @@ fn build_stadium(teams: &[Team; 2]) -> Mesh {
         );
     }
     let y_roof_back = -(y_front + 0.35);
-    let y_roof_front = -(FIELD_HALF_WIDTH + 3.0);
+    let y_roof_front = -(FIELD_HALF_WIDTH + 5.6);
     mesh.quad(
         Vec3::new(x0, y_roof_back, z + 1.9),
         Vec3::new(x1, y_roof_back, z + 1.9),
@@ -1572,3 +1671,90 @@ pub fn vignette(frame: &mut Frame) {
         frame.fill_rect_alpha(0, i, w, 1, INK, alpha * 0.5);
     }
 }
+
+/// One man in the stands.
+struct CrowdFigure {
+    /// Where he stands on the tread of his row.
+    at: Vec3,
+    color: Rgb,
+    /// His own place in the bob, so the house does not rise and fall together.
+    phase: f32,
+    tall: f32,
+    arms: bool,
+}
+
+/// Everybody in the two sidelines, laid out on the same rows the stand is built
+/// from. The bodies are the broadcast's, so they can move; the concrete is not.
+fn build_crowd(teams: &[Team; 2]) -> Vec<CrowdFigure> {
+    let mut seed = 0x5EED_C0DEu32;
+    let mut rand = move || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed >> 8) as f32 / 16_777_215.0
+    };
+    let colors = [
+        teams[0].primary,
+        teams[1].primary,
+        Rgb::hex(0xD8DDE4),
+        Rgb::hex(0x49566A),
+        Rgb::hex(0x27303C),
+        Rgb::hex(0x8C4B3B),
+    ];
+    let rows = 7;
+    let tread = 1.30f32;
+    let riser = 0.62f32;
+    let x0 = -14.0f32;
+    let x1 = 114.0f32;
+    let mut z = 1.18f32;
+    let mut y_front = FIELD_HALF_WIDTH + 4.8;
+    let mut out = Vec::new();
+    for _ in 0..rows {
+        let z_top = z + riser;
+        let y_back = y_front + tread;
+        for side in [-1.0f32, 1.0] {
+            let mut px_i = x0;
+            while px_i < x1 {
+                let gap = 0.74 + rand() * 0.42;
+                if rand() < 0.92 {
+                    let y_crowd = (y_front + 0.30 + rand() * 0.25) * side;
+                    out.push(CrowdFigure {
+                        at: Vec3::new(px_i + rand() * 0.3, y_crowd, z_top),
+                        color: colors[(rand() * colors.len() as f32) as usize % colors.len()],
+                        phase: rand() * std::f32::consts::TAU,
+                        tall: 0.62 + rand() * 0.16,
+                        arms: rand() < 0.12,
+                    });
+                }
+                px_i += gap;
+            }
+        }
+        z = z_top;
+        y_front = y_back;
+    }
+    out
+}
+
+/// Where a camera sits between two shots. Angles take the short way round, so a
+/// zoom out never swings through the back of the stand on the way.
+fn blend_camera(a: &Camera, b: &Camera, t: f32) -> Camera {
+    let t = t.clamp(0.0, 1.0);
+    let mut yaw = b.yaw - a.yaw;
+    while yaw > std::f32::consts::PI {
+        yaw -= std::f32::consts::TAU;
+    }
+    while yaw < -std::f32::consts::PI {
+        yaw += std::f32::consts::TAU;
+    }
+    let mut cam = Camera::new(a.pos + (b.pos - a.pos) * t, a.yaw + yaw * t, a.pitch + (b.pitch - a.pitch) * t);
+    cam.fov = a.fov + (b.fov - a.fov) * t;
+    cam.roll = a.roll + (b.roll - a.roll) * t;
+    cam
+}
+
+/// Smoothstep, so the preview leaves and arrives without a snap at either end.
+fn smooth(t: f32) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+

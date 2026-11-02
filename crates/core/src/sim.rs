@@ -12,6 +12,7 @@
 //! * pass interference, holding while the quarterback is in the pocket, roughing
 //!   the passer, intentional grounding,
 //! * sideline / end line / goal line geometry including safeties.
+use crate::difficulty::Difficulty;
 use crate::field::{self, FIELD_HALF_WIDTH, FIELD_LENGTH};
 use crate::math::{approach_angle, clamp, lerp, Rng, Vec2};
 use crate::playbook::{
@@ -403,6 +404,9 @@ pub struct PlaySim<'a> {
     pub def_control: Option<DefControl>,
     /// Which defender the pad is on, as an index into `players`.
     pub human_defender: Option<usize>,
+    /// How hard the other sideline is playing. Set by the game that owns the
+    /// snap, not by the snap itself.
+    pub difficulty: Difficulty,
     /// The snap waits for the button while this is set. An offense at the line
     /// decides when the ball goes, so sitting in the audible cannot run the play
     /// out from under him.
@@ -567,6 +571,7 @@ impl<'a> PlaySim<'a> {
             control: None,
             def_control: None,
             human_defender: None,
+            difficulty: Difficulty::Easy,
             awaiting_snap: false,
             presnap: Vec::new(),
             best_spot: f32::NEG_INFINITY,
@@ -2044,13 +2049,19 @@ impl<'a> PlaySim<'a> {
     fn steer(&mut self, i: usize, target: Vec2, max_speed: f32, dt: f32) {
         let accel = self.accel_of(i);
         let turn = self.turn_of(i);
+        // A man on the pad is never frozen by a block. He is still being blocked --
+        // he does not get his full speed -- but the stick always moves him, which
+        // is what was wrong with the defensive lineman who could not get off the
+        // line once the computer hiked it.
+        let mine = Some(i) == self.human_defender;
         let p = &mut self.players[i];
-        if p.engaged.is_some() {
+        if p.engaged.is_some() && !mine {
             // Blocked players shuffle rather than run.
             p.vel *= 0.55;
             p.pos += p.vel * dt;
             return;
         }
+        let max_speed = if p.engaged.is_some() { max_speed * 0.7 } else { max_speed };
         let to = target - p.pos;
         let dist = to.length();
         let cap = if dist < 0.45 { max_speed * (dist / 0.45) } else { max_speed };
@@ -2306,7 +2317,9 @@ impl<'a> PlaySim<'a> {
             );
             let fumble_chance = 0.012
                 + (1.0 - carrier_attrs.break_tackle_factor()) * 0.022
-                + (1.0 - carrier_attrs.awareness_factor()) * 0.012;
+                + (1.0 - carrier_attrs.awareness_factor()) * 0.012
+                // A hard defence goes for the ball on the way in.
+                + self.difficulty.fumble_bonus();
             let fumbled = self.rng.chance(fumble_chance);
             let scramble = self.scramble_started && carrier == self.qb;
             let sack = !self.pass_caught
@@ -2679,7 +2692,7 @@ impl<'a> PlaySim<'a> {
             if dist < CATCH_RADIUS * 0.95 {
                 let cov = self.attrs(d).coverage_factor();
                 let catching = self.attrs(d).catching as f32 / 100.0;
-                let pick_chance = (0.035 + cov * 0.11 + catching * 0.06)
+                let pick_chance = (0.035 + cov * 0.11 + catching * 0.06 + self.difficulty.pick_bonus())
                     * if target.is_some() { 1.0 } else { 2.2 };
                 if self.rng.chance(pick_chance) {
                     let thrower = flight.thrower;

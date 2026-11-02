@@ -62,7 +62,7 @@ fn has(args: &[String], name: &str) -> bool {
 }
 
 fn print_help() {
-    println!("7-on-7 No Pads Football — simulation and broadcast renderer");
+    println!("No Pads Football — simulation and broadcast renderer");
     println!();
     println!("USAGE");
     println!("  a7fl sim   [--seed N] [--home IDX] [--away IDX] [--verbose]");
@@ -373,7 +373,7 @@ fn cmd_play(args: &[String]) {
     let seed = num(args, "--seed", 12);
     let (home, away) = pick_teams(args);
     let mut game = GameState::new(home, away, seed);
-    println!("7-ON-7 NO PADS FOOTBALL — {}", game.teams[0].full_name());
+    println!("NO PADS FOOTBALL — {}", game.teams[0].full_name());
     println!("vs {}", game.teams[1].full_name());
     println!("Type a play number to call it, 'a' to let the coach call it, 'q' to quit.");
 
@@ -824,6 +824,9 @@ fn cmd_arcade(args: &[String]) {
                 let teams = league_teams();
                 game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
                 game.set_opening_receiver(if kick.receive { 0 } else { 1 });
+                game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(
+                    settings.difficulty,
+                ));
                 mine = Some(0);
             }
             None => return,
@@ -833,7 +836,8 @@ fn cmd_arcade(args: &[String]) {
     let flip_y = has(args, "--flip-y");
     let mut arcade = arcade::Arcade::new(game, pad, view)
         .with_flip_y(flip_y)
-        .with_camera(settings.camera);
+        .with_camera(settings.camera)
+        .with_lens(settings.lens_zoom, settings.lens_tilt);
     if let Some(mine) = mine {
         arcade = arcade.with_my_team(mine);
     }

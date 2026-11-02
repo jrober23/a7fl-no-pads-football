@@ -179,26 +179,22 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
         frame.fill_rect(turf_x0 as i32, y - 1, (turf_x1 - turf_x0) as i32, 1, PAINT);
     }
 
-    // Painted numbers every ten yards, on both sides of the field.
-    for n in [10, 20, 30, 40, 50, 40, 30, 20, 10] {
-        let idx = [10, 20, 30, 40, 50, 40, 30, 20, 10]
-            .iter()
-            .position(|&v| v == n)
-            .unwrap_or(0);
-        let _ = idx;
-    }
-    let numbers: [(f32, u32, bool); 9] = [
-        (10.0, 40, true),
-        (20.0, 30, true),
-        (30.0, 20, true),
-        (40.0, 10, true),
-        (50.0, 50, true),
-        (60.0, 10, false),
-        (70.0, 20, false),
-        (80.0, 30, false),
-        (90.0, 40, false),
+    // Painted numbers every ten yards, on both sides of the field. Each set faces
+    // the sideline it belongs to, so it reads left to right for the men standing
+    // on that side. The second fifty used to be mirrored as well, which left half
+    // the numbers on both sidelines reading backwards.
+    let numbers: [(f32, u32); 9] = [
+        (10.0, 40),
+        (20.0, 30),
+        (30.0, 20),
+        (40.0, 10),
+        (50.0, 50),
+        (60.0, 10),
+        (70.0, 20),
+        (80.0, 30),
+        (90.0, 40),
     ];
-    for (yard, value, left_half) in numbers {
+    for (yard, value) in numbers {
         let label = format!("{value}");
         let scale = 4;
         let glyph_w = font::text_width(&label, scale) as f32;
@@ -207,7 +203,9 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
             let x = px(yard) as i32;
             let y = (py(y_center) - glyph_w * 0.5) as i32;
             let color = Rgb::hex(0xE8EAE2);
-            let dir = if (side > 0.0) == left_half { 1 } else { -1 };
+            // The far set is the near set turned half a turn, which is what a
+            // number painted for its own sideline looks like from across the field.
+            let dir = if side > 0.0 { 1 } else { -1 };
             draw_rot90(&mut frame, x - 14, y, &label, scale, color, dir, 1);
         }
     }

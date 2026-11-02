@@ -125,7 +125,7 @@ pub struct WindowView {
 impl WindowView {
     fn open(settings: &Settings) -> Option<WindowView> {
         let mut window = minifb::Window::new(
-            "7-on-7 No Pads Football",
+            "No Pads Football",
             settings.width,
             settings.height,
             minifb::WindowOptions {

@@ -1,4 +1,4 @@
-# 7-on-7 No Pads Football
+# No Pads Football
 
 A playable no-pads football game written in Rust: a complete 7-on-7 rules engine,
 a simulated season-length game, and a software-rendered broadcast package in the
@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.20.1-windows-x86_64.zip` from the
+Grab `a7fl-v0.21.0-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -495,6 +495,31 @@ Controller support comes from `gilrs` and is a default-on Cargo feature. On Linu
 the crate needs the udev headers (`sudo apt install libudev-dev`); build with
 `--no-default-features` on a machine without them, and everything except the
 controller still works (the keyboard and the window do not depend on it).
+
+### Difficulty, the lens and the crowd
+
+The settings screen carries three levels. **Easy** is the game as it shipped: the
+other sideline calls a sensible mix and plays what is in front of it. **Normal**
+throws on early downs and pushes the ball downfield instead of grinding for the
+sticks, and is quicker to go for it on fourth down. **Hard** adds a defence that
+hunts the ball: it presses and plays man on third down, and it goes for the strip,
+so a hard side takes the ball away more often, on the ground and in the air. The
+level lives in `settings.cfg` with everything else.
+
+**Lens** opens a live preview: left and right zoom, up and down tilt, X resets. It is
+the real broadcast camera on a real formation rather than a diagram, and the two
+numbers are saved and applied to every camera mode.
+
+The crowd is built man by man now, and it moves: every body bobs on its own phase,
+and a few put their arms up on the cheer. The bleachers also sit five yards further
+back from the advertising boards, so a man running out of bounds is not standing in
+the front row any more. Field numbers are painted for the sideline they belong to,
+so each set reads left to right from its own side of the ground.
+
+Replays start at the snap rather than at the line. When the tape runs out the picture
+holds on the last frame, then sinks to black before the call sheet comes back. While
+the route tree is up for the pre-snap preview, the scoreboard gets out of the way so
+the whole call can be seen.
 
 ## What is implemented
 

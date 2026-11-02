@@ -216,9 +216,8 @@ fn start_screen(
 
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
         night(&mut frame);
-        centered(&mut frame, 34, "7-ON-7", 7, accent());
+        centered(&mut frame, 34, "NO PADS", 7, accent());
         centered(&mut frame, 100, "NO PADS FOOTBALL", 2, paper());
-        centered(&mut frame, 122, "SEVEN ON SEVEN", 1, dim());
         frame.fill_rect(150, 168, 340, 1, Rgb::new(48, 92, 148));
         for (i, label) in labels.iter().enumerate() {
             let y = 192 + i as i32 * 30;
@@ -254,7 +253,8 @@ fn settings_screen(
     pad: &mut Option<&mut Pad>,
     settings: &mut Settings,
 ) -> Option<()> {
-    const ROWS: usize = 4;
+    const ROWS: usize = 6;
+    const DIFFICULTY_LABELS: [&str; 3] = ["EASY", "NORMAL", "HARD"];
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut last = Instant::now();
@@ -288,12 +288,26 @@ fn settings_screen(
                     changed = true;
                 }
                 1 => {
+                    settings.difficulty =
+                        ((settings.difficulty as isize + dir).rem_euclid(3)) as usize;
+                    changed = true;
+                }
+                2 => {
+                    // The lens opens its own live preview: two numbers are easier
+                    // to judge against the picture than in a menu row.
+                    if forward {
+                        lens_screen(view, pad, settings);
+                        last = Instant::now();
+                        continue;
+                    }
+                }
+                3 => {
                     let n = RESOLUTIONS.len() as isize;
                     let i = ((settings.resolution_index() as isize + dir).rem_euclid(n)) as usize;
                     settings.set_resolution(i);
                     changed = true;
                 }
-                2 => {
+                4 => {
                     settings.fullscreen = !settings.fullscreen;
                     changed = true;
                 }
@@ -317,6 +331,8 @@ fn settings_screen(
         centered(&mut frame, 30, "SETTINGS", 3, accent());
         let rows = [
             ("CAMERA", CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string()),
+            ("DIFFICULTY", DIFFICULTY_LABELS[settings.difficulty % 3].to_string()),
+            ("LENS", settings.lens_label()),
             ("RESOLUTION", settings.resolution_label()),
             ("DISPLAY", settings.display_label().to_string()),
             ("BACK", String::new()),
@@ -710,3 +726,80 @@ mod tests {
         centered(&mut frame, 300, "EXHIBITION", 2, accent());
     }
 }
+
+/// The lens screen: the shot the player is tuning, live, with the two numbers
+/// that make it. Left and right zoom, up and down tilt, X puts it back.
+fn lens_screen(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settings) {
+    use a7fl_core::playbook::{defensive_playbook, playbook};
+    use a7fl_core::sim::{PlaySim, SnapSetup};
+    use a7fl_core::team::league_teams;
+    use a7fl_render::broadcast::{Broadcast, CameraMode};
+
+    let teams = league_teams();
+    let home = teams[0].clone();
+    let away = teams[1].clone();
+    let setup = SnapSetup {
+        los: 35.0,
+        ball_y: 0.0,
+        direction: 1,
+        down: 1,
+        to_go: 10.0,
+        seed: 7,
+        offense_team: 0,
+        defense_team: 1,
+        is_try: false,
+    };
+    let book = playbook();
+    let dbook = defensive_playbook();
+    let mut sim = PlaySim::new(&home, &away, &book[0], &dbook[0], &setup);
+    // Hold at the line, so the preview is a formation rather than a play running
+    // itself out while the player is still choosing a zoom.
+    sim.await_snap(true);
+    for _ in 0..20 {
+        sim.step(1.0 / 60.0);
+    }
+
+    // The preview borrows the teams for its sim, so the picture gets its own copy.
+    let mut broadcast = Broadcast::new(CANVAS_W, CANVAS_H, [home.clone(), away.clone()]);
+    broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b || input.pressed.start || input.pressed.a {
+            settings.save();
+            break;
+        }
+        let mut changed = false;
+        if input.stick.x.abs() > 0.25 {
+            settings.lens_zoom = (settings.lens_zoom + input.stick.x * dt * 0.8).clamp(0.6, 1.8);
+            changed = true;
+        }
+        if input.stick.y.abs() > 0.25 {
+            settings.lens_tilt = (settings.lens_tilt - input.stick.y * dt * 0.6).clamp(-0.35, 0.45);
+            changed = true;
+        }
+        if input.pressed.x {
+            settings.lens_zoom = 1.0;
+            settings.lens_tilt = 0.0;
+            changed = true;
+        }
+        if changed {
+            broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
+        }
+        let mut frame = broadcast.live_frame(&sim, CameraMode::Classic);
+        frame.fill_rect_alpha(10, 10, 190, 48, Rgb::new(8, 12, 18), 0.72);
+        frame.text_shadowed(18, 16, &format!("ZOOM {:.2}", settings.lens_zoom), 2, paper(), 1);
+        frame.text_shadowed(18, 38, &format!("TILT {:+.2}", settings.lens_tilt), 2, paper(), 1);
+        let help = "[STICK] ZOOM / TILT   [X] RESET   [B] DONE".to_string();
+        if !view.show(&mut frame, &[help]) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    view.reset();
+}
+

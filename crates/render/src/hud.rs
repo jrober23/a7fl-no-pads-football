@@ -179,11 +179,11 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     font::draw_styled(frame, dx + 18, by + dcard_h - 44, "PLAY CLOCK", 2, MUTED, 1, false);
 
     // ---------------------------- league badge -----------------------------
-    let lw = 136;
+    let lw = 178;
     let lx = w - lw - 28;
     frame.rounded_rect(lx, 24, lw, 46, 8, RED);
-    font::draw_styled(frame, lx + 16, 32, "7-ON-7", 3, WHITE, 2, true);
-    font::draw_styled(frame, lx + 16, 58, "NO PADS", 2, WHITE, 1, false);
+    font::draw_styled(frame, lx + 16, 32, "NO PADS", 3, WHITE, 2, true);
+    font::draw_styled(frame, lx + 16, 58, "FOOTBALL", 2, WHITE, 1, false);
 
     // ------------------------------- ticker --------------------------------
     let ty = h - 44;

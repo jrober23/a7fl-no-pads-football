@@ -20,11 +20,24 @@ pub struct Settings {
     pub height: usize,
     /// A borderless window the size of the display, rather than a frame around it.
     pub fullscreen: bool,
+    /// The lens the player tuned on the lens screen. 1.0 / 0.0 is the shipped shot.
+    pub lens_zoom: f32,
+    pub lens_tilt: f32,
+    /// 0 easy, 1 normal, 2 hard.
+    pub difficulty: usize,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Settings { camera: 0, width: RESOLUTIONS[1].0, height: RESOLUTIONS[1].1, fullscreen: false }
+        Settings {
+            camera: 0,
+            width: RESOLUTIONS[1].0,
+            height: RESOLUTIONS[1].1,
+            fullscreen: false,
+            lens_zoom: 1.0,
+            lens_tilt: 0.0,
+            difficulty: 0,
+        }
     }
 }
 
@@ -44,6 +57,11 @@ impl Settings {
 
     pub fn resolution_label(&self) -> String {
         format!("{}x{}", self.width, self.height)
+    }
+
+    /// Where the lens sits, for the settings card.
+    pub fn lens_label(&self) -> String {
+        format!("{:.2} / {:+.2}", self.lens_zoom, self.lens_tilt)
     }
 
     pub fn display_label(&self) -> &'static str {
@@ -67,8 +85,14 @@ impl Settings {
 
     pub fn text(&self) -> String {
         format!(
-            "# A7FL settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\n",
-            self.camera, self.width, self.height, self.fullscreen as u8
+            "# A7FL settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\n",
+            self.camera,
+            self.width,
+            self.height,
+            self.fullscreen as u8,
+            self.lens_zoom,
+            self.lens_tilt,
+            self.difficulty
         )
     }
 
@@ -102,6 +126,21 @@ impl Settings {
                 "fullscreen" => {
                     out.fullscreen = matches!(value, "1" | "true" | "yes" | "on");
                 }
+                "zoom" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        out.lens_zoom = v;
+                    }
+                }
+                "tilt" => {
+                    if let Ok(v) = value.parse::<f32>() {
+                        out.lens_tilt = v;
+                    }
+                }
+                "difficulty" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        out.difficulty = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -114,6 +153,12 @@ impl Settings {
         if self.camera > 8 {
             self.camera = 0;
         }
+        self.difficulty %= 3;
+        // A hand-edited file must not put the lens inside the turf.
+        self.lens_zoom =
+            if self.lens_zoom.is_finite() { self.lens_zoom.clamp(0.6, 1.8) } else { 1.0 };
+        self.lens_tilt =
+            if self.lens_tilt.is_finite() { self.lens_tilt.clamp(-0.35, 0.45) } else { 0.0 };
         if self.width < 320 || self.height < 180 {
             self.width = RESOLUTIONS[1].0;
             self.height = RESOLUTIONS[1].1;
@@ -161,7 +206,15 @@ mod tests {
 
     #[test]
     fn a_round_trip_keeps_every_setting() {
-        let s = Settings { camera: 2, width: 1600, height: 900, fullscreen: true };
+        let s = Settings {
+            camera: 2,
+            width: 1600,
+            height: 900,
+            fullscreen: true,
+            lens_zoom: 1.25,
+            lens_tilt: 0.1,
+            difficulty: 2,
+        };
         let back = Settings::parse(&s.text());
         assert_eq!(back.camera, s.camera);
         assert_eq!(back.width, s.width);

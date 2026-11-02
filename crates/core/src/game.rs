@@ -6,6 +6,7 @@
 //! [`PlayRecord`] so the broadcast renderer can replay it frame-for-frame.
 
 use crate::ai::{self, FourthDownChoice};
+use crate::difficulty::Difficulty;
 use crate::field::{self, FIELD_LENGTH};
 use crate::math::{clamp, Rng};
 use crate::playbook::{DefCall, Play};
@@ -168,9 +169,17 @@ pub struct GameState {
     pub clock_stopped: bool,
     pub no_timeouts_for_leader: bool,
     pub home_attack_dir: i8,
+    /// How the other sideline plays: the coordinator's calls and how hard the
+    /// defence goes for the ball.
+    pub difficulty: Difficulty,
 }
 
 impl GameState {
+    /// Set how hard the other sideline plays, from the settings screen.
+    pub fn set_difficulty(&mut self, difficulty: Difficulty) {
+        self.difficulty = difficulty;
+    }
+
     /// Set the side that takes the opening throw-off. The toss happens on the
     /// front end now, so the game is told the answer rather than drawing it.
     pub fn set_opening_receiver(&mut self, team: usize) {
@@ -220,6 +229,7 @@ impl GameState {
             clock_stopped: true,
             no_timeouts_for_leader: false,
             home_attack_dir: 1,
+            difficulty: Difficulty::Easy,
         };
         game.refresh_direction();
         game.commentary.push(format!(
@@ -511,6 +521,7 @@ impl GameState {
                 &def,
                 &setup,
             );
+            sim.difficulty = self.difficulty;
             drive(&mut sim);
             match sim.result.clone() {
                 Some(r) => r,

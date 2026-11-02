@@ -3,6 +3,7 @@
 
 use std::sync::OnceLock;
 
+use crate::difficulty::Difficulty;
 use crate::math::Rng;
 use crate::playbook::{defensive_playbook, playbook, DefCall, Play, PlayFamily};
 use crate::sim::PlayOutcome;
@@ -140,6 +141,17 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
         .clone();
     }
 
+    // A normal or hard coordinator is chasing the end zone, not just the sticks:
+    // it throws on early downs rather than grinding the ball for four yards.
+    let push = g.difficulty.aggression();
+    if push > 0.0 && s.down <= 2 && s.to_go >= 5.0 && rng.chance(0.30 + 0.30 * push) {
+        return pick_family(
+            &mut rng,
+            &[PlayFamily::DropbackPass, PlayFamily::PlayAction, PlayFamily::QuickPass],
+        )
+        .clone();
+    }
+
     // Normal down and distance: establish the run on early downs.
     if s.down <= 2 && s.to_go <= 6.0 && rng.chance(0.55) {
         return pick_family(
@@ -194,6 +206,16 @@ pub fn choose_defense(g: &GameState, seed: u64) -> DefCall {
     if s.to_go >= 9.0 || (s.late_and_close() && s.score_diff > 0) {
         return if rng.chance(0.5) { by_name("COVER 3 ZONE") } else { by_name("COVER 4 ZONE") };
     }
+    // A hard side hunts the ball: it presses and plays man rather than keeping
+    // everything in front and waiting for the throw to be incomplete.
+    if g.difficulty == Difficulty::Hard {
+        if s.down == 3 {
+            return if rng.chance(0.60) { by_name("PRESS BAIL") } else { by_name("COVER 1 MAN") };
+        }
+        if s.to_go < 12.0 && rng.chance(0.35) {
+            return by_name("COVER 1 MAN");
+        }
+    }
     // Third down: mix.
     if s.down == 3 {
         return if rng.chance(0.45) {
@@ -229,6 +251,8 @@ pub fn choose_fourth_down(g: &GameState, seed: u64) -> FourthDownChoice {
         0.12
     };
     let mut rng = Rng::new(seed ^ 0x4D_0000);
+    // A hard side backs itself on fourth down.
+    let go_chance = if g.difficulty == Difficulty::Hard { go_chance + 0.08 } else { go_chance };
     if rng.chance(go_chance) {
         FourthDownChoice::GoForIt
     } else {
