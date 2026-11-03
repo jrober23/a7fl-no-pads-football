@@ -1,0 +1,28 @@
+[package]
+name = "bevy_view_spike"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Spike: Bevy 0.20 as the window, input and presentation shell for 7 on 7"
+
+# Its own workspace, so the game's `cargo test --all-targets` never builds Bevy.
+[workspace]
+
+[dependencies]
+nopads_core = { path = "../../crates/core" }
+nopads_render = { path = "../../crates/render" }
+
+# Bevy with the smallest feature set that still opens a window and draws a
+# sprite. No Wayland (no headers here), no audio, no gamepad (needs libudev),
+# no PBR/gltf/animation: this shell only shows a 2D texture.
+bevy = { version = "0.20", default-features = false, features = [
+  "bevy_winit",
+  "bevy_window",
+  "bevy_render",
+  "bevy_core_pipeline",
+  "bevy_sprite",
+  "bevy_asset",
+  "bevy_log",
+  "x11",
+  "multi_threaded",
+] }
