@@ -170,6 +170,64 @@ impl Frame {
         }
     }
 
+    /// How far the fill at `row` is inset by the corner radius.
+    fn corner_inset(row: i32, h: i32, r: i32) -> i32 {
+        if r <= 0 || h <= 0 {
+            return 0;
+        }
+        let from_edge = row.min(h - 1 - row);
+        if from_edge >= r {
+            return 0;
+        }
+        let dy = (r - from_edge) as f32 - 0.5;
+        let inner = (r as f32 * r as f32 - dy * dy).max(0.0).sqrt();
+        (r as f32 - inner).round() as i32
+    }
+
+    /// A panel rather than a slab: a soft shadow, the colour running from a lit
+    /// top to a shaded bottom, a hairline edge and a highlight along the top.
+    ///
+    /// This is what an overlay is built from now. Flat rectangles of one colour
+    /// were the other half of why the broadcast chrome read as an old console
+    /// menu: nothing in it had depth, light or an edge.
+    #[allow(clippy::too_many_arguments)]
+    pub fn panel(
+        &mut self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        radius: i32,
+        top: Rgb,
+        bottom: Rgb,
+        edge: Rgb,
+        shadow: f32,
+    ) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let r = radius.max(0).min(w / 2).min(h / 2);
+        if shadow > 0.0 {
+            self.rounded_rect_alpha(x - 2, y - 1, w + 4, h + 5, r + 2, Rgb::BLACK, shadow * 0.45);
+        }
+        if r > 0 {
+            self.rounded_rect(x - 1, y - 1, w + 2, h + 2, r + 1, edge);
+        }
+        for row in 0..h {
+            let t = if h > 1 {
+                row as f32 / (h - 1) as f32
+            } else {
+                0.0
+            };
+            let inset = Self::corner_inset(row, h, r);
+            self.fill_rect(x + inset, y + row, w - inset * 2, 1, top.lerp(bottom, t));
+        }
+        if r > 0 {
+            let lit = top.lerp(Rgb::new(255, 255, 255), 0.22);
+            self.fill_rect(x + r, y, w - r * 2, 1, lit);
+        }
+    }
+
     pub fn text(&mut self, x: i32, y: i32, text: &str, scale: usize, color: Rgb) {
         font::draw(self, x, y, text, scale, color);
     }

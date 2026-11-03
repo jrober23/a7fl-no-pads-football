@@ -173,6 +173,10 @@ pub fn draw(frame: &mut Frame, x: i32, y: i32, text: &str, scale: usize, color: 
 }
 
 /// `weight` of 2 or more thickens strokes; `italic` slants the glyph.
+///
+/// Anything above one pixel a stroke goes through the smoothed path: a 5x7 glyph
+/// blown up three times is a staircase of whole pixels, and a staircase of whole
+/// pixels is what made this read as an eight-bit menu rather than a broadcast.
 pub fn draw_styled(
     frame: &mut Frame,
     x: i32,
@@ -184,6 +188,10 @@ pub fn draw_styled(
     italic: bool,
 ) {
     let scale = scale.max(1);
+    if scale > 1 && !text.is_empty() {
+        draw_antialiased(frame, x, y, text, scale, color, weight, italic);
+        return;
+    }
     let mut pen = x;
     for ch in text.chars() {
         let rows = glyph(ch);
@@ -257,5 +265,140 @@ mod tests {
         // The foot runs along the baseline back toward where the word starts.
         assert!(ink(&frame, 20, 18), "the foot of the L is missing");
         assert!(!ink(&frame, 20, 6), "the L painted a foot it does not have");
+    }
+}
+
+/// Draw a glyph run through a bilinear filter.
+///
+/// Supersampling cannot smooth a bitmap: every block edge lands exactly on a
+/// destination pixel boundary, so every sample is all-ink or all-empty and the
+/// coverage comes back 0 or 1. Filtering can. The run is laid out at one pixel per
+/// glyph pixel and sampled at each destination pixel's centre, which leaves
+/// two-level ramps along every edge — the difference between type that reads as a
+/// blown-up bitmap and type that reads as drawn.
+fn draw_antialiased(
+    frame: &mut Frame,
+    x: i32,
+    y: i32,
+    text: &str,
+    scale: usize,
+    color: Rgb,
+    weight: usize,
+    italic: bool,
+) {
+    let chars = text.chars().count();
+    if chars == 0 {
+        return;
+    }
+    let gw = chars * (GLYPH_W + 1) - 1;
+    let gh = GLYPH_H;
+    let mut ink = vec![0f32; gw * gh];
+
+    let mut pen = 0usize;
+    for ch in text.chars() {
+        let rows = glyph(ch);
+        for (ry, bits) in rows.iter().enumerate() {
+            for rx in 0..GLYPH_W {
+                if bits & (1 << (GLYPH_W - 1 - rx)) == 0 {
+                    continue;
+                }
+                let slant = if italic { (gh - 1 - ry) / 3 } else { 0 };
+                for w in 0..weight.max(1) {
+                    let cx = pen + rx + slant + w;
+                    if cx < gw {
+                        ink[ry * gw + cx] = 1.0;
+                    }
+                }
+            }
+        }
+        pen += GLYPH_W + 1;
+    }
+
+    let w = text_width(text, scale);
+    let h = text_height(scale);
+    let sample = |ix: i32, iy: i32| -> f32 {
+        if ix < 0 || iy < 0 || ix >= gw as i32 || iy >= gh as i32 {
+            0.0
+        } else {
+            ink[iy as usize * gw + ix as usize]
+        }
+    };
+    let step = scale as f32;
+    // Hard coverage first: the glyph pixel under each destination pixel.
+    let mut cov = vec![0f32; w * h];
+    for dy in 0..h {
+        let gy = ((dy as f32 + 0.5) / step).floor() as i32;
+        for dx in 0..w {
+            let gx = ((dx as f32 + 0.5) / step).floor() as i32;
+            cov[dy * w + dx] = sample(gx, gy);
+        }
+    }
+    // Then soften only the boundary. Area sampling a bitmap at a whole-number
+    // scale cannot give partial coverage on its own (the blocks line up), and
+    // blurring the whole run turns a one-pixel stroke into grey soup. Smoothing
+    // just the pixels that sit on a coverage edge leaves the stroke solid and
+    // softens its outline, which is what drawn type looks like.
+    let hard = cov.clone();
+    let at = |x: i32, y: i32| -> f32 {
+        if x < 0 || y < 0 || x >= w as i32 || y >= h as i32 {
+            0.0
+        } else {
+            hard[y as usize * w + x as usize]
+        }
+    };
+    for dy in 0..h as i32 {
+        for dx in 0..w as i32 {
+            let c = at(dx, dy);
+            let around =
+                (at(dx - 1, dy) + at(dx + 1, dy) + at(dx, dy - 1) + at(dx, dy + 1)) * 0.25;
+            if (around - c).abs() > 0.01 {
+                cov[dy as usize * w + dx as usize] = c + (around - c) * 0.5;
+            }
+        }
+    }
+    for dy in 0..h {
+        for dx in 0..w {
+            let coverage = cov[dy * w + dx];
+            if coverage <= 0.02 {
+                continue;
+            }
+            frame.blend(x + dx as i32, y + dy as i32, color, coverage.min(1.0));
+        }
+    }
+}
+
+#[cfg(test)]
+mod smooth_tests {
+    use super::*;
+
+    #[test]
+    fn a_blown_up_glyph_lands_between_full_and_empty_on_its_edges() {
+        let mut frame = Frame::new(160, 40);
+        let ink = Rgb::new(255, 255, 255);
+        draw_styled(&mut frame, 4, 4, "AX", 3, ink, 1, false);
+        let partial = frame
+            .color
+            .iter()
+            .filter(|c| c.r > 0 && c.r < 255)
+            .count();
+        assert!(
+            partial > 8,
+            "the type is still a staircase: only {partial} partial pixels"
+        );
+        // The inside of a stroke is still solid ink, not a grey wash.
+        let solid = frame.color.iter().filter(|c| c.r == 255).count();
+        assert!(solid > 40, "the strokes went grey: {solid} solid pixels");
+    }
+
+    #[test]
+    fn smoothing_keeps_the_text_where_the_crisp_path_puts_it() {
+        let mut smooth = Frame::new(120, 30);
+        let mut crisp = Frame::new(120, 30);
+        draw_styled(&mut smooth, 6, 6, "BOS 12", 3, Rgb::new(255, 0, 0), 1, false);
+        // The same string at 1x, then tripled, is where the layout came from.
+        draw_styled(&mut crisp, 6, 6, "BOS 12", 1, Rgb::new(255, 0, 0), 1, false);
+        let painted = |f: &Frame| f.color.iter().filter(|c| c.r > 60).count();
+        assert!(painted(&smooth) > painted(&crisp) * 4, "the layout drifted");
+        assert_eq!(text_width("BOS 12", 3), 6 * 6 * 3 - 3);
     }
 }

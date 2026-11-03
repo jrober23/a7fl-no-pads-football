@@ -4,3 +4,6 @@
 *.gif
 !/docs/**/*.png
 !/docs/**/*.gif
+
+# Rendered comparison shots people ask for in chat
+artifacts/

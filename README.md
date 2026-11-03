@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.18-windows-x86_64.zip` from the
+Grab `7on7-v0.25.19-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -82,7 +82,27 @@ the event loop and the swap chain, and the two meet over a channel that carries 
 frame one way and the pad the other. Nothing about the picture changes, so a
 controller still works and every keyboard binding is the same. This is off by
 default and needs a GPU, which is exactly the property the default build is built
-around not needing. With no display it says so and falls back to the terminal. Add `--flip-y` if your pad
+around not needing. With no display it says so and falls back to the terminal.
+
+### The look
+
+The picture is treated before it is handed over, in three passes that cost about
+6.5 ms a frame at the canvas size here:
+
+- **Soft edges.** Hard polygon edges stepping a whole pixel are the loudest
+  early-3D tell. Brightness edges are found and blended across, more on a real
+  edge and less inside texture detail.
+- **Glow.** The brightest parts of the picture bleed a little — the white of the
+  lines in sun, the score bars, lit jerseys. The bright pass is quarter-sized
+  before it is blurred, so it costs a fraction of the frame.
+- **Grade.** A gentle vignette, so the eye sits on the middle of the play.
+
+The overlay is drawn afterwards, never through it, so a score bug stays crisp with
+soft edges of its own rather than going through the same wash as the grass.
+Chrome is built from a painted panel — a shadow, a lit top shading to a dark
+bottom, a hairline edge and a highlight — rather than a flat rectangle, and type
+above one pixel is drawn with soft outlines instead of a staircase of whole
+pixels while its strokes stay solid. Add `--flip-y` if your pad
 reports its stick's vertical axis the other way round. With no controller attached the
 keyboard drives it, so the game is always playable.
 

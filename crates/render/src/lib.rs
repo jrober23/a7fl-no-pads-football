@@ -22,6 +22,7 @@ pub mod hud;
 pub mod passing;
 pub mod playsheet;
 pub mod players;
+pub mod post;
 pub mod raster;
 pub mod scene;
 pub mod terminal;

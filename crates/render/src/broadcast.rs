@@ -377,6 +377,10 @@ impl Broadcast {
             self.paint_ball_marker(&mut frame, &camera, bp, bz);
         }
 
+        // The picture gets its treatment before the overlay: type and panels are
+        // drawn over the top, so they stay crisp while the world goes soft.
+        crate::post::finish(&mut frame);
+
         if overlay {
             let banner = self.banner_for_scrimmage(record);
             let caption = Some(record.result.description.clone());
@@ -444,6 +448,8 @@ impl Broadcast {
             (players, ball, camera)
         };
         let mut frame = self.paint_throw_off(&players, ball, camera);
+
+        crate::post::finish(&mut frame);
 
         if overlay {
             let banner = if record.result.touchdown {
@@ -651,6 +657,7 @@ impl Broadcast {
             self.scene.draw_mesh(&mut frame, &mesh, &camera);
         }
         self.paint_ball_marker(&mut frame, &camera, ball.0, ball.1);
+        crate::post::finish(&mut frame);
         frame
     }
 
@@ -780,6 +787,10 @@ impl Broadcast {
             }
         }
         self.draw_bodies(&mut frame, &camera, &players);
+        // The treatment goes on the world here, before the overlays: the flag, the
+        // ball marker and the result word are drawn over it, so their colours stay
+        // exact and their edges stay sharp.
+        crate::post::finish(&mut frame);
         if let Some(flag) = &sim.flag {
             self.paint_flag(&mut frame, &camera, flag, sim.t - sim.flag_at);
         }
@@ -1787,7 +1798,14 @@ mod tests {
         let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
         let mut broadcast = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
         let clean = broadcast.live_frame(&sim, CameraMode::Broadcast);
-        let amber = |f: &Frame| f.color.iter().filter(|c| **c == hud::YELLOW).count();
+        // Amber, including the soft edges that anti-aliased type leaves behind:
+        // the flag is a marker over grass, not a pixel-exact shape.
+        let amber = |f: &Frame| {
+            f.color
+                .iter()
+                .filter(|c| c.r > 180 && c.g > 140 && c.b < 140)
+                .count()
+        };
 
         sim.flag = Some(nopads_core::rules::PenaltyCall::new(
             nopads_core::rules::PenaltyKind::Holding,

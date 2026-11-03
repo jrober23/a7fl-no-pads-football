@@ -147,7 +147,17 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     let row_h = 70;
     let bx = 28;
     let by = h - row_h * 2 - 56;
-    frame.fill_rect_alpha(bx - 4, by - 4, bug_w + 8, row_h * 2 + 8, INK, 0.55);
+    frame.panel(
+        bx - 6,
+        by - 6,
+        bug_w + 12,
+        row_h * 2 + 12,
+        9,
+        Rgb::hex(0x1B2432),
+        Rgb::hex(0x0A0E15),
+        PANEL_EDGE,
+        0.6,
+    );
     team_row(frame, bx, by, bug_w, row_h, &game.teams[0], state.score[0], state.possession == 0, game.timeouts[0]);
     team_row(frame, bx, by + row_h, bug_w, row_h, &game.teams[1], state.score[1], state.possession == 1, game.timeouts[1]);
     frame.fill_rect(bx, by + row_h - 2, bug_w, 2, INK);
@@ -157,7 +167,17 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     let dx = bx + bug_w + 16;
     let dcard_w = 300;
     let dcard_h = row_h * 2;
-    frame.fill_rect_alpha(dx, by, dcard_w, dcard_h, INK, 0.62);
+    frame.panel(
+        dx,
+        by,
+        dcard_w,
+        dcard_h,
+        9,
+        Rgb::hex(0x18202C),
+        Rgb::hex(0x0A0E15),
+        PANEL_EDGE,
+        0.55,
+    );
     frame.fill_rect(dx, by, 4, dcard_h, game.teams[state.possession].primary);
     font::draw_styled(frame, dx + 18, by + 12, &state.down_and_distance(), 4, WHITE, 1, false);
     let side = if state.yards_to_goal > 50.0 { "OWN" } else { "OPP" };
@@ -188,8 +208,9 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
 
     // ------------------------------- ticker --------------------------------
     let ty = h - 44;
-    frame.fill_rect_alpha(0, ty, w, 44, INK, 0.78);
+    frame.gradient_rect(0, ty, w, 44, Rgb::hex(0x141B26), Rgb::hex(0x080B10));
     frame.fill_rect(0, ty, w, 2, RED);
+    frame.fill_rect(0, ty + 2, w, 1, Rgb::hex(0x3A4A5E));
     let ticker = caption
         .map(|s| s.to_string())
         .or_else(|| game.log.last().map(|r| r.description().to_string()))
@@ -204,9 +225,20 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
         let bh = 128;
         let bx = (w - bw) / 2;
         let by = 156;
-        frame.fill_rect_alpha(bx - 6, by - 6, bw + 12, bh + 12, INK, 0.72);
-        frame.gradient_rect(bx, by, bw, bh, b.color, b.color.scale(0.5));
-        frame.fill_rect(bx, by, bw, 5, WHITE);
+        // A painted card: rounded, lifted off the picture by its own shadow, the
+        // club colour lit at the top and shading down, with a thin rule under it.
+        frame.panel(
+            bx,
+            by,
+            bw,
+            bh,
+            12,
+            b.color.lerp(Rgb::hex(0xFFFFFF), 0.14),
+            b.color.scale(0.38),
+            b.color.scale(0.8),
+            0.75,
+        );
+        frame.fill_rect(bx + 14, by + 6, bw - 28, 3, WHITE);
         font::draw_centered(frame, bx + bw / 2, by + 26, &b.title.to_uppercase(), 6, WHITE, 2);
         if !b.subtitle.is_empty() {
             let sub = b.subtitle.to_uppercase();
@@ -351,7 +383,17 @@ pub fn draw_scoreboard(frame: &mut Frame, s: &Scoreboard) {
     let row_h = 19;
     let clock_w = 74;
     let h = row_h * 2 + 14;
-    frame.fill_rect_alpha(x - 4, y - 4, row_w + clock_w + 14, h + 8, INK, 0.74);
+    frame.panel(
+        x - 6,
+        y - 6,
+        row_w + clock_w + 20,
+        h + 12,
+        8,
+        Rgb::hex(0x1B2432),
+        Rgb::hex(0x0A0E15),
+        PANEL_EDGE,
+        0.55,
+    );
 
     for t in 0..2 {
         let ty = y + t as i32 * row_h;
@@ -405,8 +447,18 @@ pub fn draw_stats_panel(frame: &mut Frame, game: &GameState, title: &str) {
     let panel_h = 520;
     let x = (w - panel_w) / 2;
     let y = (h - panel_h) / 2;
-    frame.fill_rect(x, y, panel_w, panel_h, PANEL);
-    frame.fill_rect(x, y, panel_w, 6, RED);
+    frame.panel(
+        x,
+        y,
+        panel_w,
+        panel_h,
+        14,
+        Rgb::hex(0x1C2533),
+        Rgb::hex(0x0B1017),
+        PANEL_EDGE,
+        0.8,
+    );
+    frame.fill_rect(x + 14, y + 6, panel_w - 28, 4, RED);
     font::draw_centered(frame, x + panel_w / 2, y + 26, title, 4, WHITE, 2);
 
     let hdr_y = y + 78;
