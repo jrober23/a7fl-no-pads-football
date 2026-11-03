@@ -178,6 +178,20 @@ pub struct GameState {
     pub difficulty: Difficulty,
 }
 
+/// Who gets the six points on a touchdown.
+///
+/// Normally the side with the ball. On a return -- an interception or a fumble
+/// recovered by the defense -- the men who scored are the men who took it away,
+/// and the play is booked as a touchdown rather than as the takeaway, so the
+/// turnover is what says which is which.
+fn touchdown_scorer(turnover: bool, offense: usize, defense: usize) -> usize {
+    if turnover {
+        defense
+    } else {
+        offense
+    }
+}
+
 impl GameState {
     /// Set how hard the other sideline plays, from the settings screen.
     /// Set the length of a quarter, in seconds. It has to be set before the
@@ -661,13 +675,11 @@ impl GameState {
 
         // Score-keeping first: a touchdown overrides normal down logic.
         if result.touchdown {
-            // An interception run back is the defense's six points, not the
-            // offense's: the men who scored are the men who were defending.
-            let scoring = if result.outcome == crate::sim::PlayOutcome::Interception {
-                defense
-            } else {
-                offense
-            };
+            // A return is the defense's six points, not the offense's: the men who
+            // scored are the men who were defending. A return that reaches the end
+            // zone is booked as a touchdown, so the play's outcome alone cannot
+            // tell them apart -- the turnover can.
+            let scoring = touchdown_scorer(result.turnover, offense, defense);
             self.apply_score(scoring, 6);
             self.drive.points += 6;
             self.drive.yards += result.yards;
@@ -1240,7 +1252,18 @@ mod tests {
             last_q = g.quarter;
             guard += 1;
         }
-        assert!(g.quarter >= 4, "game ended in quarter {}", g.quarter);
+        // Five touchdowns before the end of the first quarter ends a game by the
+        // mercy rule, so a short game is not a failure. A game that stops early
+        // without that lead is.
+        let diff = (g.score[0] as i32 - g.score[1] as i32).abs();
+        assert!(
+            g.quarter >= 4 || (g.over && diff >= 30),
+            "game ended in quarter {} at {} - {} (over {})",
+            g.quarter,
+            g.score[0],
+            g.score[1],
+            g.over
+        );
     }
 
     #[test]

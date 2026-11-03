@@ -47,6 +47,10 @@ struct RenderPlayer {
     speed: f32,
     carrying: bool,
     blocking: bool,
+    /// Where his hands are, across his body, for a blocker on a rusher.
+    hands: f32,
+    /// 0..1: hands up, walking the man in front of him back upfield.
+    arms_up: f32,
     down: bool,
     /// 0..1 through a tackle, for the two men in it: one wrapping, one going down.
     wrap: f32,
@@ -149,8 +153,9 @@ impl Broadcast {
         self.venue = venue;
         self.scene.lighting = venue.lighting();
         let stands = build_stadium(&self.teams, venue);
+        let bowl = matches!(venue.kind(), crate::venues::Kind::Championship);
         let crowd = if venue.has_crowd() {
-            build_crowd(&self.teams)
+            build_crowd(&self.teams, bowl)
         } else {
             Vec::new()
         };
@@ -176,7 +181,12 @@ impl Broadcast {
         let mut scene = SceneRenderer::new(w, h, 46f32.to_radians());
         scene.lighting = venue.lighting();
         let stands = build_stadium(&teams, venue);
-        let crowd = if venue.has_crowd() { build_crowd(&teams) } else { Vec::new() };
+        let bowl = matches!(venue.kind(), crate::venues::Kind::Championship);
+        let crowd = if venue.has_crowd() {
+            build_crowd(&teams, bowl)
+        } else {
+            Vec::new()
+        };
         Broadcast {
             w,
             h,
@@ -335,6 +345,8 @@ impl Broadcast {
                     speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
                     carrying: sim.ball.holder == Some(i),
                     blocking: p.engaged.is_some(),
+                    hands: p.hands,
+                    arms_up: p.drive,
                     down: p.down,
                 wrap: p.wrap,
                 tackled: p.tackled,
@@ -496,6 +508,8 @@ impl Broadcast {
                     && ball.0.dist(p.pos) < 0.8
                     && ball.1 < 1.3,
                 blocking: false,
+                hands: 0.0,
+                arms_up: 0.0,
                 down: p.down,
                 wrap: p.wrap,
                 tackled: p.tackled,
@@ -690,6 +704,8 @@ impl Broadcast {
                 speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
                 carrying: sim.ball.holder == Some(i),
                 blocking: p.engaged.is_some(),
+                hands: p.hands,
+                arms_up: p.drive,
                 down: p.down,
                 wrap: p.wrap,
                 tackled: p.tackled,
@@ -861,6 +877,8 @@ impl Broadcast {
                 speed: p.speed,
                 carrying: p.carrying,
                 blocking: p.blocking,
+                hands: p.hands,
+                arms_up: p.arms_up,
                 down: p.down,
                 wrapping: p.wrap,
                 tackled: p.tackled,
@@ -1260,6 +1278,17 @@ pub(crate) fn paint_word(
     }
 }
 
+/// A quad drawn from both sides.
+///
+/// The bowl's near stand is the far stand mirrored through the middle of the
+/// field, and mirroring a quad winds it the other way round: with one winding,
+/// the face the crowd and the lens look at would be culled and the stand would
+/// simply not be there.
+fn both_windings(mesh: &mut Mesh, q: [Vec3; 4], color: Rgb) {
+    mesh.quad(q[0], q[1], q[2], q[3], color);
+    mesh.quad(q[0], q[3], q[2], q[1], color);
+}
+
 /// The building around the field: a run-off apron, advertising boards, one
 /// grandstand down the far sideline with a crowd in it and a roof over it, a
 /// scoreboard and four banks of lights. One side only, the way a school field is
@@ -1284,6 +1313,11 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
     let steel = Rgb::hex(0x1B222C);
     let x0 = -14.0f32;
     let x1 = 114.0f32;
+    // The final is played in a closed bowl: both sidelines are built and roofed.
+    // The rest of the grounds keep the one stand, so the near side stays clear
+    // for the lens.
+    let bowl = matches!(venue.kind(), crate::venues::Kind::Championship);
+    let sides: &[f32] = if bowl { &[-1.0, 1.0] } else { &[-1.0] };
 
     // Run-off apron: the strip of ground between the paint and the wall.
     for side in [-1.0f32, 1.0] {
@@ -1345,20 +1379,26 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
         let z_top = z + riser;
         let y_back = y_front + tread;
         let tone = concrete.scale(1.0 - row as f32 * 0.012);
-        for side in [-1.0f32] {
+        for &side in sides {
             // Riser, then the tread behind it.
-            mesh.quad(
-                Vec3::new(x0, side * y_front, z),
-                Vec3::new(x1, side * y_front, z),
-                Vec3::new(x1, side * y_front, z_top),
-                Vec3::new(x0, side * y_front, z_top),
+            both_windings(
+                &mut mesh,
+                [
+                    Vec3::new(x0, side * y_front, z),
+                    Vec3::new(x1, side * y_front, z),
+                    Vec3::new(x1, side * y_front, z_top),
+                    Vec3::new(x0, side * y_front, z_top),
+                ],
                 tone,
             );
-            mesh.quad(
-                Vec3::new(x0, side * y_front, z_top),
-                Vec3::new(x1, side * y_front, z_top),
-                Vec3::new(x1, side * y_back, z_top),
-                Vec3::new(x0, side * y_back, z_top),
+            both_windings(
+                &mut mesh,
+                [
+                    Vec3::new(x0, side * y_front, z_top),
+                    Vec3::new(x1, side * y_front, z_top),
+                    Vec3::new(x1, side * y_back, z_top),
+                    Vec3::new(x0, side * y_back, z_top),
+                ],
                 tone.scale(0.92),
             );
             // The crowd is drawn by the broadcast, one body at a time, so it can
@@ -1369,32 +1409,41 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
     }
 
     // A back wall behind the stand, and a roof with a coloured fascia over it.
-    for side in [-1.0f32] {
+    for &side in sides {
         let y = side * (y_front + 0.3);
-        mesh.quad(
-            Vec3::new(x0, y, 0.0),
-            Vec3::new(x1, y, 0.0),
-            Vec3::new(x1, y, z + 1.1),
-            Vec3::new(x0, y, z + 1.1),
+        both_windings(
+            &mut mesh,
+            [
+                Vec3::new(x0, y, 0.0),
+                Vec3::new(x1, y, 0.0),
+                Vec3::new(x1, y, z + 1.1),
+                Vec3::new(x0, y, z + 1.1),
+            ],
             wall,
         );
+        let y_roof_back = side * (y_front + 0.35);
+        let y_roof_front = side * (FIELD_HALF_WIDTH + 5.6);
+        both_windings(
+            &mut mesh,
+            [
+                Vec3::new(x0, y_roof_back, z + 1.9),
+                Vec3::new(x1, y_roof_back, z + 1.9),
+                Vec3::new(x1, y_roof_front, z + 2.2),
+                Vec3::new(x0, y_roof_front, z + 2.2),
+            ],
+            steel,
+        );
+        both_windings(
+            &mut mesh,
+            [
+                Vec3::new(x0, y_roof_front, z + 1.5),
+                Vec3::new(x1, y_roof_front, z + 1.5),
+                Vec3::new(x1, y_roof_front, z + 2.25),
+                Vec3::new(x0, y_roof_front, z + 2.25),
+            ],
+            teams[0].primary,
+        );
     }
-    let y_roof_back = -(y_front + 0.35);
-    let y_roof_front = -(FIELD_HALF_WIDTH + 5.6);
-    mesh.quad(
-        Vec3::new(x0, y_roof_back, z + 1.9),
-        Vec3::new(x1, y_roof_back, z + 1.9),
-        Vec3::new(x1, y_roof_front, z + 2.2),
-        Vec3::new(x0, y_roof_front, z + 2.2),
-        steel,
-    );
-    mesh.quad(
-        Vec3::new(x0, y_roof_front, z + 1.5),
-        Vec3::new(x1, y_roof_front, z + 1.5),
-        Vec3::new(x1, y_roof_front, z + 2.25),
-        Vec3::new(x0, y_roof_front, z + 2.25),
-        teams[0].primary,
-    );
 
     // The ends are left open: the two sidelines are the whole bowl, so the
     // end-zone and overhead shots look past the paint at the world beyond it.
@@ -1899,6 +1948,31 @@ mod tests {
         assert!(!b.crowd.is_empty(), "the open ground lost its crowd");
     }
 
+    /// The final is a closed bowl: a stand on both sidelines, and both of them
+    /// full.
+    #[test]
+    fn the_final_is_a_closed_bowl_with_two_full_stands() {
+        use crate::venues::{Kind, Venue};
+        let t = league_teams();
+        let practice =
+            Broadcast::with_venue(320, 180, [t[0].clone(), t[1].clone()], Venue::from_index(0));
+        let index = (0..crate::venues::COUNT)
+            .find(|&i| Venue::from_index(i).kind() == Kind::Championship)
+            .expect("the final is not on the ground list");
+        let final_ = Broadcast::with_venue(
+            320,
+            180,
+            [t[0].clone(), t[1].clone()],
+            Venue::from_index(index),
+        );
+        assert!(
+            final_.crowd.len() > practice.crowd.len() * 3 / 2,
+            "the final had {} in the seats against the practice field's {}",
+            final_.crowd.len(),
+            practice.crowd.len()
+        );
+    }
+
     #[test]
     fn the_shot_keeps_up_with_a_ball_thrown_downfield() {
         for mode in [CameraMode::Classic, CameraMode::Broadcast, CameraMode::SkyCam] {
@@ -1927,19 +2001,29 @@ mod tests {
             is_try: false,
         };
         let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+        // Hold the throw from the first frame, so the only ball in the air is the
+        // one this test throws, and put the deep man downfield: the test is about
+        // the lens following a long ball, not about how one route develops.
+        sim.set_control(Some(QbControl {
+            move_dir: Vec2::ZERO,
+            target: None,
+            throw: false,
+            power: 1.0,
+        }));
         while sim.t < SNAP_DELAY + 1.0 && sim.result.is_none() {
             sim.step(1.0 / 60.0);
         }
-        let qb = sim.qb_pos();
         let deep = sim
             .eligible_targets()
             .into_iter()
             .map(|(_, i)| i)
-            .max_by(|a, b| {
-                let qb = sim.qb_pos();
-                sim.players[*a].pos.dist(qb).total_cmp(&sim.players[*b].pos.dist(qb))
-            })
+            .max_by(|a, b| sim.players[*a].pos.x.total_cmp(&sim.players[*b].pos.x))
             .expect("a receiver");
+        let downfield_yards = 18.0f32;
+        sim.players[deep].pos.x = setup.los + sim.dir as f32 * downfield_yards;
+        sim.players[deep].route.clear();
+        sim.players[deep].waypoint = 0;
+        let qb = sim.qb_pos();
         sim.set_control(Some(QbControl {
             move_dir: Vec2::ZERO,
             target: Some(deep),
@@ -1952,6 +2036,13 @@ mod tests {
         assert!(sim.ball.flight.is_some(), "the ball never left his hand");
 
         let mut broadcast = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        // The release frame has the ball a yard from the lens, where it can project
+        // past the edge whatever the lens is doing. Start once it is out of his
+        // hand: that is the shot this test is about.
+        while sim.ball.flight.is_some() && sim.result.is_none() && sim.ball_position().0.dist(qb) < 3.0
+        {
+            sim.step(1.0 / 60.0);
+        }
         let mut travelled = 0.0f32;
         for frame_no in 0..120 {
             if sim.ball.flight.is_none() || sim.result.is_some() {
@@ -2002,7 +2093,7 @@ struct CrowdFigure {
 
 /// Everybody in the two sidelines, laid out on the same rows the stand is built
 /// from. The bodies are the broadcast's, so they can move; the concrete is not.
-fn build_crowd(teams: &[Team; 2]) -> Vec<CrowdFigure> {
+fn build_crowd(teams: &[Team; 2], bowl: bool) -> Vec<CrowdFigure> {
     let mut seed = 0x5EED_C0DEu32;
     let mut rand = move || {
         seed ^= seed << 13;
@@ -2025,11 +2116,13 @@ fn build_crowd(teams: &[Team; 2]) -> Vec<CrowdFigure> {
     let x1 = 114.0f32;
     let mut z = 1.18f32;
     let mut y_front = FIELD_HALF_WIDTH + 4.8;
+    // A closed bowl has a stand on both sidelines, so it fills both.
+    let sides: &[f32] = if bowl { &[-1.0, 1.0] } else { &[-1.0] };
     let mut out = Vec::new();
     for _ in 0..rows {
         let z_top = z + riser;
         let y_back = y_front + tread;
-        for side in [-1.0f32] {
+        for &side in sides {
             let mut px_i = x0;
             while px_i < x1 {
                 let gap = 0.74 + rand() * 0.42;

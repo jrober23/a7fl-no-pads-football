@@ -140,6 +140,11 @@ pub struct Pose {
     pub speed: f32,
     pub carrying: bool,
     pub blocking: bool,
+    /// Where a blocker's hands are, across his body, in radians: the hand on the
+    /// side the rusher goes to follows him.
+    pub hands: f32,
+    /// 0..1: hands up, driving the man in front of him back upfield.
+    pub arms_up: f32,
     pub down: bool,
     pub celebrating: f32,
     /// 0 = facing, 1 = lateral shuffle.
@@ -1244,12 +1249,24 @@ pub fn build_mesh_at(
             flex += (1.20 - flex) * wrap;
         }
 
-        let up_dir = Vec3::new(swing.sin(), side * 0.05, -swing.cos()).normalize_or_zero();
+        // A blocker's hands are out in front of him, and they go where the man he
+        // is on goes: the hand on that side follows to 45 degrees and the sim turns
+        // his body after it, so a rusher who crosses his face is still handled.
+        // Run blocking raises them: hands up, and the defender is walked back.
+        if pose.blocking {
+            swing += (1.15 - swing) * 0.85;
+            flex = 0.55;
+        }
+        if pose.arms_up > 0.0 {
+            let up = pose.arms_up.clamp(0.0, 1.0);
+            swing += (2.15 - swing) * up;
+        }
+        let lateral = side * 0.05 + pose.hands;
+        let up_dir = Vec3::new(swing.sin(), lateral, -swing.cos()).normalize_or_zero();
         let elbow = shoulder + up_dir * upper_len;
         // A flexed elbow carries the forearm forward and up, not backward.
         let fore_angle = swing + flex + 0.12;
-        let fore_dir =
-            Vec3::new(fore_angle.sin(), side * 0.05, -fore_angle.cos()).normalize_or_zero();
+        let fore_dir = Vec3::new(fore_angle.sin(), lateral, -fore_angle.cos()).normalize_or_zero();
         let hand = elbow + fore_dir * fore_len;
 
         // Biceps swell on the upper arm, forearm flares under the elbow and

@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.11-windows-x86_64.zip` from the
+Grab `7on7-v0.25.12-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -617,6 +617,11 @@ The rule set follows the 7 on 7 no-pads rulebook rather than the NFL's:
   his own end zone concedes a safety. A returner alone under the ball always fields
   it: only a catch made in contact can be muffed.
 - **Fourth down becomes a throw-off** from the line of scrimmage instead of a punt.
+- **The line blocks the man in front of it.** Each lineman takes the closest rusher
+  to him, hands out in front — which is a wider block than a body standing in the
+  way — and the hand on the side the rusher goes to follows him up to 45 degrees,
+  with the body turning after it. That is the pocket: a wall that bends with the man
+  in front of it. On a run the hands come up and the defender is driven back upfield.
 - **Laterals are live.** A pass thrown backwards that hits the turf is not an
   incompletion: it is a loose ball, and either side can come up with it.
 - **A fumble does not stop the play.** The ball comes out, it rolls, both teams go

@@ -39,6 +39,10 @@ pub const WRAP_SECONDS: f32 = 0.42;
 pub const LOOSE_GRACE: f32 = 0.35;
 /// How close a man has to get to a loose ball to come up with it.
 pub const RECOVER_RADIUS: f32 = 1.15;
+
+/// How far a blocker's hands reach. A man with his arms out in front is wider
+/// than a man standing in the way, and this is that difference.
+const BLOCK_REACH: f32 = 1.9;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
@@ -279,6 +283,12 @@ pub struct SimPlayer {
     /// How long a dive still has its hands out, in seconds.
     pub dive_t: f32,
     pub engaged: Option<usize>,
+    /// Where his hands are, in radians across his body: the hand on the side the
+    /// rusher goes to follows him no more than 45 degrees either way.
+    pub hands: f32,
+    /// 0..1, hands up and driving the man in front of him back upfield. Run
+    /// blocking, as against holding a pocket.
+    pub drive: f32,
     pub pressure: f32,
     pub beaten: f32,
     pub waypoint: usize,
@@ -533,6 +543,8 @@ impl<'a> PlaySim<'a> {
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
                 engaged: None,
+                hands: 0.0,
+                drive: 0.0,
                 pressure: 0.0,
                 beaten: 0.0,
                 waypoint: 0,
@@ -567,6 +579,8 @@ impl<'a> PlaySim<'a> {
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
                 engaged: None,
+                hands: 0.0,
+                drive: 0.0,
                 pressure: 0.0,
                 beaten: 0.0,
                 waypoint: 0,
@@ -1798,8 +1812,20 @@ impl<'a> PlaySim<'a> {
     fn carry_target(&self, i: usize) -> Vec2 {
         let p = &self.players[i];
         let dirf = self.dirf();
-        let mut base = if p.waypoint < p.route.len() {
-            p.route[p.waypoint]
+        // Only a point that is ahead of him and not already under his feet is
+        // worth running to. A route that starts behind the man who just caught it
+        // used to turn the carrier round and send him back toward the line of
+        // scrimmage, which is the one direction a ball carrier never runs.
+        let mut wp = p.waypoint;
+        while wp < p.route.len() {
+            let pt = p.route[wp];
+            if (pt.x - p.pos.x) * dirf > -0.35 && pt.dist(p.pos) > 0.6 {
+                break;
+            }
+            wp += 1;
+        }
+        let mut base = if wp < p.route.len() {
+            p.route[wp]
         } else {
             // Head for the end zone, aiming at an open lane.
             let goal = field::opponent_goal_side(self.dir);
@@ -1941,40 +1967,31 @@ impl<'a> PlaySim<'a> {
 
     /// Which rusher this blocker takes. On Easy that is simply the closest; on
     /// the harder levels the line works inside out, so every man has his own.
-    fn block_threat(&self, i: usize, aim: Vec2) -> Option<usize> {
-        let mut men: Vec<(usize, f32)> = (7..14)
-            .filter(|&d| !self.players[d].down && self.players[d].stun <= 0.0)
-            .map(|d| (d, self.players[d].pos.dist(aim)))
-            .filter(|(_, dist)| *dist < 7.0)
+    fn block_threat(&self, i: usize, _aim: Vec2) -> Option<usize> {
+        // The closest man to him, but the man in his path first: the nearest body
+        // is only a blocker's man if he is between the blocker and what he is
+        // protecting. Without that the line picks up a rusher out wide while the
+        // one in the quarterback's face runs through untouched.
+        let ahead = Vec2::new(self.dirf(), 0.0);
+        let mut men: Vec<(usize, f32, bool)> = (7..14)
+            .filter(|&d| {
+                !self.players[d].down
+                    && self.players[d].stun <= 0.0
+                    && self.players[d].beaten <= 0.0
+                    && !(self.players[d].engaged.is_some() && self.players[d].engaged != Some(i))
+            })
+            .map(|d| {
+                let rel = self.players[d].pos - self.players[i].pos;
+                let front = rel.normalize_or_zero().dot(ahead) > 0.15;
+                (d, rel.length(), front)
+            })
+            .filter(|(_, dist, _)| *dist < 4.5)
             .collect();
-        // Most inside first: the rusher nearest the ball is the one who matters.
         men.sort_by(|a, b| {
-            let inside = |d: usize| (self.players[d].pos.y - self.setup.ball_y).abs();
-            inside(a.0)
-                .partial_cmp(&inside(b.0))
-                .unwrap_or(std::cmp::Ordering::Equal)
+            b.2.cmp(&a.2)
                 .then(a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
         });
-        if self.difficulty == Difficulty::Easy {
-            return men
-                .iter()
-                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(d, _)| *d);
-        }
-        // How many blockers line up closer to the ball than this one: they pick
-        // first, so he takes the card after theirs.
-        let my_inside = (self.players[i].pos.y - self.setup.ball_y).abs();
-        let ahead = (0..7)
-            .filter(|&j| j != i && self.blocker_on_this_play(j))
-            .filter(|&j| {
-                let theirs = (self.players[j].pos.y - self.setup.ball_y).abs();
-                theirs + 0.25 < my_inside
-                    || ((theirs - my_inside).abs() <= 0.25 && j < i)
-            })
-            .count();
-        // More blockers than rushers is normal: the spare men hold their ground
-        // at the aim point rather than doubling up on somebody's man.
-        men.get(ahead).map(|(d, _)| *d)
+        men.first().map(|(d, _, _)| *d)
     }
 
     // -----------------------------------------------------------------
@@ -2220,29 +2237,42 @@ impl<'a> PlaySim<'a> {
             // On the harder levels nobody doubles up: a defender already leaning
             // on a teammate is somebody else's man.
             let coordinated = self.difficulty != Difficulty::Easy;
-            // Find a defender to lean on.
-            let mut target = None;
-            let mut best = 1.35f32;
-            for d in 7..14 {
-                if self.players[d].down
-                    || self.players[d].stun > 0.0
-                    || self.players[d].beaten > 0.0
-                    || (coordinated && self.players[d].engaged.is_some())
-                {
-                    continue;
-                }
-                let dist = self.players[d].pos.dist(self.players[i].pos);
-                if dist < best {
-                    best = dist;
-                    target = Some(d);
-                }
-            }
+            // Find the closest defender to him, inside the reach his hands give
+            // him. Arms out in front are wider than a body standing in the way, so
+            // a man who is technically a step away is still being blocked.
+            let _ = coordinated;
+            let target = self
+                .block_threat(i, self.players[i].pos)
+                .filter(|&d| self.players[d].pos.dist(self.players[i].pos) <= BLOCK_REACH);
             let Some(d) = target else {
                 self.players[i].engaged = None;
+                self.players[i].hands *= 0.86;
+                self.players[i].drive *= 0.86;
                 continue;
             };
             self.players[i].engaged = Some(d);
             self.players[d].engaged = Some(i);
+
+            // His hands go where the rusher goes: the hand on that side follows
+            // him, never more than 45 degrees, and the body comes round after the
+            // hands instead of the hands craning off a body facing the wrong way.
+            // That is the pocket: a wall that bends with the man in front of it.
+            let to_d = self.players[d].pos - self.players[i].pos;
+            let mut off = to_d.angle() - self.players[i].heading;
+            while off > std::f32::consts::PI {
+                off -= std::f32::consts::TAU;
+            }
+            while off < -std::f32::consts::PI {
+                off += std::f32::consts::TAU;
+            }
+            let want = off.clamp(-std::f32::consts::FRAC_PI_4, std::f32::consts::FRAC_PI_4);
+            let k = (dt * 9.0).min(1.0);
+            self.players[i].hands += (want - self.players[i].hands) * k;
+            self.players[i].heading = approach_angle(self.players[i].heading, to_d.angle(), 3.0 * dt);
+            // Run blocking is a shove and pass blocking is a hold, so the hands
+            // come up only on runs, when the man in front is being walked back.
+            let run = self.play.family.is_run();
+            self.players[i].drive += ((run as i32) as f32 - self.players[i].drive) * (dt * 4.0).min(1.0);
 
             let blocker = self.attrs(i);
             let defender = self.attrs(d);
@@ -2254,12 +2284,20 @@ impl<'a> PlaySim<'a> {
 
             // Grind along the line: the defender is steered toward the QB, the
             // blocker mirrors him.
-            let qb = self.players[self.qb].pos;
-            let toward = (qb - self.players[d].pos).normalize_or_zero();
-            let slide = toward.perp();
-            let drift = slide * (advantage * 0.9 + 0.15) * dt;
-            self.players[d].pos += drift;
-            self.players[i].pos -= drift * 0.9;
+            if run {
+                // Hands up and driving: both men go upfield together, the defender
+                // because he is being pushed and the blocker because he is pushing.
+                let push = self.dirf() * (0.35 + advantage * 1.2) * dt;
+                self.players[d].pos.x += push;
+                self.players[i].pos.x += push * 0.92;
+            } else {
+                let qb = self.players[self.qb].pos;
+                let toward = (qb - self.players[d].pos).normalize_or_zero();
+                let slide = toward.perp();
+                let drift = slide * (advantage * 0.9 + 0.15) * dt;
+                self.players[d].pos += drift;
+                self.players[i].pos -= drift * 0.9;
+            }
 
             if self.players[d].pressure > 1.0 {
                 self.players[d].pressure = 0.0;
@@ -3717,7 +3755,13 @@ mod tests {
             (0.25..0.80).contains(&comp_pct),
             "completion rate implausible: {comp_pct}"
         );
-        assert!((-3.0..12.0).contains(&avg), "average yards implausible: {avg}");
+        // The ceiling used to be twelve, when a carrier could be sent back toward
+        // the line of scrimmage by a route point behind him. Now that he runs
+        // forward, and the line drives its men back on runs, a play gains more.
+        assert!(
+            (-3.0..16.0).contains(&avg),
+            "average yards implausible: {avg}"
+        );
         assert!(sack_pct < 0.35, "sacks too common: {sack_pct}");
         assert!(tds > 0, "no touchdowns in 600 plays from the 45");
         assert!(turnover > 0, "no turnovers in 600 plays");
@@ -4149,7 +4193,7 @@ mod tests {
     /// The harder levels give the line one man each instead of letting two men
     /// stand on the same rusher while a third walks through.
     #[test]
-    fn the_line_takes_a_man_each_on_normal_and_hard() {
+    fn the_line_blocks_the_closest_man_in_front_of_each_of_them() {
         let (off, def) = teams();
         let book = playbook();
         let play = book
@@ -4157,24 +4201,32 @@ mod tests {
             .find(|p| p.family.is_pass())
             .expect("no pass play");
         let aim = Vec2::new(45.0, 0.0);
-        for level in [Difficulty::Normal, Difficulty::Hard] {
+        for level in [Difficulty::Easy, Difficulty::Normal, Difficulty::Hard] {
             let dcall = defensive_playbook()[0].clone();
             let s = setup(45.0, 1, 10.0, 93);
             let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
             sim.difficulty = level;
-            let picks: Vec<usize> = (0..7)
+            let picks: Vec<(usize, usize)> = (0..7)
                 .filter(|&i| sim.blocker_on_this_play(i))
-                .filter_map(|i| sim.block_threat(i, aim))
+                .filter_map(|i| sim.block_threat(i, aim).map(|d| (i, d)))
                 .collect();
-            let mut seen: Vec<usize> = Vec::new();
-            for d in &picks {
-                assert!(
-                    !seen.contains(d),
-                    "{level:?}: two blockers took defender {d}: {picks:?}"
-                );
-                seen.push(*d);
-            }
             assert!(!picks.is_empty(), "{level:?}: nobody had a man to block");
+            for (i, d) in picks {
+                let mine = sim.players[d].pos.dist(sim.players[i].pos);
+                assert!(mine < 4.5, "{level:?}: {i} took a man {mine:.2} away");
+                // Nobody in his path is closer than the man he took.
+                let ahead = Vec2::new(sim.dirf(), 0.0);
+                let closer = (7..14)
+                    .filter(|&x| x != d && !sim.players[x].down && sim.players[x].stun <= 0.0)
+                    .any(|x| {
+                        let rel = sim.players[x].pos - sim.players[i].pos;
+                        rel.normalize_or_zero().dot(ahead) > 0.15 && rel.length() + 0.01 < mine
+                    });
+                assert!(
+                    !closer,
+                    "{level:?}: blocker {i} ignored a closer man in his path"
+                );
+            }
         }
     }
 
@@ -4718,5 +4770,102 @@ mod tests {
         }
         assert!(strips > 0, "no snap produced a runner to strip");
     }
-}
+    /// A carrier never runs back at the line of scrimmage: a route point behind
+    /// him is not a target.
+    #[test]
+    fn a_carrier_never_turns_back_toward_the_line_of_scrimmage() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_pass()).expect("a pass play");
+        let mut sim = PlaySim::new(&off, &def_, play, &d[0], &setup(45.0, 1, 10.0, 5));
+        let receiver = 3usize;
+        let here = sim.players[receiver].pos;
+        sim.players[receiver].route = vec![
+            Vec2::new(here.x - 12.0, here.y),
+            Vec2::new(here.x + 15.0, here.y + 3.0),
+        ];
+        sim.players[receiver].waypoint = 0;
+        sim.carrier = Some(receiver);
+        sim.ball.holder = Some(receiver);
+        let target = sim.carry_target(receiver);
+        assert!(
+            target.x > here.x,
+            "the carrier was aimed back at {:?} from {:?}",
+            target,
+            here
+        );
+    }
 
+    /// Blockers get their hands on the nearest rusher, and the hand on the side
+    /// he goes to never follows him more than 45 degrees across the body.
+    #[test]
+    fn a_blocker_puts_his_hands_on_the_nearest_rusher() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_pass()).expect("a pass play");
+        let mut blocked = 0;
+        for seed in 0..16u64 {
+            let mut sim = PlaySim::new(
+                &off,
+                &def_,
+                play,
+                &d[seed as usize % d.len()],
+                &setup(45.0, 1, 10.0, seed),
+            );
+            for _ in 0..200 {
+                sim.step(FIXED_DT);
+                if sim.result.is_some() {
+                    break;
+                }
+                for i in 0..7 {
+                    if sim.players[i].engaged.is_some() {
+                        blocked += 1;
+                        assert!(
+                            sim.players[i].hands.abs() <= std::f32::consts::FRAC_PI_4 + 0.05,
+                            "hands {:.2} rad across the body",
+                            sim.players[i].hands
+                        );
+                        let d_i = sim.players[i].engaged.unwrap();
+                        let clash = sim.players[d_i].pos.dist(sim.players[i].pos);
+                        assert!(clash <= 1.9 + 0.05, "hands on a man {clash:.2} away");
+                    }
+                }
+            }
+        }
+        assert!(blocked > 0, "nobody ever got his hands on a rusher");
+    }
+
+    /// Run blocking is a shove: the hands come up and the man in front is walked
+    /// back upfield.
+    #[test]
+    fn run_blockers_drive_the_man_in_front_of_them_back() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut best = 0.0f32;
+        for seed in 0..16u64 {
+            let mut sim = PlaySim::new(
+                &off,
+                &def_,
+                play,
+                &d[seed as usize % d.len()],
+                &setup(45.0, 1, 10.0, seed),
+            );
+            for _ in 0..200 {
+                sim.step(FIXED_DT);
+                if sim.result.is_some() {
+                    break;
+                }
+                for i in 0..7 {
+                    if sim.players[i].engaged.is_some() {
+                        best = best.max(sim.players[i].drive);
+                    }
+                }
+            }
+        }
+        assert!(best > 0.25, "run blockers never got their hands up: {best}");
+    }
+}

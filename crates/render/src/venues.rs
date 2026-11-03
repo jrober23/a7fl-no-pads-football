@@ -1978,6 +1978,76 @@ fn championship(teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn FnMut() -> f3
         0.5,
         gold,
     );
+    // A final is played indoors: the bowl is closed over the top.
+    championship_roof(mesh, teams);
+}
+
+/// The roof on the final: a ceiling over the whole site, walls up from the top of
+/// both stands, and the two clubs' colours running round the building. The lens
+/// sits under it, so it is above the camera rather than in front of it.
+fn championship_roof(mesh: &mut Mesh, teams: &[Team; 2]) {
+    let x0 = -30.0f32;
+    let x1 = 130.0f32;
+    let y = 34.0f32;
+    let z_top = 46.0f32;
+    let gold = Rgb::hex(0xE8C46A);
+    let dim = Rgb::hex(0x1A1420);
+    let panel = Rgb::hex(0x241B2E);
+    let mut x = x0;
+    while x < x1 {
+        let tone = if ((x - x0) / 10.0) as i32 % 2 == 0 { dim } else { panel };
+        mesh.quad_shaded(
+            Vec3::new(x, -y, z_top),
+            Vec3::new(x + 10.0, -y, z_top),
+            Vec3::new(x + 10.0, y, z_top),
+            Vec3::new(x, y, z_top),
+            tone,
+            1.0,
+        );
+        mesh.box_shaded(
+            Vec3::new(x, 0.0, z_top - 0.35),
+            Vec3::new(0.3, y, 0.35),
+            0.0,
+            Rgb::hex(0x120E18),
+            1.0,
+        );
+        x += 10.0;
+    }
+    // Both sidelines, painted end to end in the two clubs' colours.
+    for side in [-1.0f32, 1.0] {
+        for (from, to, color) in [
+            (x0, 50.0f32, teams[0].primary),
+            (50.0f32, x1, teams[1].primary),
+        ] {
+            mesh.quad_shaded(
+                Vec3::new(from, side * y, 9.0),
+                Vec3::new(to, side * y, 9.0),
+                Vec3::new(to, side * y, z_top),
+                Vec3::new(from, side * y, z_top),
+                color,
+                1.0,
+            );
+        }
+        mesh.quad_shaded(
+            Vec3::new(x0, side * y, 8.4),
+            Vec3::new(x1, side * y, 8.4),
+            Vec3::new(x1, side * y, 9.0),
+            Vec3::new(x0, side * y, 9.0),
+            gold,
+            1.0,
+        );
+    }
+    // And both ends, so the ground is a closed room.
+    for x in [x0, x1] {
+        mesh.quad_shaded(
+            Vec3::new(x, -y, 9.0),
+            Vec3::new(x, y, 9.0),
+            Vec3::new(x, y, z_top),
+            Vec3::new(x, -y, z_top),
+            panel,
+            1.0,
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

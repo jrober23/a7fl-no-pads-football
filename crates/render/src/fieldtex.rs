@@ -225,14 +225,16 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
         // The club's own mark underneath.
         let mark = team.abbr.to_uppercase();
         let mlen = font::text_width(&mark, 3) as f32;
+        // The same way round as the name beside it: a city abbreviation painted
+        // upside down next to the club's wordmark reads as a mistake.
         draw_rot90(
             frame,
-            x + 34,
+            x + 41,
             (py(0.0) - mlen * 0.5) as i32,
             &mark,
             3,
             team.accent,
-            -1,
+            1,
             1,
         );
     };
