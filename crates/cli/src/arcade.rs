@@ -533,18 +533,15 @@ impl Arcade {
     /// to watch. It replaces a line of text at the top of the first card with the
     /// introduction a broadcast would open on.
     fn matchup_screen(&mut self) -> bool {
-        let team_lines = |arc: &Arcade, t: usize| -> Vec<String> {
-            let team = &arc.game.teams[t];
+        let team_lines = |teams: &Arcade, t: usize| -> Vec<String> {
+            let team = &teams.game.teams[t];
             let r = team.ratings();
-            let theirs = arc.game.teams[1 - t].ratings();
             vec![
                 team.display_upper(),
                 String::new(),
                 format!("OVERALL   {}", r.overall),
                 format!("OFFENCE   {}", r.offense),
                 format!("DEFENCE   {}", r.defense),
-                String::new(),
-                format!("YOUR OFF {}  VS  THEIR DEF {}", r.offense, theirs.defense),
                 String::new(),
                 if r.offense >= r.defense + 6 {
                     "THEY WILL THROW IT"
@@ -556,8 +553,8 @@ impl Arcade {
                 .to_string(),
             ]
         };
-        let star_lines = |arc: &Arcade, t: usize| -> Vec<String> {
-            let team = &arc.game.teams[t];
+        let star_lines = |teams: &Arcade, t: usize| -> Vec<String> {
+            let team = &teams.game.teams[t];
             let mut stars: Vec<(u8, String, String)> = team
                 .roster
                 .iter()

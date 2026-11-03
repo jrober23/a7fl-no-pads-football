@@ -614,7 +614,48 @@ pub fn draw_card(
 /// same piece of glass: `crates/cli/src/menu.rs` washes the frame in this colour
 /// at this weight when the game is paused over a live picture.
 const PAUSE_INK: Rgb = Rgb::new(4, 6, 10);
-const PAUSE_VEIL: f32 = 0.62;
+const PAUSE_VEIL: f32 = 0.50;
+
+/// Break `text` into lines that fit `max_w` at `scale`, measuring with the font's
+/// own advance. A single word wider than the card is split on characters, because
+/// a club with a long name is the case this exists for.
+fn wrap_to(text: &str, scale: usize, max_w: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        let joined = if line.is_empty() {
+            word.to_string()
+        } else {
+            format!("{line} {word}")
+        };
+        if font::text_width(&joined, scale) <= max_w {
+            line = joined;
+            continue;
+        }
+        if !line.is_empty() {
+            out.push(std::mem::take(&mut line));
+        }
+        if font::text_width(word, scale) <= max_w {
+            line = word.to_string();
+            continue;
+        }
+        for ch in word.chars() {
+            let mut candidate = line.clone();
+            candidate.push(ch);
+            if font::text_width(&candidate, scale) > max_w && !line.is_empty() {
+                out.push(std::mem::take(&mut line));
+            }
+            line.push(ch);
+        }
+    }
+    if !line.is_empty() {
+        out.push(line);
+    }
+    if out.is_empty() {
+        out.push(String::new());
+    }
+    out
+}
 
 pub fn draw_half_cards(
     frame: &mut Frame,
@@ -658,16 +699,24 @@ pub fn draw_half_cards(
             PAUSE_VEIL,
         );
         frame.fill_rect(cx + 12, y + 5, card_w - 24, 4, accents[i]);
+        let inset = 20;
+        let max_w = (card_w - inset * 2).max(40) as usize;
+        let mut ry = y + 22;
         for (row, line) in lines.iter().enumerate() {
-            let ry = y + 22 + row as i32 * 32;
-            if ry > y + card_h - 26 {
-                break;
-            }
-            if row == 0 {
-                // The club's own name, in its own colour, across the top.
-                font::draw_styled(frame, cx + 20, ry, line, 3, accents[i].lerp(WHITE, 0.55), 1, false);
+            // The club's name runs a size larger than the rest, in its own colour.
+            let scale = if row == 0 { 3 } else { 2 };
+            let colour = if row == 0 {
+                accents[i].lerp(WHITE, 0.55)
             } else {
-                font::draw_styled(frame, cx + 20, ry + 2, line, 2, Rgb::hex(0xE9EEF5), 1, false);
+                Rgb::hex(0xE9EEF5)
+            };
+            for piece in wrap_to(line, scale, max_w) {
+                let tall = (crate::font::GLYPH_H * scale) as i32;
+                if ry + tall > y + card_h - 18 {
+                    break;
+                }
+                font::draw_styled(frame, cx + inset, ry, &piece, scale, colour, 1, false);
+                ry += if scale > 2 { 30 } else { 28 };
             }
         }
     }
@@ -679,6 +728,55 @@ mod tests {
     use nopads_core::team::league_teams;
 
 
+
+
+    #[test]
+    fn a_long_club_name_wraps_inside_its_card() {
+        // A control render with short names: the only thing that changes is the
+        // text, so anything that differs outside the card rectangles is text that
+        // escaped. Measuring against the backdrop instead counts the panel's own
+        // edge as spill, which is what the first version of this test did.
+        let base = Rgb::new(10, 20, 30);
+        let draw = |left: &[String], right: &[String]| {
+            let mut f = Frame::new(1280, 720);
+            f.color.fill(base);
+            draw_half_cards(
+                &mut f,
+                "MATCHUP",
+                "PHI AT CHI",
+                left,
+                right,
+                [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+            );
+            f
+        };
+        let short = draw(
+            &["PHI".to_string(), "OVERALL 71".to_string()],
+            &["CHI".to_string(), "OVERALL 68".to_string()],
+        );
+        let long = draw(
+            &[
+                "THE PHILADELPHIA FOUNDRY ATHLETIC CLUB".to_string(),
+                "OVERALL 71".to_string(),
+            ],
+            &["CHICAGO FOUNDRY".to_string(), "OVERALL 68".to_string()],
+        );
+        // The card rectangles, from the draw above: 32..624 and 656..1248, at
+        // 344..664 on a 720 high frame.
+        let in_card = |x: usize, y: usize| {
+            (344..664).contains(&y)
+                && ((32..624).contains(&x) || (656..1248).contains(&x))
+        };
+        let mut spilled = 0;
+        for y in 0..720 {
+            for x in 0..1280 {
+                if !in_card(x, y) && long.color[y * 1280 + x] != short.color[y * 1280 + x] {
+                    spilled += 1;
+                }
+            }
+        }
+        assert_eq!(spilled, 0, "the name spilled out of its card: {spilled} px");
+    }
 
     #[test]
     fn the_half_cards_are_half_the_frame_each_and_leave_the_sky_alone() {
