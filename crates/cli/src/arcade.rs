@@ -566,9 +566,6 @@ impl Arcade {
         };
         let left = block(self, 0);
         let right = block(self, 1);
-        let accent = self.game.teams[self.my_team.unwrap_or(0)]
-            .primary
-            .lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3);
         let title = format!(
             "{} AT {}",
             self.game.teams[0].abbr.to_uppercase(),
@@ -636,7 +633,13 @@ impl Arcade {
                 Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui),
                 None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
             };
-            nopads_render::hud::draw_card(&mut frame, "MATCHUP", &title, &left, &right, accent);
+            // Two cards in the corners, not one across the middle: the warm-up
+            // behind them is the introduction, and it should not be covered.
+            let accents = [
+                self.game.teams[0].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
+                self.game.teams[1].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
+            ];
+            nopads_render::hud::draw_mini_cards(&mut frame, "MATCHUP", &title, &left, &right, accents);
             let lines = vec![self.header(), String::new(), "  [A] KICK OFF".to_string()];
             if !self.view.show(&mut frame, &lines) {
                 return false;

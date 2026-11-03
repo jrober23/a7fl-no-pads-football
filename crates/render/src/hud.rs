@@ -603,11 +603,111 @@ pub fn draw_card(
     }
 }
 
+
+/// The matchup as two mini cards in the lower corners, with a slim banner across
+/// the top.
+///
+/// The introduction was one panel across the middle of the frame, which hid the
+/// field it existed to introduce. These are sized to their text and pushed to the
+/// edges, so the warm-up behind them stays the picture and the card is what you
+/// read while you watch it.
+pub fn draw_mini_cards(
+    frame: &mut Frame,
+    title: &str,
+    subtitle: &str,
+    left: &[String],
+    right: &[String],
+    accents: [Rgb; 2],
+) {
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    let card_w = 400;
+    let card_h = 330;
+    let y = h - card_h - 44;
+    let x = [44, w - 44 - card_w];
+
+    // The banner: the one thing that sits across the frame, and it is a strip.
+    let banner_w = 520;
+    let bx = (w - banner_w) / 2;
+    frame.fill_rect_alpha(bx, 28, banner_w, 78, Rgb::hex(0x0B1017), 0.55);
+    frame.fill_rect(bx, 28, banner_w, 3, accents[0]);
+    frame.fill_rect(bx + banner_w - 140, 28, 140, 3, accents[1]);
+    font::draw_centered(frame, w / 2, 38, title, 3, WHITE, 2);
+    font::draw_centered(frame, w / 2, 76, subtitle, 2, Rgb::hex(0xDCE3EC), 1);
+
+    for (i, lines) in [left, right].iter().enumerate() {
+        let cx = x[i];
+        // Enough alpha to hold the type and let the turf through it.
+        frame.panel(
+            cx,
+            y,
+            card_w,
+            card_h,
+            12,
+            Rgb::hex(0x1C2533),
+            Rgb::hex(0x0B1017),
+            PANEL_EDGE,
+            0.70,
+        );
+        frame.fill_rect(cx + 12, y + 5, card_w - 24, 4, accents[i]);
+        for (row, line) in lines.iter().enumerate() {
+            let ry = y + 20 + row as i32 * 32;
+            if ry > y + card_h - 26 {
+                break;
+            }
+            if row == 0 {
+                // The club's own name, in its own colour, across the top.
+                font::draw_styled(frame, cx + 16, ry, line, 3, accents[i].lerp(WHITE, 0.55), 1, false);
+            } else {
+                font::draw_styled(frame, cx + 16, ry + 2, line, 2, WHITE, 1, false);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use nopads_core::team::league_teams;
 
+
+
+    #[test]
+    fn the_matchup_cards_leave_the_middle_of_the_frame_alone() {
+        // The picture behind them is the point, so the middle of the frame has to
+        // come out of the draw untouched.
+        let base = Rgb::new(10, 20, 30);
+        let mut f = Frame::new(1280, 720);
+        f.color.fill(base);
+        let left = vec!["BOSTON".to_string(), "OVERALL 71".to_string()];
+        let right = vec!["CHICAGO".to_string(), "OVERALL 68".to_string()];
+        draw_mini_cards(
+            &mut f,
+            "MATCHUP",
+            "BOS AT CHI",
+            &left,
+            &right,
+            [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+        );
+        let mut touched = 0;
+        for y in 150..620 {
+            for x in 470..810 {
+                if f.color[y * 1280 + x] != base {
+                    touched += 1;
+                }
+            }
+        }
+        assert_eq!(touched, 0, "the cards cover the middle: {touched} px");
+        // And they are on the picture: both corners carry a panel.
+        let corner = |x0: usize| {
+            (0..720)
+                .flat_map(|y| (x0..x0 + 400).map(move |x| (y, x)))
+                .filter(|(y, x)| f.color[y * 1280 + x] != base)
+                .count()
+        };
+        assert!(corner(44) > 20_000, "the left card is missing");
+        assert!(corner(836) > 20_000, "the right card is missing");
+    }
 
     #[test]
     fn the_flag_arrow_points_down_and_is_not_a_speck() {
