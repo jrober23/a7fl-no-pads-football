@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.5-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.6-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -649,8 +649,17 @@ the players.
 The sixteen clubs each have their own park, and each one is its city: Boston's
 harbour and brick rowhouses, Chicago's stacks and steel, Miami's palms and pastel
 hotels, New York's wall of windows, Denver's pines under the mountains, and so on.
-The skyline, the sky and the fog change with the ground; the field, the bowl and the
-scoreboard stay the league's.
+
+Every one of those cities puts its own building over the rooftops, the one it is
+known by: the pencil in Atlanta, the Empire State in New York, the needle in Seattle,
+the ball on the stick in Dallas, the obelisk in Washington, the twin spires in
+Nashville, the drums of the Renaissance Center in Detroit, the barrel on the roof in
+Denver, and a butte standing in for Phoenix. Past the end of the field there is a
+downtown to go with them: a street grid with asphalt, a kerb down each edge and a
+dashed centre line, and the low and mid-rise blocks that fill the land between the
+streets, lit floor by floor, standing between the ground and the towers. The skyline,
+the sky and the fog change with the ground; the field, the stand and the scoreboard
+stay the league's.
 
 Then the four the league takes the game to:
 
@@ -733,14 +742,16 @@ The turf is painted at sixteen pixels per yard — mown stripes with feathered m
 edges, yard lines and hashes, painted numbers, coaching boxes, end-zone wordmarks
 and the midfield mark — and the ground pass samples it across the whole field.
 
-Around it stands a stadium: a run-off apron, advertising boards, one bowl of seating
-with a crowd in team colours down each sideline, a roof over the far side, a scoreboard
-carrying the home club's mark and four banks of lights, all placed under the height of
-the broadcast lens so the building is in the picture without ever getting between the
-camera and the ball. There is no stand behind either end zone — the bowl is two long
-sides, so the end-zone and overhead shots look past the paint at the ground beyond
-it — and everything a ground brings with it, from the treeline to the water tower,
-stands outside the sidelines or above the field. The field is the players'.
+Around it stands a stadium: a run-off apron, advertising boards, one grandstand with
+a crowd in team colours down the far sideline, a roof over it, a scoreboard carrying
+the home club's mark and four banks of lights, all placed under the height of the
+broadcast lens so the building is in the picture without ever getting between the
+camera and the ball. One grandstand and not two, the way a school field is built: the
+near sideline is boards and open air, so the lens has a clear line to the ball, and
+there is no stand behind either end zone, so the end-zone and overhead shots look
+past the paint at the ground beyond it. Everything a ground brings with it, from the
+treeline to the water tower, stands outside the boards or above the field. The field
+is the players'.
 
 The overlay is 2K5-flavoured: a score bug with possession highlight and timeout
 pips, a down-and-distance card with play clock bar, the league badge, a lower-third

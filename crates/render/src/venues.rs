@@ -197,7 +197,32 @@ struct City {
     water: bool,
     /// A tall lit spire over the rest.
     spire: bool,
+    /// The building the city is known by, standing over the downtown.
+    landmark: Landmark,
     sky: [Rgb; 3],
+}
+
+/// The one building a city is known by. Each is built to be recognised from the
+/// far end of a football field: the pencil in Atlanta, the Empire State in New
+/// York, the needle in Seattle, and so on down the league.
+#[derive(Clone, Copy)]
+enum Landmark {
+    CustomHouse,
+    Willis,
+    Renaissance,
+    Foshay,
+    Pencil,
+    Freedom,
+    Reunion,
+    TwinSpires,
+    Empire,
+    CityHallTower,
+    Obelisk,
+    Crown,
+    PyramidHall,
+    Butte,
+    Needle,
+    CashRegister,
 }
 
 fn cities() -> Vec<City> {
@@ -206,25 +231,25 @@ fn cities() -> Vec<City> {
     }
     vec![
         // North
-        City { suffix: "THE HARBOUR", blurb: "Brick rowhouses, a harbour full of masts, and the wind off the water.", towers: 3, brick: 6, palms: 0, pines: 0, stacks: 1, water: true, spire: false, sky: [hex(0x0A1428), hex(0x243A4E), hex(0x8A9AA0)] },
-        City { suffix: "FOUNDRY YARD", blurb: "Steel over the old works: stacks, gantries and a train that never stops.", towers: 2, brick: 5, palms: 0, pines: 0, stacks: 4, water: false, spire: false, sky: [hex(0x141018), hex(0x3A2A2A), hex(0xB08A6A)] },
-        City { suffix: "ASSEMBLY GROUNDS", blurb: "A factory town's field: brick, chimneys and the plant running nights.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: true, spire: false, sky: [hex(0x101820), hex(0x2E3C46), hex(0x93A3A6)] },
-        City { suffix: "NORTHWIND FIELD", blurb: "Glass towers joined by skybridges, and pines standing in the cold.", towers: 4, brick: 1, palms: 0, pines: 8, stacks: 0, water: true, spire: false, sky: [hex(0x081C2E), hex(0x1E3C56), hex(0xAFC4CE)] },
+        City { suffix: "THE HARBOUR", landmark: Landmark::CustomHouse, blurb: "Brick rowhouses, a harbour full of masts, and the wind off the water.", towers: 3, brick: 6, palms: 0, pines: 0, stacks: 1, water: true, spire: false, sky: [hex(0x0A1428), hex(0x243A4E), hex(0x8A9AA0)] },
+        City { suffix: "FOUNDRY YARD", landmark: Landmark::Willis, blurb: "Steel over the old works: stacks, gantries and a train that never stops.", towers: 2, brick: 5, palms: 0, pines: 0, stacks: 4, water: false, spire: false, sky: [hex(0x141018), hex(0x3A2A2A), hex(0xB08A6A)] },
+        City { suffix: "ASSEMBLY GROUNDS", landmark: Landmark::Renaissance, blurb: "A factory town's field: brick, chimneys and the plant running nights.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: true, spire: false, sky: [hex(0x101820), hex(0x2E3C46), hex(0x93A3A6)] },
+        City { suffix: "NORTHWIND FIELD", landmark: Landmark::Foshay, blurb: "Glass towers joined by skybridges, and pines standing in the cold.", towers: 4, brick: 1, palms: 0, pines: 8, stacks: 0, water: true, spire: false, sky: [hex(0x081C2E), hex(0x1E3C56), hex(0xAFC4CE)] },
         // South
-        City { suffix: "FIREFLY PARK", blurb: "A warm night, glass towers, and the trees full of light.", towers: 4, brick: 2, palms: 0, pines: 6, stacks: 0, water: false, spire: false, sky: [hex(0x1A1030), hex(0x3E2A5E), hex(0xC79A8A)] },
-        City { suffix: "RIPTIDE SHORES", blurb: "Pastel hotels, palms over the walk, and the ocean past the boards.", towers: 3, brick: 1, palms: 10, pines: 0, stacks: 0, water: true, spire: false, sky: [hex(0x123C5E), hex(0x3E8FB0), hex(0xF6E9C9)] },
-        City { suffix: "RUSTLER RANCH", blurb: "Stockyards and derricks: low brick, tall steel, and a lot of sky.", towers: 3, brick: 5, palms: 0, pines: 0, stacks: 2, water: false, spire: false, sky: [hex(0x2E1A2E), hex(0x6E3E36), hex(0xE0A878)] },
-        City { suffix: "BRASS HALL", blurb: "Neon down the street, a lit spire over it, and music in the walls.", towers: 3, brick: 4, palms: 0, pines: 0, stacks: 1, water: true, spire: true, sky: [hex(0x181026), hex(0x3A2448), hex(0xC98E6A)] },
+        City { suffix: "FIREFLY PARK", landmark: Landmark::Pencil, blurb: "A warm night, glass towers, and the trees full of light.", towers: 4, brick: 2, palms: 0, pines: 6, stacks: 0, water: false, spire: false, sky: [hex(0x1A1030), hex(0x3E2A5E), hex(0xC79A8A)] },
+        City { suffix: "RIPTIDE SHORES", landmark: Landmark::Freedom, blurb: "Pastel hotels, palms over the walk, and the ocean past the boards.", towers: 3, brick: 1, palms: 10, pines: 0, stacks: 0, water: true, spire: false, sky: [hex(0x123C5E), hex(0x3E8FB0), hex(0xF6E9C9)] },
+        City { suffix: "RUSTLER RANCH", landmark: Landmark::Reunion, blurb: "Stockyards and derricks: low brick, tall steel, and a lot of sky.", towers: 3, brick: 5, palms: 0, pines: 0, stacks: 2, water: false, spire: false, sky: [hex(0x2E1A2E), hex(0x6E3E36), hex(0xE0A878)] },
+        City { suffix: "BRASS HALL", landmark: Landmark::TwinSpires, blurb: "Neon down the street, a lit spire over it, and music in the walls.", towers: 3, brick: 4, palms: 0, pines: 0, stacks: 1, water: true, spire: true, sky: [hex(0x181026), hex(0x3A2448), hex(0xC98E6A)] },
         // East
-        City { suffix: "BEACON HEIGHTS", blurb: "The city at night: a wall of windows and a light on top of it.", towers: 6, brick: 2, palms: 0, pines: 0, stacks: 0, water: true, spire: true, sky: [hex(0x080E22), hex(0x1A2A4E), hex(0x8E9AB6)] },
-        City { suffix: "ANVIL WORKS", blurb: "Brick, iron and a foundry glow: the oldest ground in the league.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: true, spire: false, sky: [hex(0x0E1218), hex(0x2A2E34), hex(0x9AA0A6)] },
-        City { suffix: "MONUMENT GROUNDS", blurb: "Marble and glass, a lit obelisk, and the capital behind the stand.", towers: 3, brick: 2, palms: 0, pines: 4, stacks: 0, water: true, spire: true, sky: [hex(0x0A1626), hex(0x22364E), hex(0xB6BCC2)] },
-        City { suffix: "AVIATOR FIELD", blurb: "Hangars and a control tower, with the city lights on the horizon.", towers: 3, brick: 3, palms: 0, pines: 5, stacks: 1, water: false, spire: false, sky: [hex(0x0C1A2E), hex(0x24405C), hex(0xA6B4BC)] },
+        City { suffix: "BEACON HEIGHTS", landmark: Landmark::Empire, blurb: "The city at night: a wall of windows and a light on top of it.", towers: 6, brick: 2, palms: 0, pines: 0, stacks: 0, water: true, spire: true, sky: [hex(0x080E22), hex(0x1A2A4E), hex(0x8E9AB6)] },
+        City { suffix: "ANVIL WORKS", landmark: Landmark::CityHallTower, blurb: "Brick, iron and a foundry glow: the oldest ground in the league.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: true, spire: false, sky: [hex(0x0E1218), hex(0x2A2E34), hex(0x9AA0A6)] },
+        City { suffix: "MONUMENT GROUNDS", landmark: Landmark::Obelisk, blurb: "Marble and glass, a lit obelisk, and the capital behind the stand.", towers: 3, brick: 2, palms: 0, pines: 4, stacks: 0, water: true, spire: true, sky: [hex(0x0A1626), hex(0x22364E), hex(0xB6BCC2)] },
+        City { suffix: "AVIATOR FIELD", landmark: Landmark::Crown, blurb: "Hangars and a control tower, with the city lights on the horizon.", towers: 3, brick: 3, palms: 0, pines: 5, stacks: 1, water: false, spire: false, sky: [hex(0x0C1A2E), hex(0x24405C), hex(0xA6B4BC)] },
         // West
-        City { suffix: "COMET BOWL", blurb: "Palms, hills and a city that runs all the way to the ridge.", towers: 5, brick: 1, palms: 8, pines: 0, stacks: 0, water: false, spire: false, sky: [hex(0x140E2A), hex(0x4A2E5E), hex(0xE0A070)] },
-        City { suffix: "SANDSTORM MESA", blurb: "The desert at dusk: mesas, cactus and one bright strip of sky.", towers: 1, brick: 1, palms: 2, pines: 0, stacks: 0, water: false, spire: false, sky: [hex(0x2A1A38), hex(0x8A4A46), hex(0xE8B478)] },
-        City { suffix: "RAINMAKER FIELD", blurb: "Pines, water and glass: the rain comes in off the sound.", towers: 4, brick: 1, palms: 0, pines: 9, stacks: 0, water: true, spire: false, sky: [hex(0x0C1A20), hex(0x223C44), hex(0x8AA4A8)] },
-        City { suffix: "ALTITUDE PARK", blurb: "The mountains stand over the stand, and the ball carries up here.", towers: 2, brick: 1, palms: 0, pines: 8, stacks: 0, water: false, spire: false, sky: [hex(0x0A1A30), hex(0x244260), hex(0xC8D2DC)] },
+        City { suffix: "COMET BOWL", landmark: Landmark::PyramidHall, blurb: "Palms, hills and a city that runs all the way to the ridge.", towers: 5, brick: 1, palms: 8, pines: 0, stacks: 0, water: false, spire: false, sky: [hex(0x140E2A), hex(0x4A2E5E), hex(0xE0A070)] },
+        City { suffix: "SANDSTORM MESA", landmark: Landmark::Butte, blurb: "The desert at dusk: mesas, cactus and one bright strip of sky.", towers: 1, brick: 1, palms: 2, pines: 0, stacks: 0, water: false, spire: false, sky: [hex(0x2A1A38), hex(0x8A4A46), hex(0xE8B478)] },
+        City { suffix: "RAINMAKER FIELD", landmark: Landmark::Needle, blurb: "Pines, water and glass: the rain comes in off the sound.", towers: 4, brick: 1, palms: 0, pines: 9, stacks: 0, water: true, spire: false, sky: [hex(0x0C1A20), hex(0x223C44), hex(0x8AA4A8)] },
+        City { suffix: "ALTITUDE PARK", landmark: Landmark::CashRegister, blurb: "The mountains stand over the stand, and the ball carries up here.", towers: 2, brick: 1, palms: 0, pines: 8, stacks: 0, water: false, spire: false, sky: [hex(0x0A1A30), hex(0x244260), hex(0xC8D2DC)] },
     ]
 }
 
@@ -244,6 +269,28 @@ fn tower(mesh: &mut Mesh, at: Vec3, half: Vec3, face: f32, color: Rgb, rand: &mu
         color.scale(0.8),
         1.0,
     );
+    // A course per floor on the face the end-zone lens sees, so downtown is lit
+    // on the side the camera comes down the field on.
+    let x_face = at.x - (half.x + 0.04);
+    let floors = ((half.z * 2.0 / 2.6) as usize).clamp(1, 14);
+    for floor in 0..floors {
+        let z = 1.4 + floor as f32 * 2.6;
+        if z + 1.4 > half.z * 2.0 - 0.8 {
+            break;
+        }
+        let tone = if rand() < 0.5 {
+            Rgb::hex(0xE8C27E)
+        } else {
+            Rgb::hex(0x222A34)
+        };
+        mesh.box_shaded(
+            Vec3::new(x_face, at.y, z + 0.7),
+            Vec3::new(0.05, half.y * 0.88, 0.6),
+            0.0,
+            tone,
+            1.0,
+        );
+    }
     // Window courses: two rows of lights for every four yards of height.
     let y_face = at.y - face * (half.y + 0.03);
     let rows = ((half.z * 2.0 / 2.6) as usize).clamp(1, 14);
@@ -900,6 +947,317 @@ fn closed_practice(mesh: &mut Mesh) {
     }
 }
 
+/// A low block with window courses: the downtown between the towers, the kind
+/// that fills a city's streets rather than standing on the skyline alone.
+fn mid_rise(mesh: &mut Mesh, at: Vec3, half: Vec3, face: f32, color: Rgb, rand: &mut dyn FnMut() -> f32) {
+    mesh.box_shaded(at, half, 0.0, color, 1.0);
+    mesh.box_shaded(
+        Vec3::new(at.x, at.y, at.z + half.z + 0.16),
+        Vec3::new(half.x * 1.04, half.y * 1.04, 0.16),
+        0.0,
+        color.scale(0.7),
+        1.0,
+    );
+    let rows = ((half.z * 2.0 / 2.3) as usize).max(1);
+    for row in 0..rows {
+        let z = 1.5 + row as f32 * 2.3;
+        if z + 0.8 > half.z * 2.0 {
+            break;
+        }
+        let tone = if rand() < 0.55 {
+            Rgb::hex(0xE8C27E)
+        } else {
+            Rgb::hex(0x232A34)
+        };
+        mesh.box_shaded(
+            Vec3::new(at.x - (half.x + 0.04), at.y, z + 0.7),
+            Vec3::new(0.05, half.y * 0.88, 0.6),
+            0.0,
+            tone,
+            1.0,
+        );
+    }
+    let y_face = at.y - face * (half.y + 0.04);
+    for row in 0..rows {
+        let z = 1.5 + row as f32 * 2.3;
+        if z + 0.8 > half.z * 2.0 {
+            break;
+        }
+        let lit = rand() < 0.55;
+        let tone = if lit { Rgb::hex(0xE8C27E) } else { Rgb::hex(0x232A34) };
+        mesh.quad_shaded(
+            Vec3::new(at.x - half.x + 0.5, y_face, z),
+            Vec3::new(at.x + half.x - 0.5, y_face, z),
+            Vec3::new(at.x + half.x - 0.5, y_face, z + 0.85),
+            Vec3::new(at.x - half.x + 0.5, y_face, z + 0.85),
+            tone,
+            1.0,
+        );
+    }
+}
+
+/// A landmark's own ground: the yard it stands on, and the two colours it is lit
+/// in. The builders below are deliberately made of a handful of boxes and drums,
+/// because at the distance the lens sees them, that is all a silhouette needs.
+struct Site<'a, 'b> {
+    mesh: &'a mut Mesh,
+    rand: &'b mut dyn FnMut() -> f32,
+    at: Vec3,
+    /// Everything the builders below do is in yards at full size; this scales
+    /// the whole landmark to what fits in the frame at the far end of the field.
+    k: f32,
+    c: Rgb,
+    a: Rgb,
+}
+
+impl Site<'_, '_> {
+    fn block(&mut self, dx: f32, dy: f32, z0: f32, hw: f32, hd: f32, h: f32, tone: f32) {
+        let k = self.k;
+        self.mesh.box_shaded(
+            Vec3::new(
+                self.at.x + dx * k,
+                self.at.y + dy * k,
+                self.at.z + (z0 + h * 0.5) * k,
+            ),
+            Vec3::new(hw * k, hd * k, h * 0.5 * k),
+            0.0,
+            self.c.scale(tone),
+            1.0,
+        );
+    }
+
+    /// A shaft or a drum: a cylinder with as few sides as it takes to read.
+    fn taper(&mut self, dx: f32, dy: f32, z0: f32, h: f32, r0: f32, r1: f32, sides: usize, color: Rgb) {
+        let k = self.k;
+        let base = Vec3::new(self.at.x + dx * k, self.at.y + dy * k, self.at.z + z0 * k);
+        self.mesh.cylinder(
+            base,
+            base + Vec3::new(0.0, 0.0, h * k),
+            r0 * k,
+            r1 * k,
+            sides,
+            color,
+        );
+    }
+
+    /// A lit band: a clock face, a cornice, a crown of lights.
+    fn band(&mut self, dx: f32, dy: f32, z: f32, hw: f32, h: f32, color: Rgb) {
+        let k = self.k;
+        self.mesh.box_shaded(
+            Vec3::new(
+                self.at.x + dx * k,
+                self.at.y + dy * k,
+                self.at.z + (z + h * 0.5) * k,
+            ),
+            Vec3::new(hw * k, 0.06 * k, h * 0.5 * k),
+            0.0,
+            color,
+            1.0,
+        );
+    }
+
+    /// Courses of windows, on the face turned toward the field and on the face
+    /// turned toward the end-zone lens: a downtown seen from the far end of the
+    /// field is all side wall.
+    fn windows(&mut self, dx: f32, dy: f32, hw: f32, hd: f32, z0: f32, z1: f32) {
+        let k = self.k;
+        let lit = Rgb::hex(0xF2D08A);
+        let dark = Rgb::hex(0x2A3440);
+        let mut z = z0 + 1.0;
+        while z + 0.9 < z1 {
+            let mut x = -hw + 0.9;
+            while x < hw - 0.6 {
+                let tone = if (self.rand)() < 0.55 { lit } else { dark };
+                self.mesh.box_shaded(
+                    Vec3::new(
+                        self.at.x + (dx + x) * k,
+                        self.at.y + (dy + hd) * k,
+                        self.at.z + (z + 0.4) * k,
+                    ),
+                    Vec3::new(0.5 * k, 0.06 * k, 0.4 * k),
+                    0.0,
+                    tone,
+                    1.0,
+                );
+                self.mesh.box_shaded(
+                    Vec3::new(
+                        self.at.x + (dx - hw) * k,
+                        self.at.y + (dy + x) * k,
+                        self.at.z + (z + 0.4) * k,
+                    ),
+                    Vec3::new(0.06 * k, 0.5 * k, 0.4 * k),
+                    0.0,
+                    tone,
+                    1.0,
+                );
+                x += 2.4;
+            }
+            z += 2.8;
+        }
+    }
+}
+
+/// Build the building a city is known by.
+fn landmark(
+    mesh: &mut Mesh,
+    kind: Landmark,
+    at: Vec3,
+    k: f32,
+    c: Rgb,
+    a: Rgb,
+    rand: &mut dyn FnMut() -> f32,
+) {
+    let mut site = Site { mesh, rand, at, k, c, a };
+    match kind {
+        // Boston: the Custom House tower, a clock over the harbour and a lantern
+        // on top of it.
+        Landmark::CustomHouse => {
+            site.block(0.0, 0.0, 0.0, 5.0, 5.0, 10.0, 0.9);
+            site.block(0.0, 0.0, 10.0, 3.0, 3.0, 32.0, 1.0);
+            site.windows(0.0, 0.0, 3.0, 3.0, 15.0, 40.0);
+            site.band(0.0, 3.05, 34.0, 2.4, 2.0, Rgb::hex(0xF4E7C2));
+            site.taper(0.0, 0.0, 42.0, 5.0, 2.6, 1.8, 8, Rgb::hex(0x7E705A));
+            site.taper(0.0, 0.0, 47.0, 4.0, 1.2, 0.15, 6, a);
+        }
+        // Chicago: the two antennas on the tall grey slab.
+        Landmark::Willis => {
+            site.block(0.0, 0.0, 0.0, 5.0, 5.0, 20.0, 0.92);
+            site.block(0.0, 0.0, 20.0, 4.0, 4.0, 22.0, 1.0);
+            site.block(0.0, 0.0, 42.0, 3.0, 3.0, 18.0, 0.86);
+            site.windows(0.0, 0.0, 3.6, 3.6, 6.0, 56.0);
+            site.taper(-1.5, 0.0, 60.0, 12.0, 0.3, 0.12, 5, Rgb::hex(0x9AA6B2));
+            site.taper(1.5, 0.0, 60.0, 12.0, 0.3, 0.12, 5, Rgb::hex(0x9AA6B2));
+        }
+        // Detroit: the five drums of the Renaissance Center.
+        Landmark::Renaissance => {
+            site.block(0.0, 0.0, 0.0, 9.0, 6.0, 12.0, 0.88);
+            for i in 0..5 {
+                let dx = -7.0 + i as f32 * 3.5;
+                let h = 26.0 + (1.0 - (i as f32 - 2.0).abs() * 0.35) * 10.0;
+                site.taper(dx, 0.0, 12.0, h, 1.5, 1.5, 10, c.scale(0.9 + i as f32 * 0.03));
+                site.taper(dx, 0.0, 12.0 + h - 1.0, 1.2, 1.65, 1.6, 10, a);
+            }
+        }
+        // Minneapolis: the Foshay's obelisk on a slab.
+        Landmark::Foshay => {
+            site.block(0.0, 0.0, 0.0, 4.0, 4.0, 30.0, 0.94);
+            site.windows(0.0, 0.0, 4.0, 4.0, 6.0, 28.0);
+            site.band(0.0, 4.05, 28.0, 4.2, 1.2, a);
+            site.taper(0.0, 0.0, 30.0, 12.0, 2.6, 0.5, 4, c);
+            site.taper(0.0, 0.0, 42.0, 6.0, 0.25, 0.1, 4, Rgb::hex(0xB0BCC8));
+        }
+        // Atlanta: the pencil, a shaft with a lit pyramid on the end of it.
+        Landmark::Pencil => {
+            site.block(0.0, 0.0, 0.0, 5.0, 5.0, 16.0, 0.9);
+            site.block(0.0, 0.0, 16.0, 2.0, 2.0, 46.0, 1.0);
+            site.windows(0.0, 0.0, 2.0, 2.0, 18.0, 60.0);
+            site.taper(0.0, 0.0, 62.0, 8.0, 2.9, 0.1, 4, a);
+            site.taper(0.0, 0.0, 70.0, 4.0, 0.14, 0.05, 4, Rgb::hex(0xD8E0E8));
+        }
+        // Miami: the Freedom Tower, a dome over an arcade.
+        Landmark::Freedom => {
+            site.block(0.0, 0.0, 0.0, 6.0, 5.0, 12.0, 0.92);
+            site.block(0.0, 0.0, 12.0, 3.4, 3.0, 16.0, 1.0);
+            site.windows(0.0, 0.0, 3.4, 3.0, 13.0, 26.0);
+            site.taper(0.0, 0.0, 28.0, 6.0, 3.0, 1.2, 10, Rgb::hex(0xE6D8C4));
+            site.taper(0.0, 0.0, 34.0, 3.0, 0.8, 0.3, 8, Rgb::hex(0xF0E4CC));
+            site.taper(0.0, 0.0, 36.0, 6.0, 0.3, 0.06, 6, a);
+        }
+        // Dallas: the ball on the stick.
+        Landmark::Reunion => {
+            site.taper(0.0, 0.0, 0.0, 34.0, 1.6, 1.2, 8, c.scale(0.95));
+            for i in 0..4 {
+                site.taper(0.0, 0.0, 21.0 + i as f32 * 4.0, 1.2, 1.9, 1.9, 8, a);
+            }
+            site.taper(0.0, 0.0, 34.0, 6.0, 5.2, 5.2, 12, c.scale(1.05));
+            for i in 0..3 {
+                site.taper(0.0, 0.0, 35.6 + i as f32 * 1.6, 0.9, 5.4, 5.4, 12, a);
+            }
+            site.taper(0.0, 0.0, 40.0, 18.0, 0.3, 0.08, 5, Rgb::hex(0xC8D2DC));
+        }
+        // Nashville: the two spires over the slab — the ones everybody in town
+        // calls the bat.
+        Landmark::TwinSpires => {
+            site.block(0.0, 0.0, 0.0, 6.0, 3.0, 26.0, 0.94);
+            site.windows(0.0, 0.0, 6.0, 3.0, 5.0, 25.0);
+            site.block(0.0, 0.0, 26.0, 5.0, 2.4, 6.0, 0.8);
+            for side in [-1.0f32, 1.0] {
+                site.taper(side * 4.0, 0.0, 26.0, 2.0, 1.2, 1.1, 8, a);
+                site.taper(side * 4.0, 0.0, 28.0, 20.0, 0.9, 0.12, 6, c.scale(1.1));
+            }
+        }
+        // New York: the Empire State, stepped, with the mast on the top.
+        Landmark::Empire => {
+            site.block(0.0, 0.0, 0.0, 8.0, 5.0, 10.0, 0.9);
+            site.block(0.0, 0.0, 10.0, 6.0, 4.0, 12.0, 0.96);
+            site.block(0.0, 0.0, 22.0, 3.6, 2.8, 20.0, 1.0);
+            site.block(0.0, 0.0, 42.0, 2.6, 2.0, 8.0, 0.94);
+            site.block(0.0, 0.0, 50.0, 1.8, 1.5, 8.0, 0.9);
+            site.windows(0.0, 0.0, 3.2, 2.4, 24.0, 52.0);
+            site.band(0.0, 2.85, 44.0, 2.8, 1.0, a);
+            site.taper(0.0, 0.0, 58.0, 4.0, 1.3, 0.9, 8, Rgb::hex(0x9AA6B6));
+            site.taper(0.0, 0.0, 62.0, 14.0, 0.3, 0.08, 5, a);
+        }
+        // Philadelphia: the tower of City Hall, clock and all, under the statue.
+        Landmark::CityHallTower => {
+            site.block(0.0, 0.0, 0.0, 7.0, 7.0, 14.0, 0.92);
+            site.block(0.0, 0.0, 14.0, 3.0, 3.0, 26.0, 1.0);
+            site.windows(0.0, 0.0, 3.0, 3.0, 16.0, 38.0);
+            site.band(0.0, 3.05, 33.0, 2.4, 2.4, Rgb::hex(0xF0E6C8));
+            site.taper(0.0, 0.0, 40.0, 3.0, 2.2, 1.8, 8, Rgb::hex(0x7E8A94));
+            site.taper(0.0, 0.0, 43.0, 4.0, 0.6, 0.45, 5, Rgb::hex(0xC8B47E));
+        }
+        // Washington: the obelisk.
+        Landmark::Obelisk => {
+            site.taper(0.0, 0.0, 0.0, 3.0, 3.4, 3.2, 4, c.scale(0.94));
+            site.taper(0.0, 0.0, 3.0, 48.0, 2.4, 1.4, 4, Rgb::hex(0xDCD8CE));
+            site.taper(0.0, 0.0, 51.0, 5.0, 1.4, 0.05, 4, Rgb::hex(0xE8E4DA));
+        }
+        // Charlotte: the tower with the crown of lights on it.
+        Landmark::Crown => {
+            site.block(0.0, 0.0, 0.0, 5.0, 4.0, 12.0, 0.9);
+            site.block(0.0, 0.0, 12.0, 4.0, 3.2, 32.0, 1.0);
+            site.windows(0.0, 0.0, 4.0, 3.2, 14.0, 42.0);
+            site.taper(0.0, 0.0, 44.0, 4.0, 4.4, 3.0, 8, c.scale(1.08));
+            site.taper(0.0, 0.0, 48.0, 8.0, 3.0, 0.1, 8, a);
+        }
+        // Los Angeles: City Hall, a stepped tower with a pyramid on it.
+        Landmark::PyramidHall => {
+            site.block(0.0, 0.0, 0.0, 6.0, 5.0, 22.0, 0.94);
+            site.windows(0.0, 0.0, 6.0, 5.0, 6.0, 20.0);
+            site.band(0.0, 5.05, 20.0, 6.2, 1.2, Rgb::hex(0xE8DCC0));
+            site.block(0.0, 0.0, 22.0, 3.6, 3.0, 18.0, 1.0);
+            site.taper(0.0, 0.0, 40.0, 8.0, 3.4, 0.1, 4, a);
+        }
+        // Phoenix: the butte the city is named around, no tower at all.
+        Landmark::Butte => {
+            site.block(0.0, 0.0, -1.0, 12.0, 9.0, 8.0, 0.95);
+            site.block(2.0, 1.0, 7.0, 8.0, 6.0, 8.0, 1.0);
+            site.block(3.0, 1.0, 15.0, 5.0, 4.0, 4.0, 0.92);
+            site.block(-8.0, -6.0, -1.0, 4.0, 3.0, 3.0, 0.9);
+        }
+        // Seattle: the needle.
+        Landmark::Needle => {
+            site.block(0.0, 0.0, 0.0, 3.0, 3.0, 6.0, 0.9);
+            site.taper(0.0, 0.0, 6.0, 30.0, 1.5, 1.1, 8, c.scale(0.95));
+            site.taper(0.0, 0.0, 36.0, 2.0, 2.4, 5.6, 12, c.scale(1.05));
+            site.taper(0.0, 0.0, 38.0, 1.4, 5.6, 4.6, 12, c.scale(1.1));
+            site.taper(0.0, 0.0, 39.4, 3.0, 3.6, 2.0, 12, c);
+            site.taper(0.0, 0.0, 36.2, 0.8, 5.8, 5.6, 12, a);
+            site.taper(0.0, 0.0, 42.4, 12.0, 0.22, 0.05, 5, Rgb::hex(0xC8D2DC));
+        }
+        // Denver: the building with the barrel on the roof.
+        Landmark::CashRegister => {
+            site.block(0.0, 0.0, 0.0, 5.0, 4.0, 34.0, 0.94);
+            site.windows(0.0, 0.0, 5.0, 4.0, 6.0, 32.0);
+            site.taper(0.0, 0.0, 34.0, 4.0, 5.0, 4.6, 8, c.scale(1.05));
+            site.taper(0.0, 0.0, 38.0, 3.0, 4.0, 3.0, 8, c);
+            site.taper(0.0, 0.0, 41.0, 2.2, 2.6, 1.6, 8, c.scale(0.96));
+            site.taper(0.0, 0.0, 43.2, 8.0, 0.2, 0.05, 5, a);
+        }
+    }
+}
+
 fn city_scenery(city: City, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     if city.water {
         water(mesh, -30.0, 130.0, -78.0, -40.0, Rgb::hex(0x1E4E66));
@@ -963,7 +1321,7 @@ fn city_scenery(city: City, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn F
     // The end of the ground is what the shot down the field sees, so the city
     // gets a row there as well: the skyline is not only down the sides.
     for end in [-1.0f32, 1.0] {
-        let base = if end < 0.0 { -34.0f32 } else { 128.0 };
+        let base = if end < 0.0 { -34.0f32 } else { 119.0 };
         let count = (city.towers / 2).max(2);
         for i in 0..count {
             let w = 3.0 + rand() * 3.5;
@@ -979,6 +1337,69 @@ fn city_scenery(city: City, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn F
             );
         }
     }
+    // The ground the downtown stands on, so the streets and the blocks past the
+    // end of the field are not floating in the dark.
+    mesh.quad_shaded(
+        Vec3::new(118.0, -150.0, -0.08),
+        Vec3::new(340.0, -150.0, -0.08),
+        Vec3::new(340.0, 150.0, -0.08),
+        Vec3::new(118.0, 150.0, -0.08),
+        Rgb::hex(0x333941),
+        1.0,
+    );
+    // A street grid past the far end: three streets one way, three the other,
+    // with the downtown built along them.
+    let low = teams[0].primary.lerp(Rgb::hex(0x2A3240), 0.82);
+    for i in 0..3 {
+        road(mesh, false, 132.0 + i as f32 * 54.0, -140.0, 140.0, 7.0);
+    }
+    for j in 0..3 {
+        road(mesh, true, -78.0 + j as f32 * 52.0, 120.0, 340.0, 7.0);
+    }
+    for i in 0..3 {
+        for j in 0..3 {
+            let half = Vec3::new(
+                4.0 + rand() * 4.0,
+                3.6 + rand() * 3.0,
+                3.0 + rand() * 7.0,
+            );
+            // In the middle of a block, so no building stands in a street.
+            let x = 132.0 + i as f32 * 54.0 + 27.0 + (rand() - 0.5) * 6.0;
+            let y = -78.0 + j as f32 * 52.0 + 26.0 + (rand() - 0.5) * 8.0;
+            mid_rise(
+                mesh,
+                Vec3::new(x, y, half.z),
+                half,
+                if y < 0.0 { 1.0 } else { -1.0 },
+                low.scale(0.85 + rand() * 0.4),
+                rand,
+            );
+        }
+    }
+    // And a row of lower blocks along the far stand, so the skyline over the
+    // roof is a city with streets in it rather than towers standing in a field.
+    for _ in 0..7 {
+        let half = Vec3::new(4.0 + rand() * 3.5, 3.2 + rand() * 2.0, 4.0 + rand() * 5.0);
+        mid_rise(
+            mesh,
+            Vec3::new(-30.0 + rand() * 150.0, -(33.0 + rand() * 3.0), half.z),
+            half,
+            1.0,
+            low.scale(0.8 + rand() * 0.5),
+            rand,
+        );
+    }
+    // The building the city is known by: past the far end and just off the
+    // middle, where the lens down the field and the lens across it both find it.
+    landmark(
+        mesh,
+        city.landmark,
+        Vec3::new(200.0, -14.0, 0.0),
+        0.55,
+        teams[0].primary.lerp(Rgb::hex(0x404A58), 0.55),
+        teams[1].accent,
+        rand,
+    );
     for _ in 0..city.palms {
         palm(
             mesh,

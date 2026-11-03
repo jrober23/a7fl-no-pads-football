@@ -1177,11 +1177,11 @@ pub(crate) fn paint_word(
     }
 }
 
-/// The building around the field: a run-off apron, advertising boards, one bowl
-/// of seating down each sideline with a crowd in it, a roof over the far side, a
-/// scoreboard and four banks of lights. There is no stand behind either end
-/// zone: the building is two long sides, so nothing is looking at the back of
-/// the field over the paint.
+/// The building around the field: a run-off apron, advertising boards, one
+/// grandstand down the far sideline with a crowd in it and a roof over it, a
+/// scoreboard and four banks of lights. One side only, the way a school field is
+/// built: the near side is open boards, so the lens has nothing between it and
+/// the ball, and there is no stand behind either end zone either.
 ///
 /// Heights are kept well under the broadcast lens, which sits eight yards above
 /// the top row: the building has to be in the picture without ever getting
@@ -1246,10 +1246,10 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
     }
 
     // ------------------------------------------------------------------
-    // The bowl. One tier on each sideline: a concrete riser and a tread per
-    // row, with a crowd standing on the tread. Runs of people are drawn as one
-    // block each so a full house costs a couple of thousand triangles, not tens
-    // of thousands.
+    // The stand. One tier, on the far sideline only: a concrete riser and a
+    // tread per row, with a crowd standing on the tread. Runs of people are
+    // drawn as one block each so a full house costs a couple of thousand
+    // triangles, not tens of thousands. The near sideline is left open.
     // ------------------------------------------------------------------
     let rows = 7;
     let tread = 1.30f32;
@@ -1262,7 +1262,7 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
         let z_top = z + riser;
         let y_back = y_front + tread;
         let tone = concrete.scale(1.0 - row as f32 * 0.012);
-        for side in [-1.0f32, 1.0] {
+        for side in [-1.0f32] {
             // Riser, then the tread behind it.
             mesh.quad(
                 Vec3::new(x0, side * y_front, z),
@@ -1285,9 +1285,8 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
         y_front = y_back;
     }
 
-    // Back wall and, over the far side only, a roof with a coloured fascia: the
-    // near side stays open so the camera can see over it.
-    for side in [-1.0f32, 1.0] {
+    // A back wall behind the stand, and a roof with a coloured fascia over it.
+    for side in [-1.0f32] {
         let y = side * (y_front + 0.3);
         mesh.quad(
             Vec3::new(x0, y, 0.0),
@@ -1917,7 +1916,7 @@ fn build_crowd(teams: &[Team; 2]) -> Vec<CrowdFigure> {
     for _ in 0..rows {
         let z_top = z + riser;
         let y_back = y_front + tread;
-        for side in [-1.0f32, 1.0] {
+        for side in [-1.0f32] {
             let mut px_i = x0;
             while px_i < x1 {
                 let gap = 0.74 + rand() * 0.42;
