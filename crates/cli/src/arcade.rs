@@ -613,6 +613,7 @@ impl Arcade {
             .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
         let mut mode = 0usize;
         let mut page = 0usize;
+        let opened = Instant::now();
         let mut last = Instant::now();
         let mut cut = Instant::now();
         let mut acc = 0.0f64;
@@ -650,7 +651,18 @@ impl Arcade {
                 None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
             };
             let (title, left, right, prompt) = &pages[page];
-            nopads_render::hud::draw_half_cards(&mut frame, title, &subtitle, left, right, accents);
+            // The banner goes up on its own for a beat, then the cards arrive on
+            // it: the introduction reads as a broadcast open rather than a form.
+            let cards_up = opened.elapsed() >= Duration::from_millis(900);
+            nopads_render::hud::draw_half_cards(
+                &mut frame,
+                title,
+                &subtitle,
+                left,
+                right,
+                accents,
+                cards_up,
+            );
             let lines = vec![self.header(), String::new(), prompt.to_string()];
             if !self.view.show(&mut frame, &lines) {
                 return false;

@@ -657,6 +657,24 @@ fn wrap_to(text: &str, scale: usize, max_w: usize) -> Vec<String> {
     out
 }
 
+/// One see-through card: a soft shadow, a thin border, a wash of ink, and the
+/// club's colour across the top.
+///
+/// It is drawn by hand rather than with [`Frame::panel`] because `panel` takes a
+/// shadow strength, not an alpha, and fills flat: passing it 0.5 gives a solid
+/// card with a lighter shadow, which is why the cards stayed opaque through two
+/// rounds of opacity changes.
+fn glass_card(frame: &mut Frame, x: i32, y: i32, w: i32, h: i32, accent: Rgb) {
+    let r = 12;
+    frame.rounded_rect_alpha(x - 2, y - 1, w + 4, h + 5, r + 2, Rgb::BLACK, PAUSE_VEIL * 0.30);
+    // Blended, not solid: `rounded_rect` fills its whole shape, so an "outline"
+    // drawn with it is a slab of edge colour behind every card pixel -- the
+    // second opaque surface, under a translucent fill, holding the field out.
+    frame.rounded_rect_alpha(x - 1, y - 1, w + 2, h + 2, r + 1, PANEL_EDGE, 0.55);
+    frame.rounded_rect_alpha(x, y, w, h, r, Rgb::hex(0x1C2533), PAUSE_VEIL);
+    frame.fill_rect(x + 12, y + 5, w - 24, 4, accent);
+}
+
 pub fn draw_half_cards(
     frame: &mut Frame,
     title: &str,
@@ -664,6 +682,7 @@ pub fn draw_half_cards(
     left: &[String],
     right: &[String],
     accents: [Rgb; 2],
+    show_cards: bool,
 ) {
     let w = frame.w as i32;
     let h = frame.h as i32;
@@ -683,22 +702,14 @@ pub fn draw_half_cards(
     font::draw_centered(frame, w / 2, 36, title, 3, WHITE, 2);
     font::draw_centered(frame, w / 2, 74, subtitle, 2, Rgb::hex(0xDCE3EC), 1);
 
+    if !show_cards {
+        return;
+    }
     for (i, lines) in [left, right].iter().enumerate() {
         let cx = x[i];
-        // Glass, not slate: the same weight as the pause menu, so the field
-        // reads through it.
-        frame.panel(
-            cx,
-            y,
-            card_w,
-            card_h,
-            12,
-            Rgb::hex(0x1C2533),
-            Rgb::hex(0x0B1017),
-            PANEL_EDGE,
-            PAUSE_VEIL,
-        );
-        frame.fill_rect(cx + 12, y + 5, card_w - 24, 4, accents[i]);
+        // Glass, not slate: the same weight as the pause menu, so the field reads
+        // through it.
+        glass_card(frame, cx, y, card_w, card_h, accents[i]);
         let inset = 20;
         let max_w = (card_w - inset * 2).max(40) as usize;
         let mut ry = y + 22;
@@ -730,6 +741,77 @@ mod tests {
 
 
 
+
+    #[test]
+    fn the_cards_are_glass_and_not_slate() {
+        // The property that matters is that the picture behind shows through: the
+        // same cards over two different backdrops have to come out different. The
+        // first version of this test compared one pixel against a hand-worked
+        // blend and was wrong about what the panel draws, not about the panel.
+        let draw = |base: Rgb| {
+            let mut f = Frame::new(1280, 720);
+            f.color.fill(base);
+            draw_half_cards(
+                &mut f,
+                "MATCHUP",
+                "BOS AT CHI",
+                &["BOSTON".to_string()],
+                &["CHICAGO".to_string()],
+                [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+                true,
+            );
+            f
+        };
+        let dark = draw(Rgb::new(10, 20, 30));
+        let light = draw(Rgb::new(70, 100, 130));
+        // A strip of plain card, below the type.
+        let (mut strip, mut differs) = (0, 0);
+        for y in 344 + 286..344 + 308 {
+            for x in 32 + 24..32 + 552 {
+                strip += 1;
+                if dark.color[y * 1280 + x] != light.color[y * 1280 + x] {
+                    differs += 1;
+                }
+            }
+        }
+        assert!(strip > 5_000, "the sample strip is off the card: {strip} px");
+        assert!(
+            differs * 100 / strip > 80,
+            "the card is opaque: only {differs} of {strip} px saw the backdrop"
+        );
+    }
+
+    #[test]
+    fn the_banner_comes_up_before_the_cards() {
+        let base = Rgb::new(10, 20, 30);
+        let mut f = Frame::new(1280, 720);
+        f.color.fill(base);
+        draw_half_cards(
+            &mut f,
+            "MATCHUP",
+            "BOS AT CHI",
+            &["BOSTON".to_string()],
+            &["CHICAGO".to_string()],
+            [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+            false,
+        );
+        let mut cards = 0;
+        for y in 344..664 {
+            for x in 32..1248 {
+                if f.color[y * 1280 + x] != base {
+                    cards += 1;
+                }
+            }
+        }
+        assert_eq!(cards, 0, "the cards came up with the banner: {cards} px");
+        // And the banner itself is up.
+        let banner = (26..102)
+            .flat_map(|y| (380..900).map(move |x| (y, x)))
+            .filter(|(y, x)| f.color[y * 1280 + x] != base)
+            .count();
+        assert!(banner > 2_000, "the banner is missing: {banner} px");
+    }
+
     #[test]
     fn a_long_club_name_wraps_inside_its_card() {
         // A control render with short names: the only thing that changes is the
@@ -747,6 +829,7 @@ mod tests {
                 left,
                 right,
                 [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+                true,
             );
             f
         };
@@ -792,6 +875,7 @@ mod tests {
             &left,
             &right,
             [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+            true,
         );
         // The picture above the cards is the warm-up, and it has to survive.
         let mut touched = 0;
