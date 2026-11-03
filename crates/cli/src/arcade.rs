@@ -2315,6 +2315,11 @@ fn drive(
             }
             // A live-ball foul does not stop anything: the flag is on the ground and
             // the ball moves when the play is over.
+            // The clock at the line, where the player can see it while the ball is
+            // still his to snap: the scoreboard bar is the game's clock, not this.
+            if matches!(sim.phase, Phase::PreSnap) {
+                lines.push(format!("  PLAY CLOCK  {:.0}", sim.play_clock.ceil()));
+            }
             if let Some(flag) = &sim.flag {
                 lines.push(format!(
                     "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
@@ -2764,6 +2769,11 @@ fn drive_defense(
                             .to_string(),
                     );
                 }
+            }
+            // The clock at the line, where the player can see it while the ball is
+            // still his to snap: the scoreboard bar is the game's clock, not this.
+            if matches!(sim.phase, Phase::PreSnap) {
+                lines.push(format!("  PLAY CLOCK  {:.0}", sim.play_clock.ceil()));
             }
             if let Some(flag) = &sim.flag {
                 lines.push(format!(

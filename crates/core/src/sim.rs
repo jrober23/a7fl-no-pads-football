@@ -482,6 +482,9 @@ pub struct PlaySim<'a> {
     /// comes out, on any kind of play, so every client raises the same alert.
     pub fumble_alert: f32,
     pub fumble_note: String,
+    /// The play clock at the line: twenty-five seconds to snap it. It runs while
+    /// the ball waits on the centre, and running it out is a five-yard foul.
+    pub play_clock: f32,
     /// True while the player is holding the preview button at the line.
     preview: bool,
     /// Time left of a dummy count being sold at the line.
@@ -645,6 +648,7 @@ impl<'a> PlaySim<'a> {
             flag_at: 0.0,
             fumble_alert: 0.0,
             fumble_note: String::new(),
+            play_clock: crate::rules::PLAY_CLOCK_SECONDS,
             preview: false,
             dummy_t: 0.0,
             wrap: None,
@@ -989,6 +993,13 @@ impl<'a> PlaySim<'a> {
         }
 
         if self.phase == Phase::PreSnap {
+            // The clock at the line runs on the game, not on the player's nerves:
+            // standing over the ball until the count is gone is a foul.
+            self.play_clock = (self.play_clock - dt).max(0.0);
+            if self.awaiting_snap && self.play_clock <= 0.0 {
+                self.call_delay_of_game();
+                return self.result.as_ref();
+            }
             // Quick pre-snap shuffle so the broadcast shot has life. It is an
             // offset from where the formation was set, not a nudge applied every
             // frame: with the snap waiting on a button the old version walked the
@@ -1261,6 +1272,27 @@ impl<'a> PlaySim<'a> {
         if touched {
             self.call_encroachment(d);
         }
+    }
+
+    /// The play clock ran out before the ball was snapped. Five yards on the
+    /// offence and the down is played again: nothing happened, so nothing after
+    /// the count counts.
+    fn call_delay_of_game(&mut self) {
+        if self.result.is_some() {
+            return;
+        }
+        let mut call = PenaltyCall::new(PenaltyKind::DelayOfGame, self.los);
+        call.against = FoulTeam::Offense;
+        self.flag = Some(call);
+        self.events.push(SimEvent {
+            t: self.t,
+            text: "The play clock runs out before the snap".to_string(),
+        });
+        self.finish(
+            PlayOutcome::Penalty,
+            self.los,
+            "Delay of game: five yards, and the down is played again.".to_string(),
+        );
     }
 
     /// A man was past the line when the ball went: five yards and the down again.
@@ -2255,7 +2287,7 @@ impl<'a> PlaySim<'a> {
     /// blocking itself, so a blocker whose hands have not found anybody yet still
     /// stands like one, and the mesh cannot leave a stale flag on the runner.
     fn pose_blockers(&mut self) {
-        let snap = self.t > SNAP_DELAY;
+        let snap = !matches!(self.phase, Phase::PreSnap) && self.t > SNAP_DELAY;
         let run = self.play.family.is_run();
         for i in 0..7 {
             let role = OffRole::ALL[self.players[i].role_index];
@@ -4776,6 +4808,31 @@ mod tests {
             r.outcome,
             r.description
         );
+    }
+
+    /// Standing over the ball until the count runs out is a five-yard foul, and
+    /// the ball never goes: nothing happened, so nothing after the count counts.
+    #[test]
+    fn running_out_the_play_clock_is_a_delay_of_game() {
+        let (off, def_) = teams();
+        let play = &playbook()[0];
+        let d = defensive_playbook();
+        let mut sim = PlaySim::new(&off, &def_, play, &d[0], &setup(45.0, 1, 10.0, 1));
+        sim.await_snap(true);
+        assert!(sim.play_clock > 20.0, "the clock started at {}", sim.play_clock);
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 2400 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        let r = sim.result.clone().expect("the play clock never ran out");
+        assert_eq!(r.outcome, PlayOutcome::Penalty, "{:?}", r.outcome);
+        let call = r.penalty.clone().expect("no foul was booked");
+        assert_eq!(call.kind, crate::rules::PenaltyKind::DelayOfGame);
+        assert_eq!(call.against, FoulTeam::Offense);
+        assert_eq!(sim.phase, Phase::Dead, "the ball went anyway");
+        assert_eq!(sim.play_clock, 0.0);
+        assert_eq!(r.yards, 0.0, "a foul before the snap is not a play");
     }
 
     /// A fumble puts the plate up the moment the ball comes out, with the words of

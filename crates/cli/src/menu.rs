@@ -9,7 +9,10 @@ use std::time::{Duration, Instant};
 
 use nopads_core::game::{GameState, PlayRecord};
 use nopads_core::math::Rgb;
-use nopads_core::team::{clubs, league_teams, Club, Division, Position, Team, TeamRatings};
+use nopads_core::team::{
+    clubs, depth_order, league_teams, set_depth_order, Club, Division, Player, Position, Team,
+    TeamRatings,
+};
 use nopads_render::raster::Frame;
 use nopads_render::venues::{self, Venue};
 use nopads_render::{Broadcast, CameraMode};
@@ -538,9 +541,13 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
 }
 
 /// One club's depth chart, best man first at every position, with the full roster
-/// beside it. The depths are the same ordering the game uses to pick its seven.
+/// beside it. The depths are the same ordering the game uses to pick its seven,
+/// and they can be edited: X walks a man up his row and Y walks him down, and the
+/// chart is saved against the club, so the next game starts the men the player
+/// picked.
 fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Option<()> {
     const ROWS: usize = 16;
+    const SHOWN: usize = 3;
     const ORDER: [Position; 8] = [
         Position::Qb,
         Position::Rb,
@@ -553,14 +560,24 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
     ];
     let roster = club.roster();
     let mut depth: Vec<(Position, Vec<usize>)> = Vec::new();
-    for pos in ORDER {
+    for (row, pos) in ORDER.into_iter().enumerate() {
         let mut men: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].pos == pos).collect();
         men.sort_by_key(|&i| std::cmp::Reverse(roster[i].overall()));
+        // A row that has been edited keeps the order the player left it in.
+        if let Some(ids) = depth_order(club.seed, row) {
+            men.sort_by_key(|&i| {
+                ids.iter()
+                    .position(|&id| id == roster[i].id)
+                    .unwrap_or(usize::MAX)
+            });
+        }
         depth.push((pos, men));
     }
     let pages = roster.len().div_ceil(ROWS).max(1);
     let mut page = 0usize;
+    let mut sel = (0usize, 0usize);
     let mut nav = Repeat::default();
+    let mut nav_y = Repeat::default();
     let mut last = Instant::now();
     view.reset();
     loop {
@@ -576,6 +593,47 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
                 page = wrap(page, pages, d);
             }
         }
+        // Up and down walk the cursor through the chart, row by row.
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                let rows = depth.len() as i32;
+                let mut r = sel.0 as i32;
+                let mut nth = sel.1 as i32 + d as i32;
+                while nth < 0 {
+                    r = (r + rows - 1) % rows;
+                    nth += depth[r as usize].1.len().min(SHOWN).max(1) as i32;
+                }
+                while nth >= depth[r as usize].1.len().min(SHOWN).max(1) as i32 {
+                    nth -= depth[r as usize].1.len().min(SHOWN).max(1) as i32;
+                    r = (r + 1) % rows;
+                }
+                sel = (r as usize, nth as usize);
+            }
+        }
+        let row = sel.0;
+        let shown = depth[row].1.len().min(SHOWN).max(1);
+        if sel.1 >= shown {
+            sel.1 = shown - 1;
+        }
+        // X promotes the man the cursor is on, Y demotes him. The chart is saved
+        // the moment it changes: it belongs to the club, not to this screen.
+        if input.pressed.x && sel.1 > 0 {
+            depth[row].1.swap(sel.1, sel.1 - 1);
+            sel.1 -= 1;
+            save_depth(club.seed, row, &roster, &depth[row].1);
+        }
+        if input.pressed.y && sel.1 + 1 < depth[row].1.len() {
+            depth[row].1.swap(sel.1, sel.1 + 1);
+            sel.1 += 1;
+            save_depth(club.seed, row, &roster, &depth[row].1);
+        }
+        if input.pressed.a {
+            let i = depth[row].1[sel.1];
+            player_card(view, pad, &roster[i])?;
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
         night(&mut frame);
         centered(&mut frame, 8, &club.full_name().to_uppercase(), 2, accent());
@@ -583,11 +641,15 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
         frame.text_shadowed(20, 38, "DEPTH CHART", 1, paper(), 1);
         let title = format!("ROSTER   {} / {}", page + 1, pages);
         frame.text_shadowed(330, 38, &title, 1, paper(), 1);
-        for (row, (pos, men)) in depth.iter().enumerate() {
-            let y = 58 + row as i32 * 30;
+        for (r, (pos, men)) in depth.iter().enumerate() {
+            let y = 58 + r as i32 * 30;
             frame.text_shadowed(20, y + 2, pos.abbr(), 2, accent(), 1);
-            for (n, &i) in men.iter().take(2).enumerate() {
+            for (n, &i) in men.iter().take(SHOWN).enumerate() {
                 let p = &roster[i];
+                let on = r == row && n == sel.1;
+                if on {
+                    frame.rounded_rect(54, y - 2 + n as i32 * 9, 250, 11, 3, panel());
+                }
                 let line = format!(
                     "{:>2}  {:<12}{}",
                     p.number,
@@ -595,7 +657,14 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
                     p.overall()
                 );
                 let color = if n == 0 { paper() } else { dim() };
-                frame.text_shadowed(58, y + 2 + n as i32 * 12, &line, 1, color, 1);
+                frame.text_shadowed(
+                    58,
+                    y + n as i32 * 9,
+                    &line,
+                    1,
+                    if on { accent() } else { color },
+                    1,
+                );
             }
         }
         frame.fill_rect(320, 52, 1, 268, Rgb::new(48, 92, 148));
@@ -610,11 +679,65 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
             );
             frame.text_shadowed(334, 56 + n as i32 * 15, &line, 1, paper(), 1);
         }
-        footer(&mut frame, "[LEFT/RIGHT] PAGE ROSTER   [B] BACK");
+        footer(
+            &mut frame,
+            "[UP/DOWN] MAN   [X] UP  [Y] DOWN   [A] CARD   [LEFT/RIGHT] ROSTER   [B] BACK",
+        );
         if !view.show(&mut frame, &[]) {
             return None;
         }
         beat();
+    }
+}
+
+/// Save one row of the chart against the club.
+fn save_depth(seed: u64, row: usize, roster: &[Player], men: &[usize]) {
+    let ids: Vec<u16> = men.iter().map(|&i| roster[i].id).collect();
+    set_depth_order(seed, row, ids);
+}
+
+/// One man's card: the ten numbers a roster is judged by, on the same 40..99 scale
+/// the clubs are rated on.
+fn player_card(view: &mut View, pad: &mut Option<&mut Pad>, player: &Player) -> Option<()> {
+    view.reset();
+    let mut last = Instant::now();
+    loop {
+        let now = Instant::now();
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.a || input.pressed.b || input.pressed.start {
+            return Some(());
+        }
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        night(&mut frame);
+        centered(
+            &mut frame,
+            10,
+            &format!("#{} {}", player.number, player.full_name().to_uppercase()),
+            2,
+            accent(),
+        );
+        centered(
+            &mut frame,
+            30,
+            &format!("{}   {} OVERALL", player.pos.abbr(), player.overall()),
+            1,
+            dim(),
+        );
+        for (n, (label, value)) in player.attrs.ratings().iter().enumerate() {
+            let y = 54 + n as i32 * 26;
+            frame.text_shadowed(110, y + 1, label, 1, paper(), 1);
+            frame.fill_rect(260, y, 210, 9, Rgb::new(30, 40, 58));
+            let filled = (210.0 * (*value as f32 / 99.0)) as i32;
+            frame.fill_rect(260, y, filled.max(2), 9, accent());
+            frame.text_shadowed(482, y + 1, &format!("{value}"), 1, paper(), 1);
+        }
+        footer(&mut frame, "[A/B] BACK");
+        if !view.show(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+        let _ = last;
     }
 }
 

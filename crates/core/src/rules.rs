@@ -15,8 +15,8 @@ use crate::field::{self, FIELD_LENGTH};
 use crate::math::{clamp, Rgb};
 
 pub const QUARTER_SECONDS: f32 = 15.0 * 60.0;
-pub const PLAY_CLOCK_SECONDS: f32 = 30.0;
-pub const OVERTIME_PLAY_CLOCK_SECONDS: f32 = 30.0;
+pub const PLAY_CLOCK_SECONDS: f32 = 25.0;
+pub const OVERTIME_PLAY_CLOCK_SECONDS: f32 = 25.0;
 pub const DOWNS: u8 = 4;
 pub const YARDS_TO_GO: f32 = 10.0;
 pub const TIMEOUTS_PER_HALF: u8 = 3;

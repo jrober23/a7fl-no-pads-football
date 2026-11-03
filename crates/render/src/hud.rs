@@ -5,6 +5,7 @@
 //! frame of an old play shows the score, clock and down that existed *then*.
 
 use nopads_core::game::{GamePhase, GameState};
+use nopads_core::rules::PLAY_CLOCK_SECONDS;
 use nopads_core::math::Rgb;
 
 use crate::font;
@@ -172,7 +173,7 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
         false,
     );
     // Play clock.
-    let pc = (state.play_clock.max(0.0) / 30.0).clamp(0.0, 1.0);
+    let pc = (state.play_clock.max(0.0) / PLAY_CLOCK_SECONDS).clamp(0.0, 1.0);
     let bar_w = ((dcard_w - 36) as f32 * pc) as i32;
     frame.fill_rect(dx + 18, by + dcard_h - 24, dcard_w - 36, 8, PANEL_EDGE);
     frame.fill_rect(dx + 18, by + dcard_h - 24, bar_w, 8, if pc < 0.2 { RED } else { YELLOW });

@@ -87,6 +87,10 @@ pub struct ThrowOffResult {
     pub scoring_team: Option<usize>,
     pub return_yards: f32,
     pub fair_catch: bool,
+    /// The play clock the next snap starts with. It is set from the catch, not
+    /// from the whistle: a return that eats ten seconds leaves fifteen to get the
+    /// ball snapped, the way it does on a real Sunday.
+    pub play_clock: f32,
     pub touchback: bool,
     pub safety: bool,
     pub touchdown: bool,
@@ -467,6 +471,7 @@ impl<'a> ThrowOffSim<'a> {
             scoring_team: None,
             return_yards: 0.0,
             fair_catch: false,
+            play_clock: crate::rules::PLAY_CLOCK_SECONDS,
             touchback: true,
             safety: false,
             touchdown: false,
@@ -1091,6 +1096,10 @@ impl<'a> ThrowOffSim<'a> {
             scoring_team,
             return_yards: if touchdown { 100.0 } else { 0.0 },
             fair_catch,
+            play_clock: self
+                .catch_t
+                .map(|c| (crate::rules::PLAY_CLOCK_SECONDS - (self.t - c)).max(5.0))
+                .unwrap_or(crate::rules::PLAY_CLOCK_SECONDS),
             touchback,
             safety,
             touchdown,

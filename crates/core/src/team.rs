@@ -89,6 +89,36 @@ impl Attributes {
         n(self.stamina)
     }
 
+    /// The ten numbers a man is judged by, on the same 40..99 scale the rest of
+    /// the game uses. Two of them are not stored as such: throwing is what the arm
+    /// and the accuracy add up to, route running is catching, agility and
+    /// awareness, and block shedding is the first step of a pass rush.
+    pub fn ratings(&self) -> [(&'static str, u8); 10] {
+        let blend = |w: &[(u8, f32)]| -> u8 {
+            let total: f32 = w.iter().map(|(_, k)| *k).sum();
+            let sum: f32 = w.iter().map(|(v, k)| *v as f32 * k).sum();
+            (sum / total).round().clamp(1.0, 99.0) as u8
+        };
+        [
+            ("SPEED", self.speed),
+            ("STRENGTH", self.strength),
+            ("AGILITY", self.agility),
+            ("AWARENESS", self.awareness),
+            ("CATCHING", self.catching),
+            (
+                "THROWING",
+                blend(&[(self.accuracy, 0.6), (self.power, 0.4)]),
+            ),
+            (
+                "ROUTE RUNNING",
+                blend(&[(self.catching, 0.4), (self.agility, 0.35), (self.awareness, 0.25)]),
+            ),
+            ("COVERAGE", self.coverage),
+            ("TACKLING", self.tackling),
+            ("BLOCK SHEDDING", blend(&[(self.pass_rush, 0.7), (self.strength, 0.3)])),
+        ]
+    }
+
     /// Composite used for depth charts, sorted best-first.
     pub fn overall(&self, pos: Position) -> u8 {
         let w: &[(u8, f32)] = match pos {
@@ -407,6 +437,50 @@ impl TeamRatings {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Edited depth charts
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+
+/// Saved depth orders, by club seed and position row: player ids, best man first.
+static DEPTH_EDITS: OnceLock<Mutex<HashMap<(u64, usize), Vec<u16>>>> = OnceLock::new();
+
+fn depth_edits() -> &'static Mutex<HashMap<(u64, usize), Vec<u16>>> {
+    DEPTH_EDITS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Save one position row of a club's chart, best man first.
+pub fn set_depth_order(seed: u64, row: usize, ids: Vec<u16>) {
+    if let Ok(mut m) = depth_edits().lock() {
+        m.insert((seed, row), ids);
+    }
+}
+
+/// The saved order for one position row, if that row has been edited.
+pub fn depth_order(seed: u64, row: usize) -> Option<Vec<u16>> {
+    depth_edits()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&(seed, row)).cloned())
+}
+
+/// Every saved row for a club, flattened into one order. Rows nobody touched are
+/// not in it, and those positions keep their generated order.
+pub fn saved_depth(seed: u64) -> Vec<u16> {
+    let Ok(m) = depth_edits().lock() else {
+        return Vec::new();
+    };
+    let mut rows: Vec<((u64, usize), Vec<u16>)> = m
+        .iter()
+        .filter(|((s, _), _)| *s == seed)
+        .map(|(k, v)| (*k, v.clone()))
+        .collect();
+    rows.sort_by_key(|(k, _)| k.1);
+    rows.into_iter().flat_map(|(_, v)| v).collect()
+}
+
 #[derive(Clone, Debug)]
 pub struct Team {
     pub id: u8,
@@ -419,6 +493,9 @@ pub struct Team {
     pub home: Uniform,
     pub away: Uniform,
     pub roster: Vec<Player>,
+    /// An edited depth order, by player id, best man first. Empty when nobody has
+    /// touched the chart, and then the best man by rating starts.
+    pub depth: Vec<u16>,
 }
 
 impl Team {
@@ -443,7 +520,15 @@ impl Team {
             .filter(|(_, p)| p.pos == pos)
             .map(|(i, _)| i)
             .collect();
-        v.sort_by_key(|&i| std::cmp::Reverse(self.roster[i].overall()));
+        // A man the player moved up the chart starts, whatever the ratings say:
+        // that is the whole point of being able to edit it.
+        v.sort_by_key(|&i| {
+            let rank = self.depth.iter().position(|&id| id == self.roster[i].id);
+            (
+                rank.unwrap_or(usize::MAX),
+                std::cmp::Reverse(self.roster[i].overall()),
+            )
+        });
         v
     }
 
@@ -911,6 +996,7 @@ fn team_from_spec(spec: Club) -> Team {
         home,
         away,
         roster,
+            depth: saved_depth(spec.seed),
     };
 
     // A couple of men a side wear the balaclava: two of the seven who take the

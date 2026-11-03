@@ -893,6 +893,9 @@ impl GameState {
         let quarter = self.quarter;
         let clock = self.clock;
         self.apply_throw_off(&result, free_throw);
+        // The clock for the next snap comes off the return: it starts when the
+        // returner takes the ball in, so a long return shortens it.
+        let next_play_clock = result.play_clock;
         let record = ThrowOffRecord {
             quarter,
             clock,
@@ -905,7 +908,7 @@ impl GameState {
         let rec = PlayRecord::ThrowOff(record);
         self.log.push(rec.clone());
         self.last_record = Some(rec.clone());
-        self.play_clock = PLAY_CLOCK_SECONDS;
+        self.play_clock = next_play_clock;
         rec
     }
 
