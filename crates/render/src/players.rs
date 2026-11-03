@@ -1587,6 +1587,12 @@ pub fn build_mesh_at(
             // The arm goes out, not the body: handled where the arms are built,
             // so the runner keeps his feet and his stride.
             Kind::StiffArm => {}
+            // A break is all hips: the body turns off its line without leaving
+            // the ground, and the stride keeps running through it.
+            Kind::Cut => yaw_mesh(&mut mesh, e * 0.85),
+            Kind::Juke => yaw_mesh(&mut mesh, e * 1.35),
+            // A stop sits him back on both feet, weight going down and back.
+            Kind::Stop => pitch_mesh(&mut mesh, SOLE, -e * 0.30),
         }
     }
 

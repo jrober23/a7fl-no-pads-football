@@ -22,8 +22,16 @@ pub struct Buttons {
     pub preview: bool,
     /// The left bumper: a dummy count at the line.
     pub dummy: bool,
-    /// The right shoulder: the defensive audible at the line.
+    /// The right shoulder: the defensive audible at the line, and the break to
+    /// the right once the ball is in a runner's hands.
     pub shoulder: bool,
+    /// Right stick up: put a shoulder into the man in front of him.
+    pub truck: bool,
+    /// Right stick down: sit down on both feet.
+    pub stop: bool,
+    /// Right stick left and right: the jump cut.
+    pub juke_l: bool,
+    pub juke_r: bool,
     pub start: bool,
 }
 
@@ -45,6 +53,10 @@ impl Buttons {
             preview: self.preview && !prev.preview,
             dummy: self.dummy && !prev.dummy,
             shoulder: self.shoulder && !prev.shoulder,
+            truck: self.truck && !prev.truck,
+            stop: self.stop && !prev.stop,
+            juke_l: self.juke_l && !prev.juke_l,
+            juke_r: self.juke_r && !prev.juke_r,
             start: self.start && !prev.start,
         }
     }
@@ -82,6 +94,10 @@ pub fn mix(pad: Option<&mut Pad>, keys: Input) -> Input {
             preview: stick.held.preview || keys.held.preview,
             dummy: stick.held.dummy || keys.held.dummy,
             shoulder: stick.held.shoulder || keys.held.shoulder,
+            truck: stick.held.truck || keys.held.truck,
+            stop: stick.held.stop || keys.held.stop,
+            juke_l: stick.held.juke_l || keys.held.juke_l,
+            juke_r: stick.held.juke_r || keys.held.juke_r,
             start: stick.held.start || keys.held.start,
         },
         pressed: Buttons {
@@ -94,6 +110,10 @@ pub fn mix(pad: Option<&mut Pad>, keys: Input) -> Input {
             preview: stick.pressed.preview || keys.pressed.preview,
             dummy: stick.pressed.dummy || keys.pressed.dummy,
             shoulder: stick.pressed.shoulder || keys.pressed.shoulder,
+            truck: stick.pressed.truck || keys.pressed.truck,
+            stop: stick.pressed.stop || keys.pressed.stop,
+            juke_l: stick.pressed.juke_l || keys.pressed.juke_l,
+            juke_r: stick.pressed.juke_r || keys.pressed.juke_r,
             start: stick.pressed.start || keys.pressed.start,
         },
     }
@@ -162,6 +182,15 @@ mod backend {
                 raw.x += press(Button::DPadRight) - press(Button::DPadLeft);
                 raw.y += press(Button::DPadUp) - press(Button::DPadDown);
                 raw = Vec2::new(raw.x.clamp(-1.0, 1.0), raw.y.clamp(-1.0, 1.0));
+                // The right stick is the runner's body, and it is the same body
+                // on every play: up is a shoulder, down is a dead stop, and the
+                // sides are the jump cut.
+                let rx = gamepad.value(Axis::RightStickX);
+                let ry = gamepad.value(Axis::RightStickY);
+                held.truck = ry > 0.55;
+                held.stop = ry < -0.55;
+                held.juke_r = rx > 0.55;
+                held.juke_l = rx < -0.55;
                 held.a = gamepad.is_pressed(Button::South);
                 held.b = gamepad.is_pressed(Button::East);
                 held.x = gamepad.is_pressed(Button::West);
@@ -253,6 +282,10 @@ mod tests {
     #[test]
     fn every_button_reports_its_own_edge() {
         let all = Buttons {
+            truck: true,
+            stop: true,
+            juke_l: true,
+            juke_r: true,
             a: true, b: true, x: true, y: true, throw: true,
             select: true, preview: true, dummy: true, shoulder: true, start: true,
         };

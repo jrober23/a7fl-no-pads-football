@@ -138,6 +138,10 @@ fn held(keys: &ButtonInput<KeyCode>) -> Buttons {
         preview: any(&[KeyCode::KeyR]),
         dummy: any(&[KeyCode::KeyQ]),
         shoulder: any(&[KeyCode::KeyE]),
+        truck: any(&[KeyCode::KeyT]),
+        stop: any(&[KeyCode::KeyG]),
+        juke_l: any(&[KeyCode::KeyF]),
+        juke_r: any(&[KeyCode::KeyH]),
         start: any(&[KeyCode::Escape]),
     }
 }

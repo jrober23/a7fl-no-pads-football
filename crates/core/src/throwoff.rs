@@ -401,17 +401,37 @@ impl<'a> ThrowOffSim<'a> {
         if self.phase != ThrowPhase::Return || self.human != Some(self.returner()) {
             return;
         }
+        let facing = self.returner_line();
+        self.begin_move(kind, facing);
+    }
+
+    /// A move aimed across the returner's own line: a cut and a juke go to a
+    /// side rather than down the field.
+    pub fn request_move_dir(&mut self, kind: crate::moves::Kind, side: f32) {
+        if self.phase != ThrowPhase::Return || self.human != Some(self.returner()) {
+            return;
+        }
+        let f = self.returner_line().normalize_or_zero();
+        let across = Vec2::new(-f.y, f.x) * if side < 0.0 { -1.0 } else { 1.0 };
+        self.begin_move(kind, across);
+    }
+
+    fn returner_line(&self) -> Vec2 {
+        let r = self.returner();
+        let vel = self.players[r].vel;
+        if vel.length() > 0.4 {
+            vel
+        } else {
+            Vec2::new(self.setup.receive_direction as f32, 0.0)
+        }
+    }
+
+    fn begin_move(&mut self, kind: crate::moves::Kind, dir: Vec2) {
         let r = self.returner();
         if self.players[r].down || self.players[r].tackled > 0.0 || self.tackle.is_some() {
             return;
         }
-        let vel = self.players[r].vel;
-        let facing = if vel.length() > 0.4 {
-            vel
-        } else {
-            Vec2::new(self.setup.receive_direction as f32, 0.0)
-        };
-        if !self.moves.start(kind, facing) {
+        if !self.moves.start(kind, dir) {
             return;
         }
         let text = match kind {
@@ -420,6 +440,9 @@ impl<'a> ThrowOffSim<'a> {
             crate::moves::Kind::Dive => format!("{} dives forward", self.name(r)),
             crate::moves::Kind::Slide => format!("{} slides down", self.name(r)),
             crate::moves::Kind::StiffArm => format!("{} puts a hand out", self.name(r)),
+            crate::moves::Kind::Cut => format!("{} plants and cuts", self.name(r)),
+            crate::moves::Kind::Juke => format!("{} jumps outside", self.name(r)),
+            crate::moves::Kind::Stop => format!("{} stops dead", self.name(r)),
         };
         self.events.push(text);
     }

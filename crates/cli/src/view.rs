@@ -255,6 +255,10 @@ impl WindowView {
             preview: key(minifb::Key::R),
             dummy: key(minifb::Key::Q),
             shoulder: key(minifb::Key::E),
+            truck: key(minifb::Key::T),
+            stop: key(minifb::Key::G),
+            juke_l: key(minifb::Key::F),
+            juke_r: key(minifb::Key::H),
             start: key(minifb::Key::Escape),
         };
 
@@ -281,6 +285,10 @@ impl WindowView {
             select: held.select && !self.prev.select,
             dummy: held.dummy && !self.prev.dummy,
             shoulder: held.shoulder && !self.prev.shoulder,
+            truck: held.truck && !self.prev.truck,
+            stop: held.stop && !self.prev.stop,
+            juke_l: held.juke_l && !self.prev.juke_l,
+            juke_r: held.juke_r && !self.prev.juke_r,
             start: held.start && !self.prev.start,
         };
         self.prev = held;

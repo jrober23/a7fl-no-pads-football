@@ -16,6 +16,11 @@ pub const HURDLE_TIME: f32 = 0.36;
 pub const DIVE_TIME: f32 = 0.34;
 pub const SLIDE_TIME: f32 = 0.40;
 pub const STIFF_ARM_TIME: f32 = 0.45;
+/// A cut is a stride's worth of plant; a juke is the same step taken harder, and
+/// a stop costs about as long as it takes to sit down on both feet.
+pub const CUT_TIME: f32 = 0.22;
+pub const JUKE_TIME: f32 = 0.28;
+pub const STOP_TIME: f32 = 0.26;
 /// Breathing room after a move before the next one can start, so a mash of the
 /// button cannot chain moves into a permanent immunity.
 pub const COOLDOWN: f32 = 0.18;
@@ -33,6 +38,13 @@ pub enum Kind {
     Slide,
     /// The free hand goes out at the man in front of him and shoves.
     StiffArm,
+    /// A plant and a break: he leaves his line flat-footed and goes sideways
+    /// without losing his feet.
+    Cut,
+    /// The sharper break, all hips: the jump step that takes the tackle off him.
+    Juke,
+    /// Both feet and a dead stop, so the man chasing him runs past.
+    Stop,
 }
 
 impl Kind {
@@ -43,6 +55,9 @@ impl Kind {
             Kind::Dive => "DIVE",
             Kind::Slide => "SLIDE",
             Kind::StiffArm => "STIFF ARM",
+            Kind::Cut => "CUT",
+            Kind::Juke => "JUKE",
+            Kind::Stop => "STOP",
         }
     }
 
@@ -55,6 +70,9 @@ impl Kind {
             Kind::Dive => DIVE_TIME,
             Kind::Slide => SLIDE_TIME,
             Kind::StiffArm => STIFF_ARM_TIME,
+            Kind::Cut => CUT_TIME,
+            Kind::Juke => JUKE_TIME,
+            Kind::Stop => STOP_TIME,
         }
     }
 
@@ -130,6 +148,11 @@ impl CarrierMove {
             Some(Kind::Dive) => 1.45,
             Some(Kind::Slide) => 1.10,
             Some(Kind::StiffArm) => 1.02,
+            // He does not slow down to break: the break is what keeps the angle.
+            Some(Kind::Cut) => 1.12,
+            Some(Kind::Juke) => 1.08,
+            // A dead stop is a dead stop.
+            Some(Kind::Stop) => 0.08,
             None => 1.0,
         }
     }
@@ -146,6 +169,11 @@ impl CarrierMove {
             // The hand is on the man, so the wrap is late, but he is still a
             // runner on his feet with his whole body to hit.
             Some(Kind::StiffArm) => 0.45,
+            // Breaking off his line makes him a worse target for as long as the
+            // break lasts, which is the whole point of running it.
+            Some(Kind::Cut) => 0.85,
+            Some(Kind::Juke) => 0.70,
+            Some(Kind::Stop) => 1.0,
             None => 1.0,
         }
     }

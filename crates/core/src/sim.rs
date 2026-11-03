@@ -303,6 +303,8 @@ pub struct SimPlayer {
     pub dive_t: f32,
     /// The line he left his feet on. The lunge travels this way for the window.
     pub dive_aim: Vec2,
+    /// How much of the lunge he has already covered this dive.
+    pub dive_fly: f32,
     /// 0..1: how much his hands are up, working to get to the man with the ball.
     pub tackle_arms: f32,
     pub engaged: Option<usize>,
@@ -580,6 +582,7 @@ impl<'a> PlaySim<'a> {
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
+                dive_fly: 0.0,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -619,6 +622,7 @@ impl<'a> PlaySim<'a> {
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
+                dive_fly: 0.0,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -1822,15 +1826,39 @@ impl<'a> PlaySim<'a> {
     /// in his hands, so a mash of the face buttons during the mesh, in the pocket
     /// or after the throw cannot do anything.
     pub fn request_move(&mut self, kind: Kind) {
+        let Some(holder) = self.ball.holder else { return };
+        let vel = self.players[holder].vel;
+        let facing = if vel.length() > 0.4 { vel } else { Vec2::new(self.dirf(), 0.0) };
+        self.start_move(kind, facing);
+    }
+
+    /// A move aimed across the runner's own line: a cut and a juke go to a side
+    /// rather than down the field, so the caller names the side and the sim turns
+    /// it into a direction he can actually break toward.
+    pub fn request_move_dir(&mut self, kind: Kind, side: f32) {
+        let Some(holder) = self.ball.holder else { return };
+        let vel = self.players[holder].vel;
+        let facing = if vel.length() > 0.4 { vel } else { Vec2::new(self.dirf(), 0.0) };
+        let f = facing.normalize_or_zero();
+        let across = Vec2::new(-f.y, f.x) * if side < 0.0 { -1.0 } else { 1.0 };
+        self.start_move(kind, across);
+    }
+
+    fn start_move(&mut self, kind: Kind, dir: Vec2) {
         // The man with the ball is the man the buttons belong to. Anything else
         // lets a live-looking button do nothing, which is how a dead button feels.
         let Some(holder) = self.ball.holder else { return };
         if self.ball.flight.is_some() || self.result.is_some() || !self.face_buttons_are_moves() {
             return;
         }
-        let vel = self.players[holder].vel;
-        let facing = if vel.length() > 0.4 { vel } else { Vec2::new(self.dirf(), 0.0) };
-        if !self.carrier_moves.start(kind, facing) {
+        // A quarterback does not dive. The same button gives himself up instead,
+        // and it is the same button whether he is in the pocket or past the line.
+        let kind = if kind == Kind::Dive && holder == self.qb {
+            Kind::Slide
+        } else {
+            kind
+        };
+        if !self.carrier_moves.start(kind, dir) {
             return;
         }
         // A move is a run, so the sim has to be treating him as the runner too.
@@ -1842,6 +1870,9 @@ impl<'a> PlaySim<'a> {
             Kind::Dive => format!("{name} dives forward"),
             Kind::Slide => format!("{name} slides down"),
             Kind::StiffArm => format!("{name} puts a hand out"),
+            Kind::Cut => format!("{name} plants and cuts"),
+            Kind::Juke => format!("{name} jumps outside"),
+            Kind::Stop => format!("{name} stops dead"),
         };
         self.events.push(SimEvent { t: self.t, text });
     }
@@ -2110,6 +2141,7 @@ impl<'a> PlaySim<'a> {
                     // tackle worked out below.
                     if ctl.dive && self.players[i].dive_t <= 0.0 {
                         self.players[i].dive_t = DIVE_WINDOW;
+                        self.players[i].dive_fly = 0.0;
                         if let Some(c) = carrier {
                             let to = self.players[c].pos - self.players[i].pos;
                             // The line he leaves his feet on. Nothing moves here:
@@ -2122,12 +2154,21 @@ impl<'a> PlaySim<'a> {
                     }
                     if self.players[i].dive_t > 0.0 {
                         // In the air his legs are not taking orders. The body is
-                        // committed along the line it left on, at a speed a man
-                        // can actually leave his feet at, and the stick is dead
-                        // until the dive ends.
-                        let lunge = self.players[i].dive_aim * (DIVE_LUNGE / DIVE_WINDOW);
-                        self.players[i].vel = lunge;
-                        self.players[i].pos += lunge * dt;
+                        // committed along the line it left on and the stick is
+                        // dead until the dive ends.
+                        //
+                        // The ground is covered the way a body actually covers
+                        // it: out hard on the first frames and dying away as he
+                        // lands. Spread flat over the window instead, the lunge
+                        // was slower than a walk and pressing dive read as the
+                        // defender stopping dead.
+                        let done = 1.0 - self.players[i].dive_t / DIVE_WINDOW;
+                        let flown = DIVE_LUNGE * (1.0 - (1.0 - done) * (1.0 - done));
+                        let step = (flown - self.players[i].dive_fly).max(0.0);
+                        self.players[i].dive_fly = flown;
+                        let aim = self.players[i].dive_aim;
+                        self.players[i].vel = aim * (step / dt.max(0.0001));
+                        self.players[i].pos += aim * step;
                     } else if mag > 0.18 {
                         let target = self.players[i].pos + ctl.move_dir.normalize_or_zero() * 4.0;
                         let spd = self.speed_cap(i) * (0.6 + 0.4 * mag);
@@ -4844,6 +4885,57 @@ mod tests {
         assert!(sim.wrap.is_none(), "that was a tackle, not a reach");
     }
 
+
+    #[test]
+    fn a_quarterback_slides_instead_of_diving() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| !p.family.is_run()).expect("a pass play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 11));
+        let qb = sim.qb;
+        let mut guard = 0;
+        while sim.ball.holder != Some(qb) && sim.result.is_none() && guard < 90 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(sim.ball.holder, Some(qb), "the snap never reached him");
+        // Past the line he is a runner, so the runner's buttons are his.
+        let past = sim.los + 2.0 * sim.dirf();
+        sim.players[qb].pos = Vec2::new(past, 0.0);
+        assert!(sim.face_buttons_are_moves(), "he was still in the pocket");
+        sim.request_move(Kind::Dive);
+        assert_eq!(
+            sim.carrier_move().kind(),
+            Some(Kind::Slide),
+            "the quarterback went head first"
+        );
+    }
+
+    #[test]
+    fn a_cut_breaks_across_his_own_line() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 11));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let c = sim.carrier.expect("the handoff");
+        let down_field = Vec2::new(sim.dirf(), 0.0);
+        sim.players[c].vel = down_field * 5.0;
+        sim.request_move_dir(Kind::Cut, 1.0);
+        assert_eq!(sim.carrier_move().kind(), Some(Kind::Cut));
+        let broke = sim.carrier_move().dir();
+        assert!(
+            broke.dot(down_field).abs() < 0.1,
+            "the cut went down the field instead of across it: {broke:?}"
+        );
+    }
+
     #[test]
     fn a_dive_is_never_teleported_onto_the_carrier() {
         let (off, def_) = teams();
@@ -4883,7 +4975,8 @@ mod tests {
         sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
         sim.step(1.0 / 60.0);
         let moved = sim.players[7].pos.dist(before);
-        let one_frame = DIVE_LUNGE / DIVE_WINDOW / 60.0;
+        // The burst is front-loaded, so a frame may move twice the average.
+        let one_frame = 2.0 * DIVE_LUNGE / DIVE_WINDOW / 60.0;
         assert!(
             moved <= one_frame + 0.06,
             "the dive jumped {moved:.2} yards in one frame, a frame of it is {one_frame:.2}"

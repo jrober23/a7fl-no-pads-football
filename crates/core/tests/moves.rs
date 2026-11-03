@@ -202,11 +202,11 @@ fn a_quarterback_past_the_line_owns_the_face_buttons() {
         sim.face_buttons_are_moves(),
         "past the line there is no pass to throw, so the buttons are his"
     );
-    sim.request_move(Kind::Dive);
+    sim.request_move(Kind::Slide);
     assert_eq!(
         sim.carrier_move().kind(),
-        Some(Kind::Dive),
-        "the button has to do the thing it is showing"
+        Some(Kind::Slide),
+        "the dive button gives the quarterback up, it does not send him head first"
     );
     assert_eq!(sim.carrier, Some(qb), "the man with the ball is the runner");
 }
