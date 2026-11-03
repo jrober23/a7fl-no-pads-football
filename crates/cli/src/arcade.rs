@@ -651,9 +651,9 @@ impl Arcade {
                 None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
             };
             let (title, left, right, prompt) = &pages[page];
-            // The banner goes up on its own for a beat, then the cards arrive on
-            // it: the introduction reads as a broadcast open rather than a form.
-            let cards_up = opened.elapsed() >= Duration::from_millis(900);
+            // The banner goes up on its own for a beat, the cards arrive on it,
+            // and then it leaves: a broadcast open, not a form.
+            let reveal = opened.elapsed().as_secs_f32();
             nopads_render::hud::draw_half_cards(
                 &mut frame,
                 title,
@@ -661,7 +661,7 @@ impl Arcade {
                 left,
                 right,
                 accents,
-                cards_up,
+                reveal,
             );
             let lines = vec![self.header(), String::new(), prompt.to_string()];
             if !self.view.show(&mut frame, &lines) {

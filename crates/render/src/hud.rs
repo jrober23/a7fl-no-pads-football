@@ -682,7 +682,7 @@ pub fn draw_half_cards(
     left: &[String],
     right: &[String],
     accents: [Rgb; 2],
-    show_cards: bool,
+    reveal: f32,
 ) {
     let w = frame.w as i32;
     let h = frame.h as i32;
@@ -693,16 +693,22 @@ pub fn draw_half_cards(
     let y = h - card_h - 56;
     let x = [margin, margin + card_w + gap];
 
-    // A slim banner at the top: this is a set of cards, not a page.
+    // A slim banner at the top: this is a set of cards, not a page. It opens the
+    // screen on its own, holds while the cards come up, and then leaves -- the
+    // cards say everything it said, and a banner over two cards is a page again.
+    const CARDS_IN: f32 = 0.90;
+    const BANNER_OUT: f32 = 1.50;
     let banner_w = 520;
     let bx = (w - banner_w) / 2;
-    frame.fill_rect_alpha(bx, 26, banner_w, 76, PAUSE_INK, PAUSE_VEIL);
-    frame.fill_rect(bx, 26, banner_w, 3, accents[0]);
-    frame.fill_rect(bx + banner_w - 140, 26, 140, 3, accents[1]);
-    font::draw_centered(frame, w / 2, 36, title, 3, WHITE, 2);
-    font::draw_centered(frame, w / 2, 74, subtitle, 2, Rgb::hex(0xDCE3EC), 1);
+    if reveal < BANNER_OUT {
+        frame.fill_rect_alpha(bx, 26, banner_w, 76, PAUSE_INK, PAUSE_VEIL);
+        frame.fill_rect(bx, 26, banner_w, 3, accents[0]);
+        frame.fill_rect(bx + banner_w - 140, 26, 140, 3, accents[1]);
+        font::draw_centered(frame, w / 2, 36, title, 3, WHITE, 2);
+        font::draw_centered(frame, w / 2, 74, subtitle, 2, Rgb::hex(0xDCE3EC), 1);
+    }
 
-    if !show_cards {
+    if reveal < CARDS_IN {
         return;
     }
     for (i, lines) in [left, right].iter().enumerate() {
@@ -758,7 +764,7 @@ mod tests {
                 &["BOSTON".to_string()],
                 &["CHICAGO".to_string()],
                 [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-                true,
+                2.0,
             );
             f
         };
@@ -793,7 +799,7 @@ mod tests {
             &["BOSTON".to_string()],
             &["CHICAGO".to_string()],
             [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-            false,
+            0.0,
         );
         let mut cards = 0;
         for y in 344..664 {
@@ -810,6 +816,41 @@ mod tests {
             .filter(|(y, x)| f.color[y * 1280 + x] != base)
             .count();
         assert!(banner > 2_000, "the banner is missing: {banner} px");
+    }
+
+
+    #[test]
+    fn the_banner_leaves_once_the_cards_are_up() {
+        let base = Rgb::new(10, 20, 30);
+        let mut f = Frame::new(1280, 720);
+        f.color.fill(base);
+        draw_half_cards(
+            &mut f,
+            "MATCHUP",
+            "BOS AT CHI",
+            &["BOSTON".to_string()],
+            &["CHICAGO".to_string()],
+            [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+            3.0,
+        );
+        let mut banner = 0;
+        for y in 26..102 {
+            for x in 380..900 {
+                if f.color[y * 1280 + x] != base {
+                    banner += 1;
+                }
+            }
+        }
+        assert_eq!(banner, 0, "the banner is still up over the cards: {banner} px");
+        let mut cards = 0;
+        for y in 344..664 {
+            for x in 32..1248 {
+                if f.color[y * 1280 + x] != base {
+                    cards += 1;
+                }
+            }
+        }
+        assert!(cards > 20_000, "the cards are missing: {cards} px");
     }
 
     #[test]
@@ -829,7 +870,7 @@ mod tests {
                 left,
                 right,
                 [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-                true,
+                2.0,
             );
             f
         };
@@ -875,7 +916,7 @@ mod tests {
             &left,
             &right,
             [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-            true,
+            2.0,
         );
         // The picture above the cards is the warm-up, and it has to survive.
         let mut touched = 0;

@@ -297,6 +297,8 @@ pub struct SimPlayer {
     pub tackle_cooldown: f32,
     /// How long a dive still has its hands out, in seconds.
     pub dive_t: f32,
+    /// The line he left his feet on. The lunge travels this way for the window.
+    pub dive_aim: Vec2,
     pub engaged: Option<usize>,
     /// Where his hands are, in radians across his body: the hand on the side the
     /// rusher goes to follows him no more than 45 degrees either way.
@@ -571,6 +573,7 @@ impl<'a> PlaySim<'a> {
                 stun: 0.0,
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
+                dive_aim: Vec2::ZERO,
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
@@ -608,6 +611,7 @@ impl<'a> PlaySim<'a> {
                 stun: 0.0,
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
+                dive_aim: Vec2::ZERO,
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
@@ -2088,10 +2092,23 @@ impl<'a> PlaySim<'a> {
                         self.players[i].dive_t = DIVE_WINDOW;
                         if let Some(c) = carrier {
                             let to = self.players[c].pos - self.players[i].pos;
-                            self.players[i].pos = self.players[i].pos + to.clamp_len(DIVE_LUNGE);
+                            // The line he leaves his feet on. Nothing moves here:
+                            // the yard of ground a dive buys is covered over the
+                            // next half second, in the movement below. Adding a
+                            // whole yard to his position in one frame is what made
+                            // a dive look like a teleport onto the carrier.
+                            self.players[i].dive_aim = to.normalize_or_zero();
                         }
                     }
-                    if mag > 0.18 {
+                    if self.players[i].dive_t > 0.0 {
+                        // In the air his legs are not taking orders. The body is
+                        // committed along the line it left on, at a speed a man
+                        // can actually leave his feet at, and the stick is dead
+                        // until the dive ends.
+                        let lunge = self.players[i].dive_aim * (DIVE_LUNGE / DIVE_WINDOW);
+                        self.players[i].vel = lunge;
+                        self.players[i].pos += lunge * dt;
+                    } else if mag > 0.18 {
                         let target = self.players[i].pos + ctl.move_dir.normalize_or_zero() * 4.0;
                         let spd = self.speed_cap(i) * (0.6 + 0.4 * mag);
                         self.steer(i, target, spd, dt);
@@ -4737,17 +4754,19 @@ mod tests {
             "a wrap-up reached {gap} yards"
         );
         let mut reached = false;
+        // One press, then the body is in the air: the lunge covers the ground
+        // over the window, so the defender is not reset between frames.
+        sim.players[7].pos = Vec2::new(20.0 + gap, 0.0);
+        sim.players[7].dive_t = 0.0;
+        sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
         for _ in 0..40 {
             if sim.result.is_some() {
                 break;
             }
             sim.players[carrier].pos = Vec2::new(20.0, 0.0);
             sim.players[carrier].vel = Vec2::ZERO;
-            sim.players[7].pos = Vec2::new(20.0 + gap, 0.0);
             sim.players[7].stun = 0.0;
             sim.players[7].tackle_cooldown = 0.0;
-            sim.players[7].dive_t = 0.0;
-            sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
             sim.step(FIXED_DT);
             if sim.wrap.is_some() || sim.players[7].stun > 0.0 || sim.result.is_some() {
                 reached = true;
@@ -4785,6 +4804,23 @@ mod tests {
             sim.players[7].pos.dist(before) < 0.01,
             "a dive teleported {:.2} yards onto the carrier",
             sim.players[7].pos.dist(before)
+        );
+
+        // The press is travel too. In the frame he leaves his feet he may cover a
+        // frame of the window and no more, however far away the carrier is.
+        sim.set_human_defender(Some(7));
+        sim.players[7].pos = sim.players[carrier].pos + Vec2::new(2.0, 0.0);
+        sim.players[7].dive_t = 0.0;
+        sim.players[7].stun = 0.0;
+        sim.players[7].tackle_cooldown = 0.0;
+        let before = sim.players[7].pos;
+        sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+        sim.step(1.0 / 60.0);
+        let moved = sim.players[7].pos.dist(before);
+        let one_frame = DIVE_LUNGE / DIVE_WINDOW / 60.0;
+        assert!(
+            moved <= one_frame + 0.06,
+            "the dive jumped {moved:.2} yards in one frame, a frame of it is {one_frame:.2}"
         );
 
         // On his feet inside the radius, the reach is spent arriving: he closes
