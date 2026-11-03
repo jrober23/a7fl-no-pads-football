@@ -38,6 +38,10 @@ pub const TACKLE_RADIUS: f32 = 0.75;
 pub const ARM_REACH: f32 = 0.44;
 /// How far a diving defender throws himself at the man with the ball.
 pub const DIVE_LUNGE: f32 = 1.05;
+/// Hands up inside this many yards of the carrier, hands at his sides past
+/// [`PRESS_FAR`]: a defender working to get to the ball is reaching for him.
+pub const PRESS_AT: f32 = 1.2;
+pub const PRESS_FAR: f32 = 3.2;
 /// How long a dive keeps the longer reach, in seconds.
 pub const DIVE_WINDOW: f32 = 0.45;
 
@@ -299,6 +303,8 @@ pub struct SimPlayer {
     pub dive_t: f32,
     /// The line he left his feet on. The lunge travels this way for the window.
     pub dive_aim: Vec2,
+    /// 0..1: how much his hands are up, working to get to the man with the ball.
+    pub tackle_arms: f32,
     pub engaged: Option<usize>,
     /// Where his hands are, in radians across his body: the hand on the side the
     /// rusher goes to follows him no more than 45 degrees either way.
@@ -574,6 +580,7 @@ impl<'a> PlaySim<'a> {
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
+                tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
@@ -612,6 +619,7 @@ impl<'a> PlaySim<'a> {
                 tackle_cooldown: 0.0,
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
+                tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
@@ -995,9 +1003,21 @@ impl<'a> PlaySim<'a> {
         // the mesh cannot leave a stale flag on the runner.
         self.pose_blockers();
         self.pump_t = (self.pump_t - dt).max(0.0);
-        for p in self.players.iter_mut() {
+        // How close a defender is to putting hands on the man with the ball. The
+        // figure carries its arms up while he works to get there: a defender
+        // closing is not a man jogging with his arms at his sides.
+        let carried = self.carrier.map(|c| (c, self.players[c].pos));
+        for (i, p) in self.players.iter_mut().enumerate() {
             p.tackle_cooldown = (p.tackle_cooldown - dt).max(0.0);
             p.dive_t = (p.dive_t - dt).max(0.0);
+            p.tackle_arms = match carried {
+                Some((c, at)) if i >= 7 && i != c && !p.down && p.stun <= 0.0 => {
+                    let far = (PRESS_FAR - p.pos.dist(at)) / (PRESS_FAR - PRESS_AT);
+                    let want = far.clamp(0.0, 1.0);
+                    p.tackle_arms + (want - p.tackle_arms) * (dt * 12.0).min(1.0)
+                }
+                _ => 0.0,
+            };
             if p.stun > 0.0 {
                 p.stun = (p.stun - dt).max(0.0);
             }
@@ -2469,11 +2489,12 @@ impl<'a> PlaySim<'a> {
             // A dive is a lunge and gets its hands out further; a man on his feet
             // has only his arms, and the man on the pad gets no bonus reach. The
             // extra reach the pad used to carry is what pulled carriers backwards.
-            let reach = if self.players[d].dive_t > 0.0 && Some(d) == self.human_defender {
-                TACKLE_RADIUS * 1.9
-            } else {
-                TACKLE_RADIUS
-            };
+            // A dive covers its ground with the body, not with the arms: the
+            // lunge is what buys the extra distance. It used to reach 1.9 times
+            // as far, which let a diving defender tackle a man a yard and a half
+            // away without ever touching him once the press stopped teleporting
+            // him into contact.
+            let reach = TACKLE_RADIUS;
             let dist = self.players[d].pos.dist(self.players[carrier].pos);
             if dist <= reach {
                 attempts.push((d, dist));
@@ -4740,7 +4761,8 @@ mod tests {
         let carrier = sim.carrier.expect("nobody took the handoff");
         sim.set_human_defender(Some(7));
         // Past the end of a wrap-up, inside a dive's reach once it lunges.
-        let gap = DIVE_LUNGE + TACKLE_RADIUS * 1.6;
+        // Just past a wrap-up, and inside what a dive's lunge actually covers.
+        let gap = DIVE_LUNGE + TACKLE_RADIUS - 0.05;
         sim.players[carrier].pos = Vec2::new(20.0, 0.0);
         sim.players[carrier].vel = Vec2::ZERO;
         sim.players[7].pos = Vec2::new(20.0 + gap, 0.0);
@@ -4777,6 +4799,50 @@ mod tests {
     }
 
 
+
+
+    #[test]
+    fn a_defender_coming_for_the_carrier_puts_his_hands_up() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 11));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+
+        // Well away from him: hands stay down.
+        for _ in 0..20 {
+            sim.players[7].pos = sim.players[carrier].pos + Vec2::new(2.9, 0.0);
+            sim.players[7].stun = 0.0;
+            sim.step(1.0 / 60.0);
+        }
+        assert!(
+            sim.players[7].tackle_arms < 0.4,
+            "his hands were up from 2.9 yards: {:.2}",
+            sim.players[7].tackle_arms
+        );
+
+        // Inside a yard, outside tackle range: reaching, not yet wrapped.
+        for _ in 0..20 {
+            sim.players[carrier].pos = Vec2::new(20.0, 0.0);
+            sim.players[carrier].vel = Vec2::ZERO;
+            sim.players[7].pos = Vec2::new(21.0, 0.0);
+            sim.players[7].stun = 0.0;
+            sim.players[7].tackle_cooldown = 0.0;
+            sim.step(1.0 / 60.0);
+        }
+        assert!(
+            sim.players[7].tackle_arms > 0.6,
+            "his hands stayed down a yard away: {:.2}",
+            sim.players[7].tackle_arms
+        );
+        assert!(sim.wrap.is_none(), "that was a tackle, not a reach");
+    }
 
     #[test]
     fn a_dive_is_never_teleported_onto_the_carrier() {

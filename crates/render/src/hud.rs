@@ -690,14 +690,17 @@ pub fn draw_half_cards(
     let gap = 32;
     let card_w = (w - margin * 2 - gap) / 2;
     let card_h = 320;
-    let y = h - card_h - 56;
+    // Sat in the middle of the frame, not on its lip: two half-width cards
+    // hanging off the bottom read as a footer under the picture.
+    let y = (h - card_h) / 2;
     let x = [margin, margin + card_w + gap];
 
-    // A slim banner at the top: this is a set of cards, not a page. It opens the
-    // screen on its own, holds while the cards come up, and then leaves -- the
-    // cards say everything it said, and a banner over two cards is a page again.
-    const CARDS_IN: f32 = 0.90;
-    const BANNER_OUT: f32 = 1.50;
+    // A slim banner at the top: this is a set of cards, not a page. It gets the
+    // screen to itself, leaves, and only then do the cards arrive -- the two are
+    // never up together, so the introduction is two beats rather than one busy
+    // frame.
+    const BANNER_OUT: f32 = 2.20;
+    const CARDS_IN: f32 = 2.60;
     let banner_w = 520;
     let bx = (w - banner_w) / 2;
     if reveal < BANNER_OUT {
@@ -764,7 +767,7 @@ mod tests {
                 &["BOSTON".to_string()],
                 &["CHICAGO".to_string()],
                 [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-                2.0,
+                3.0,
             );
             f
         };
@@ -772,7 +775,7 @@ mod tests {
         let light = draw(Rgb::new(70, 100, 130));
         // A strip of plain card, below the type.
         let (mut strip, mut differs) = (0, 0);
-        for y in 344 + 286..344 + 308 {
+        for y in 200 + 286..200 + 308 {
             for x in 32 + 24..32 + 552 {
                 strip += 1;
                 if dark.color[y * 1280 + x] != light.color[y * 1280 + x] {
@@ -802,7 +805,7 @@ mod tests {
             0.0,
         );
         let mut cards = 0;
-        for y in 344..664 {
+        for y in 200..520 {
             for x in 32..1248 {
                 if f.color[y * 1280 + x] != base {
                     cards += 1;
@@ -818,6 +821,26 @@ mod tests {
         assert!(banner > 2_000, "the banner is missing: {banner} px");
     }
 
+
+
+    #[test]
+    fn the_banner_leaves_before_the_cards_arrive() {
+        // Between the two beats the screen is the picture and nothing else.
+        let base = Rgb::new(10, 20, 30);
+        let mut f = Frame::new(1280, 720);
+        f.color.fill(base);
+        draw_half_cards(
+            &mut f,
+            "MATCHUP",
+            "BOS AT CHI",
+            &["BOSTON".to_string()],
+            &["CHICAGO".to_string()],
+            [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
+            2.4,
+        );
+        let painted = f.color.iter().filter(|px| **px != base).count();
+        assert_eq!(painted, 0, "the two beats overlap: {painted} px painted");
+    }
 
     #[test]
     fn the_banner_leaves_once_the_cards_are_up() {
@@ -843,7 +866,7 @@ mod tests {
         }
         assert_eq!(banner, 0, "the banner is still up over the cards: {banner} px");
         let mut cards = 0;
-        for y in 344..664 {
+        for y in 200..520 {
             for x in 32..1248 {
                 if f.color[y * 1280 + x] != base {
                     cards += 1;
@@ -870,7 +893,7 @@ mod tests {
                 left,
                 right,
                 [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-                2.0,
+                3.0,
             );
             f
         };
@@ -886,9 +909,9 @@ mod tests {
             &["CHICAGO FOUNDRY".to_string(), "OVERALL 68".to_string()],
         );
         // The card rectangles, from the draw above: 32..624 and 656..1248, at
-        // 344..664 on a 720 high frame.
+        // 200..520 on a 720 high frame.
         let in_card = |x: usize, y: usize| {
-            (344..664).contains(&y)
+            (200..520).contains(&y)
                 && ((32..624).contains(&x) || (656..1248).contains(&x))
         };
         let mut spilled = 0;
@@ -916,11 +939,12 @@ mod tests {
             &left,
             &right,
             [Rgb::hex(0xE2572B), Rgb::hex(0x2F6FBF)],
-            2.0,
+            3.0,
         );
-        // The picture above the cards is the warm-up, and it has to survive.
+        // The picture above the cards is the warm-up, and it has to survive. The
+        // cards start at 200; the border is drawn a pixel outside them.
         let mut touched = 0;
-        for y in 130..330 {
+        for y in 130..199 {
             for x in 0..1280 {
                 if f.color[y * 1280 + x] != base {
                     touched += 1;
