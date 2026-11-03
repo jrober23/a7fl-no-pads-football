@@ -533,26 +533,19 @@ impl Arcade {
     /// to watch. It replaces a line of text at the top of the first card with the
     /// introduction a broadcast would open on.
     fn matchup_screen(&mut self) -> bool {
-        let block = |teams: &Arcade, t: usize| -> Vec<String> {
-            let team = &teams.game.teams[t];
+        let team_lines = |arc: &Arcade, t: usize| -> Vec<String> {
+            let team = &arc.game.teams[t];
             let r = team.ratings();
-            let mut stars: Vec<(u8, String)> = team
-                .roster
-                .iter()
-                .map(|p| (p.overall(), format!("#{} {}", p.number, p.full_name())))
-                .collect();
-            stars.sort_by(|a, b| b.0.cmp(&a.0));
-            let mut lines = vec![
+            let theirs = arc.game.teams[1 - t].ratings();
+            vec![
                 team.display_upper(),
-                format!("OVERALL {}   OFF {}   DEF {}", r.overall, r.offense, r.defense),
                 String::new(),
-                "PLAYERS TO WATCH".to_string(),
-            ];
-            for (overall, name) in stars.into_iter().take(3) {
-                lines.push(format!("{name}  {overall}"));
-            }
-            lines.push(String::new());
-            lines.push(
+                format!("OVERALL   {}", r.overall),
+                format!("OFFENCE   {}", r.offense),
+                format!("DEFENCE   {}", r.defense),
+                String::new(),
+                format!("YOUR OFF {}  VS  THEIR DEF {}", r.offense, theirs.defense),
+                String::new(),
                 if r.offense >= r.defense + 6 {
                     "THEY WILL THROW IT"
                 } else if r.defense >= r.offense + 6 {
@@ -561,22 +554,56 @@ impl Arcade {
                     "NO WEAKNESS TO PICK ON"
                 }
                 .to_string(),
-            );
+            ]
+        };
+        let star_lines = |arc: &Arcade, t: usize| -> Vec<String> {
+            let team = &arc.game.teams[t];
+            let mut stars: Vec<(u8, String, String)> = team
+                .roster
+                .iter()
+                .map(|p| {
+                    let pos = format!("{:?}", p.pos).to_uppercase();
+                    (p.overall(), format!("#{} {}", p.number, p.full_name()), pos)
+                })
+                .collect();
+            stars.sort_by(|a, b| b.0.cmp(&a.0));
+            let mut lines = vec![team.display_upper(), String::new(), "PLAYERS TO WATCH".to_string()];
+            for (overall, name, pos) in stars.into_iter().take(4) {
+                lines.push(format!("{name}"));
+                lines.push(format!("   {}   OVERALL {}", pos, overall));
+            }
             lines
         };
-        let left = block(self, 0);
-        let right = block(self, 1);
-        let title = format!(
+        // Two sets of cards, read in order: the clubs and how the units line up,
+        // then the men to watch.
+        let pages = [
+            (
+                "MATCHUP",
+                team_lines(self, 0),
+                team_lines(self, 1),
+                "  [A] PLAYERS TO WATCH",
+            ),
+            (
+                "PLAYERS TO WATCH",
+                star_lines(self, 0),
+                star_lines(self, 1),
+                "  [A] KICK OFF",
+            ),
+        ];
+        let subtitle = format!(
             "{} AT {}",
             self.game.teams[0].abbr.to_uppercase(),
             self.game.teams[1].abbr.to_uppercase()
         );
+        let accents = [
+            self.game.teams[0].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
+            self.game.teams[1].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
+        ];
 
-        // The card sits over the field, not over a black page. A throw-off is run
-        // behind it as a warm-up — the two clubs out on the field, the ball going
-        // and the coverage running down — and the lens cuts between the angles
-        // while the introduction is up. It is not a page: nothing about it stops
-        // the picture.
+        // The cards sit over the field, not over a black page. A throw-off is run
+        // behind them as a warm-up — the two clubs out on the field, the ball
+        // going and the coverage running down — and the lens cuts between the
+        // angles while the introduction is up.
         let setup = self.throw_off_to_play(false);
         let (tside, rside) = match &setup {
             Some(s) => (s.throwing_team, s.receiving_team),
@@ -588,6 +615,7 @@ impl Arcade {
             .as_ref()
             .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
         let mut mode = 0usize;
+        let mut page = 0usize;
         let mut last = Instant::now();
         let mut cut = Instant::now();
         let mut acc = 0.0f64;
@@ -620,33 +648,24 @@ impl Arcade {
                     break;
                 }
             }
-            let ui = PassUi {
-                flag: None,
-                focus: None,
-                badges: Vec::new(),
-                guide: None,
-                power: None,
-                short: false,
-                needed: None,
-            };
             let mut frame = match &warmup {
-                Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui),
+                Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui_none()),
                 None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
             };
-            // Two cards in the corners, not one across the middle: the warm-up
-            // behind them is the introduction, and it should not be covered.
-            let accents = [
-                self.game.teams[0].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
-                self.game.teams[1].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
-            ];
-            nopads_render::hud::draw_mini_cards(&mut frame, "MATCHUP", &title, &left, &right, accents);
-            let lines = vec![self.header(), String::new(), "  [A] KICK OFF".to_string()];
+            let (title, left, right, prompt) = &pages[page];
+            nopads_render::hud::draw_half_cards(&mut frame, title, &subtitle, left, right, accents);
+            let lines = vec![self.header(), String::new(), prompt.to_string()];
             if !self.view.show(&mut frame, &lines) {
                 return false;
             }
             let input = self.input();
             if input.pressed.a || input.pressed.start {
-                return true;
+                if page + 1 < pages.len() {
+                    page += 1;
+                    self.view.reset();
+                } else {
+                    return true;
+                }
             }
             std::thread::sleep(Duration::from_millis(16));
         }
@@ -1831,6 +1850,19 @@ impl Arcade {
     fn wait(&mut self, gap: Duration) -> Input {
         std::thread::sleep(gap);
         self.input()
+    }
+}
+
+/// No markers on the picture: used for the warm-up behind the matchup cards.
+fn ui_none() -> PassUi {
+    PassUi {
+        flag: None,
+        focus: None,
+        badges: Vec::new(),
+        guide: None,
+        power: None,
+        short: false,
+        needed: None,
     }
 }
 
