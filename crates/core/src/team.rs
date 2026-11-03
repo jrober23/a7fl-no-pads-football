@@ -359,6 +359,10 @@ pub struct Uniform {
     pub socks: Rgb,
     pub shoes: Rgb,
     pub pattern: JerseyPattern,
+    /// The club's mark as painted on the chest: its name in capitals, cut to
+    /// what a chest can hold. Bytes rather than a string so a uniform stays
+    /// `Copy`, which the render thread leans on.
+    pub mark: [u8; 6],
 }
 
 impl Uniform {
@@ -941,6 +945,17 @@ impl Club {
     }
 }
 
+/// The club's mark for the chest: the first word of its name, in capitals, cut
+/// to the six cells that fit across a jersey without running under an arm.
+fn club_mark(name: &str) -> [u8; 6] {
+    let mut out = [0u8; 6];
+    let word = name.split_whitespace().next().unwrap_or("");
+    for (i, b) in word.bytes().take(6).enumerate() {
+        out[i] = b.to_ascii_uppercase();
+    }
+    out
+}
+
 fn build_uniform(
     jersey: Rgb,
     jersey_accent: Rgb,
@@ -950,6 +965,7 @@ fn build_uniform(
     socks: Rgb,
     shoes: Rgb,
     pattern: JerseyPattern,
+    mark: [u8; 6],
 ) -> Uniform {
     Uniform {
         jersey,
@@ -960,6 +976,7 @@ fn build_uniform(
         socks,
         shoes,
         pattern,
+        mark,
     }
 }
 
@@ -974,6 +991,7 @@ fn team_from_spec(spec: Club) -> Team {
         Rgb::WHITE,
         Rgb::hex(0x15171B),
         spec.pattern,
+        club_mark(spec.name),
     );
     let away = build_uniform(
         Rgb::hex(0xF2F4F6),
@@ -984,6 +1002,7 @@ fn team_from_spec(spec: Club) -> Team {
         spec.primary,
         Rgb::hex(0x15171B),
         spec.pattern,
+        club_mark(spec.name),
     );
     let mut team = Team {
         id: 0,

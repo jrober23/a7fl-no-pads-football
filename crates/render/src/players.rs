@@ -637,26 +637,27 @@ fn digit(c: u8) -> [u8; 7] {
 /// the shirt was lofted from, so the digits wrap around the chest. Painting them
 /// onto one plane is what makes a number look like a sticker floating beside the
 /// man rather than printed on his shirt.
-fn paint_number(
+fn paint_rows(
     mesh: &mut Mesh,
-    number: u8,
+    glyphs: &[[u8; 7]],
     face: f32,
     cell: f32,
     color: Rgb,
     center_f: f32,
     torso_len: f32,
     cloth: &dyn Fn(f32) -> (Vec3, f32, f32),
+    lateral_shift: f32,
 ) {
-    let text = format!("{number:02}");
-    let glyphs: Vec<u8> = text.bytes().collect();
-    // A digit is five cells wide, plus a little more than a cell between them.
+    if glyphs.is_empty() {
+        return;
+    }
+    // A glyph is five cells wide, plus a little more than a cell between them.
     let pitch = cell * 6.15;
     let width = pitch * glyphs.len() as f32 - cell * 0.9;
-    // How much of the spine one row of the digit covers.
+    // How much of the spine one row of the glyph covers.
     let row_f = cell * 1.22 / torso_len.max(0.05);
-    for (gi, ch) in glyphs.iter().enumerate() {
-        let rows = digit(*ch);
-        let start = gi as f32 * pitch - width * 0.5;
+    for (gi, rows) in glyphs.iter().enumerate() {
+        let start = gi as f32 * pitch - width * 0.5 + lateral_shift;
         for (row, bits) in rows.iter().enumerate() {
             // Merge the lit pixels of one row into a single bar. Painting each
             // pixel as its own patch leaves a gap between neighbours wherever the
@@ -674,23 +675,6 @@ fn paint_number(
                 }
                 let cells = (col - run_start + 1) as i32;
                 let (center, rx, ry) = cloth(center_f + (3i32 - row as i32) as f32 * row_f);
-                // Where the shirt is, and which way it faces, at a lateral offset
-                // on this row — read off the same rounded cross-section the torso
-                // was lofted through.
-                let surface = |lateral: f32| -> (f32, f32, Vec3) {
-                    let y_rel = if face > 0.0 { -lateral } else { lateral };
-                    let across = (y_rel.abs() / ry.max(1e-3)).clamp(0.0, 1.0);
-                    let depth =
-                        rx * (1.0 - across.powf(TORSO_ROUND)).max(0.0).powf(1.0 / TORSO_ROUND);
-                    // The cloth's own normal. Give the paint a normal per cell
-                    // instead and the shading bands break the digit into a
-                    // patchwork of white and grey squares.
-                    let ax = (depth / rx.max(1e-4)).clamp(0.0, 1.0).powf(TORSO_ROUND - 1.0)
-                        / rx.max(1e-4);
-                    let ay = across.powf(TORSO_ROUND - 1.0) / ry.max(1e-4);
-                    let normal = Vec3::new(face * ax, y_rel.signum() * ay, 0.0).normalize_or_zero();
-                    (depth, y_rel, normal)
-                };
                 // Which way a digit advances across the cloth: the camera looks
                 // along the inward normal, and in this projection screen-right
                 // for a face pointing +x is -y. Get this backwards and the number
@@ -707,7 +691,7 @@ fn paint_number(
                     if j == cells {
                         lateral += cell * 0.5;
                     }
-                    let (depth, y_rel, normal) = surface(lateral);
+                    let (depth, y_rel, normal) = cloth_surface(rx, ry, face, lateral);
                     // Five millimetres proud. Enough to beat the cloth it sits
                     // on, little enough that its edge is not a sliver on the
                     // silhouette when he turns side on.
@@ -740,6 +724,78 @@ fn paint_number(
             }
         }
     }
+}
+
+/// Where the shirt is, and which way it faces, at a lateral offset across the
+/// chest — read off the same rounded cross-section the torso is lofted through.
+fn cloth_surface(rx: f32, ry: f32, face: f32, lateral: f32) -> (f32, f32, Vec3) {
+    let y_rel = if face > 0.0 { -lateral } else { lateral };
+    let across = (y_rel.abs() / ry.max(1e-3)).clamp(0.0, 1.0);
+    let depth = rx * (1.0 - across.powf(TORSO_ROUND)).max(0.0).powf(1.0 / TORSO_ROUND);
+    // The cloth's own normal. Give the paint a normal per cell instead and the
+    // shading bands break the mark into a patchwork of light and dark squares.
+    let ax = (depth / rx.max(1e-4)).clamp(0.0, 1.0).powf(TORSO_ROUND - 1.0) / rx.max(1e-4);
+    let ay = across.powf(TORSO_ROUND - 1.0) / ry.max(1e-4);
+    let normal = Vec3::new(face * ax, y_rel.signum() * ay, 0.0).normalize_or_zero();
+    (depth, y_rel, normal)
+}
+
+/// The two digits on the chest and the back.
+fn paint_number(
+    mesh: &mut Mesh,
+    number: u8,
+    face: f32,
+    cell: f32,
+    color: Rgb,
+    center_f: f32,
+    torso_len: f32,
+    cloth: &dyn Fn(f32) -> (Vec3, f32, f32),
+) {
+    let text = format!("{number:02}");
+    let glyphs: Vec<[u8; 7]> = text.bytes().map(digit).collect();
+    paint_rows(mesh, &glyphs, face, cell, color, center_f, torso_len, cloth, 0.0);
+}
+
+/// The club mark across the top of the chest.
+///
+/// Laid out in the same cells as the number, from the same bitmap alphabet the
+/// overlay uses, so a wordmark is the club's name in the club's letters rather
+/// than a rectangle of colour that stands in for one.
+fn paint_wordmark(
+    mesh: &mut Mesh,
+    text: &str,
+    face: f32,
+    cell: f32,
+    color: Rgb,
+    center_f: f32,
+    torso_len: f32,
+    cloth: &dyn Fn(f32) -> (Vec3, f32, f32),
+) {
+    let glyphs: Vec<[u8; 7]> = text.chars().take(10).map(crate::font::glyph).collect();
+    paint_rows(mesh, &glyphs, face, cell, color, center_f, torso_len, cloth, 0.0);
+}
+
+/// A shield, five cells across: the crest the sheets wear over the heart.
+const CREST: [[u8; 7]; 1] = [[
+    0b11111, 0b11111, 0b11111, 0b11111, 0b01110, 0b01100, 0b00100,
+]];
+
+/// The field inside the shield, so a crest is a shape in a border rather than a
+/// solid badge.
+const CREST_FIELD: [[u8; 7]; 1] = [[
+    0b00000, 0b01110, 0b01110, 0b01110, 0b00100, 0b00100, 0b00000,
+]];
+
+/// The club's mark, as letters, off the uniform.
+fn mark_text(mark: &[u8; 6]) -> String {
+    let mut out = String::new();
+    for b in mark {
+        if *b == 0 {
+            break;
+        }
+        out.push(*b as char);
+    }
+    out
 }
 
 /// Which men wear the long undershirt sleeves, and which wear tights. A stable
@@ -1165,11 +1221,68 @@ pub fn build_mesh_at(
             &mut mesh,
             player.number,
             -1.0,
-            cell * 1.06,
+            cell * 0.68,
             number_color,
-            0.66,
+            0.545,
             torso_len,
             &cloth_at,
+        );
+
+        // The mark across the top of the chest. Its width comes from the cloth
+        // at that height rather than from the shoulders: high up the chest has
+        // already begun to curve away, and a mark set any wider carries its last
+        // letters round onto the sleeves, where they read as gold stripes.
+        let mark = mark_text(&uniform.mark);
+        if !mark.is_empty() {
+            let letters = mark.chars().count() as f32;
+            let (_, _, chest_ry) = cloth_at(0.775);
+            // The flat of the chest, where the letters still face the lens.
+            let flat = chest_ry * 1.34;
+            let word_cell = (flat / (letters * 6.15)).min(cell * 0.40);
+            if word_cell > 0.0025 {
+                paint_wordmark(
+                    &mut mesh,
+                    &mark,
+                    -1.0,
+                    word_cell,
+                    // The mark wears the club's accent, not the numbers colour:
+                    // on the chest the two sit one above the other, and in one
+                    // white the name and the numerals merge into a single block.
+                    accent,
+                    0.775,
+                    torso_len,
+                    &cloth_at,
+                );
+            }
+        }
+
+        // The crest over the heart, level with the number: the club's accent as
+        // the border and a lighter field inside it, so it reads as a badge and
+        // not as another patch of white.
+        let (_, _, crest_ry) = cloth_at(0.545);
+        let crest_cell = cell * 0.32;
+        let crest_at = -crest_ry * 0.60;
+        paint_rows(
+            &mut mesh,
+            &CREST,
+            -1.0,
+            crest_cell,
+            accent,
+            0.545,
+            torso_len,
+            &cloth_at,
+            crest_at,
+        );
+        paint_rows(
+            &mut mesh,
+            &CREST_FIELD,
+            -1.0,
+            crest_cell * 0.56,
+            jersey,
+            0.541,
+            torso_len,
+            &cloth_at,
+            crest_at,
         );
     }
 
@@ -1298,6 +1411,19 @@ pub fn build_mesh_at(
             arm_skin,
             true,
         );
+        // Club patch on the sleeve: the sheets have one on every arm, and on a
+        // bare-armed league it is the only badge above the waist.
+        if detail.fine() {
+            let along = shoulder.lerp(elbow, 0.44);
+            let out = Vec3::new(0.0, *side, 0.0);
+            mesh.sphere(
+                along + out * (0.090 * bulk),
+                Vec3::new(0.030, 0.012, 0.034),
+                2,
+                8,
+                accent,
+            );
+        }
         if sleeved {
             let hem_lo = shoulder.lerp(elbow, 0.50);
             let hem_hi = shoulder.lerp(elbow, 0.58);
