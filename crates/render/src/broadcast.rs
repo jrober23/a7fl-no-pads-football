@@ -344,7 +344,7 @@ impl Broadcast {
                     run_phase: p.run_phase,
                     speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
                     carrying: sim.ball.holder == Some(i),
-                    blocking: p.engaged.is_some(),
+                    blocking: p.blocking,
                     hands: p.hands,
                     arms_up: p.drive,
                     down: p.down,
@@ -703,7 +703,7 @@ impl Broadcast {
                 run_phase: p.run_phase,
                 speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
                 carrying: sim.ball.holder == Some(i),
-                blocking: p.engaged.is_some(),
+                blocking: p.blocking,
                 hands: p.hands,
                 arms_up: p.drive,
                 down: p.down,
@@ -1188,10 +1188,15 @@ impl Broadcast {
                 Vec3::new(action.x + d * 19.0, action.y, 0.0),
                 50f32,
             ),
+            // From the crowd, over the near touchline, and well inside it: the old
+            // shot was low and nine yards off the ball's lane, so a play near a
+            // sideline put the lens inside the stand and the picture was the back
+            // of a wall. Above the roofs and over the field, it looks down onto
+            // the grass with nothing in the way, tighter than it used to be.
             CameraMode::Replay => (
-                Vec3::new(action.x - d * 7.0, action.y + 9.0, 3.0),
-                Vec3::new(action.x + d * 3.0, action.y, 1.0),
-                34f32,
+                Vec3::new(action.x - d * 6.0, action.y * 0.35, 9.0),
+                Vec3::new(action.x + d * 6.0, action.y * 0.55, 0.9),
+                30f32,
             ),
             CameraMode::Endzone => (
                 Vec3::new(field::opponent_goal_side(direction) - d * 12.0, 6.0, 7.5),

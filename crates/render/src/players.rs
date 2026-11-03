@@ -1257,11 +1257,11 @@ pub fn build_mesh_at(
             swing += (1.15 - swing) * 0.85;
             flex = 0.55;
         }
-        if pose.arms_up > 0.0 {
+        if pose.blocking && pose.arms_up > 0.0 {
             let up = pose.arms_up.clamp(0.0, 1.0);
             swing += (2.15 - swing) * up;
         }
-        let lateral = side * 0.05 + pose.hands;
+        let lateral = side * 0.05 + if pose.blocking { pose.hands } else { 0.0 };
         let up_dir = Vec3::new(swing.sin(), lateral, -swing.cos()).normalize_or_zero();
         let elbow = shoulder + up_dir * upper_len;
         // A flexed elbow carries the forearm forward and up, not backward.

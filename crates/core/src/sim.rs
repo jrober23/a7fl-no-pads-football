@@ -289,6 +289,9 @@ pub struct SimPlayer {
     /// 0..1, hands up and driving the man in front of him back upfield. Run
     /// blocking, as against holding a pocket.
     pub drive: f32,
+    /// Hands out in front, posed as a blocker. The line every play, the backs and
+    /// receivers on a run, and never the man carrying the ball.
+    pub blocking: bool,
     pub pressure: f32,
     pub beaten: f32,
     pub waypoint: usize,
@@ -545,6 +548,7 @@ impl<'a> PlaySim<'a> {
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
+                blocking: false,
                 pressure: 0.0,
                 beaten: 0.0,
                 waypoint: 0,
@@ -581,6 +585,7 @@ impl<'a> PlaySim<'a> {
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
+                blocking: false,
                 pressure: 0.0,
                 beaten: 0.0,
                 waypoint: 0,
@@ -949,6 +954,10 @@ impl<'a> PlaySim<'a> {
         }
         let dt = dt.min(0.05);
         self.t += dt;
+        // Who stands like a blocker this frame. Decided from the play, so a man is
+        // posed as one even on a frame where he has nobody's hands on him yet, and
+        // the mesh cannot leave a stale flag on the runner.
+        self.pose_blockers();
         self.pump_t = (self.pump_t - dt).max(0.0);
         for p in self.players.iter_mut() {
             p.tackle_cooldown = (p.tackle_cooldown - dt).max(0.0);
@@ -2226,7 +2235,30 @@ impl<'a> PlaySim<'a> {
         }
     }
 
+    /// Who is posed with his hands out, as a blocker: the two linemen on every
+    /// play, and the backs and receivers on a run. Never the man carrying the ball,
+    /// whoever he is and however the play was called, and never a defender, who is
+    /// the one being blocked. Set from the play each frame rather than from the
+    /// blocking itself, so a blocker whose hands have not found anybody yet still
+    /// stands like one, and the mesh cannot leave a stale flag on the runner.
+    fn pose_blockers(&mut self) {
+        let snap = self.t > SNAP_DELAY;
+        let run = self.play.family.is_run();
+        for i in 0..7 {
+            let role = OffRole::ALL[self.players[i].role_index];
+            let lineman = matches!(role, OffRole::Lg | OffRole::Rg);
+            self.players[i].blocking = snap
+                && !self.players[i].down
+                && self.carrier != Some(i)
+                && (lineman || (run && role != OffRole::Qb));
+        }
+    }
+
     fn resolve_blocks(&mut self, dt: f32) {
+        // Hands out in front belong to blockers: the two linemen on every play, and
+        // the backs and receivers on a run -- not the man carrying it, who is
+        // running, and not the defence, who are the ones being blocked.
+        let run = self.play.family.is_run();
         for i in 0..7 {
             if self.players[i].down || self.players[i].stun > 0.0 {
                 continue;
@@ -2271,7 +2303,6 @@ impl<'a> PlaySim<'a> {
             self.players[i].heading = approach_angle(self.players[i].heading, to_d.angle(), 3.0 * dt);
             // Run blocking is a shove and pass blocking is a hold, so the hands
             // come up only on runs, when the man in front is being walked back.
-            let run = self.play.family.is_run();
             self.players[i].drive += ((run as i32) as f32 - self.players[i].drive) * (dt * 4.0).min(1.0);
 
             let blocker = self.attrs(i);
@@ -4867,5 +4898,55 @@ mod tests {
             }
         }
         assert!(best > 0.25, "run blockers never got their hands up: {best}");
+    }
+
+    /// Hands out in front are for blockers only: the line on every play, the backs
+    /// and receivers on a run, and never the man carrying the ball -- and never a
+    /// defender, who is the one being blocked.
+    #[test]
+    fn only_blockers_are_posed_with_their_hands_out() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let mut checked = 0;
+        for play in book.iter() {
+            for seed in 0..6u64 {
+                let mut sim = PlaySim::new(
+                    &off,
+                    &def_,
+                    play,
+                    &d[seed as usize % d.len()],
+                    &setup(45.0, 1, 10.0, seed),
+                );
+                // A second and a half in the ball is out and the carrier has settled,
+                // which is where the picture has to be right.
+                while sim.t < SNAP_DELAY + 1.5 && sim.result.is_none() {
+                    sim.step(FIXED_DT);
+                }
+                if sim.result.is_some() {
+                    continue;
+                }
+                checked += 1;
+                let carried = sim.carrier;
+                for i in 0..7 {
+                    let role = OffRole::ALL[sim.players[i].role_index];
+                    let lineman = matches!(role, OffRole::Lg | OffRole::Rg);
+                    let want = !sim.players[i].down
+                        && carried != Some(i)
+                        && (lineman || (play.family.is_run() && role != OffRole::Qb));
+                    assert_eq!(
+                        sim.players[i].blocking,
+                        want,
+                        "role {:?} on play {} with carrier {carried:?}",
+                        role,
+                        play.name
+                    );
+                }
+                for p in sim.players.iter().skip(7) {
+                    assert!(!p.blocking, "a defender of all people was posed blocking");
+                }
+            }
+        }
+        assert!(checked > 6, "hardly any play got far enough to check: {checked}");
     }
 }
