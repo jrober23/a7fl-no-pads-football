@@ -928,6 +928,8 @@ impl Arcade {
         let mut cover_pick = 0usize;
         // When the ball died, so the picture can hold on the tackle before the card.
         let mut dead_at: Option<Instant> = None;
+        // The throw-off frame by frame, for the replay a score gets.
+        let mut tape: Vec<ThrowOffSim<'_>> = Vec::new();
 
         loop {
             let now = Instant::now();
@@ -1026,6 +1028,9 @@ impl Arcade {
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
+                if tape.len() < 2400 {
+                    tape.push(sim.clone());
+                }
             }
 
             if now.duration_since(drew) >= FRAME || sim.result.is_some() {
@@ -1090,6 +1095,25 @@ impl Arcade {
                 let since = *dead_at.get_or_insert(now);
                 let waited = since.elapsed();
                 if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                    // A return that scores is a big play like any other, and it used
+                    // to be the one with no second look.
+                    let big = sim
+                        .result
+                        .as_ref()
+                        .map(|r| r.touchdown || r.highlight || r.return_yards >= 25.0)
+                        .unwrap_or(false);
+                    if big
+                        && self.view.is_window()
+                        && !play_back_throw_off(
+                            &tape,
+                            &mut self.broadcast,
+                            &mut self.view,
+                            self.pad.as_mut(),
+                        )
+                    {
+                        self.quit = true;
+                        return false;
+                    }
                     return true;
                 }
                 std::thread::sleep(Duration::from_millis(2));
@@ -1823,7 +1847,7 @@ fn play_back_tape(
     tape: &[PlaySim],
     broadcast: &mut Broadcast,
     view: &mut View,
-    mut pad: Option<&mut Pad>,
+    pad: Option<&mut Pad>,
     mode: CameraMode,
     label: &str,
 ) -> bool {
@@ -1835,6 +1859,44 @@ fn play_back_tape(
         short: false,
         needed: None,
     };
+    let screen = broadcast;
+    play_back_frames(tape, view, pad, label, |snap| {
+        screen.live_frame_ui(snap, mode, &ui)
+    })
+}
+
+/// A return that goes the distance gets the same second look a snap gets. It was
+/// the one score in the game with no replay on it: a throw-off had no tape at all,
+/// so a hundred-yard return went straight to the card.
+fn play_back_throw_off(
+    tape: &[ThrowOffSim<'_>],
+    broadcast: &mut Broadcast,
+    view: &mut View,
+    pad: Option<&mut Pad>,
+) -> bool {
+    let ui = PassUi {
+        focus: None,
+        badges: Vec::new(),
+        guide: None,
+        power: None,
+        short: false,
+        needed: None,
+    };
+    let screen = broadcast;
+    play_back_frames(tape, view, pad, "REPLAY", |snap| {
+        screen.throw_off_frame_live(snap, CameraMode::Broadcast, &ui)
+    })
+}
+
+/// The tape itself: the frames that were played, run back at the rate they were
+/// played at, with the label plate in the corner.
+fn play_back_frames<T>(
+    tape: &[T],
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    label: &str,
+    mut draw: impl FnMut(&T) -> nopads_render::raster::Frame,
+) -> bool {
     let started = Instant::now();
     let mut next = Instant::now();
     // A play that ran long is sampled rather than run back for as long as it
@@ -1862,7 +1924,7 @@ fn play_back_tape(
                 }
             }
         }
-        let mut frame = broadcast.live_frame_ui(snapshot, mode, &ui);
+        let mut frame = draw(snapshot);
         let tw = nopads_render::font::text_width(label, 3) as i32;
         frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
         frame.fill_rect(12, 12, 4, 30, hud::RED);
@@ -1879,7 +1941,7 @@ fn play_back_tape(
     let Some(last) = tape.last() else {
         return true;
     };
-    let mut frame = broadcast.live_frame_ui(last, mode, &ui);
+    let mut frame = draw(last);
     let tw = nopads_render::font::text_width("END OF PLAY", 3) as i32;
     frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
     frame.fill_rect(12, 12, 4, 30, hud::RED);
@@ -1900,7 +1962,7 @@ fn play_back_tape(
     let fade = Instant::now();
     while fade.elapsed() < Duration::from_millis(280) {
         let t = (fade.elapsed().as_secs_f32() / 0.28).clamp(0.0, 1.0);
-        let mut frame = broadcast.live_frame_ui(last, mode, &ui);
+        let mut frame = draw(last);
         frame.fill_rect_alpha(0, 0, frame.w as i32, frame.h as i32, hud::INK, t);
         if !view.show(&mut frame, &[]) {
             return false;

@@ -22,7 +22,10 @@ use crate::moves::{CarrierMove, Kind};
 use crate::rules::{FoulTeam, PenaltyCall, PenaltyKind};
 use crate::team::{Attributes, Team};
 
-pub const TACKLE_RADIUS: f32 = 0.95;
+/// How close a defender's hands have to be to a man to get hold of him. It was
+/// nearly a yard of daylight, and the picture showed the gap: a runner was stopped
+/// by a man he was plainly not touching yet.
+pub const TACKLE_RADIUS: f32 = 0.75;
 /// How far a diving defender throws himself at the man with the ball.
 pub const DIVE_LUNGE: f32 = 1.05;
 /// How long a dive keeps the longer reach, in seconds.
@@ -40,8 +43,10 @@ pub const LOOSE_GRACE: f32 = 0.35;
 /// How close a man has to get to a loose ball to come up with it.
 pub const RECOVER_RADIUS: f32 = 1.15;
 
-/// How far a blocker's hands reach. A man with his arms out in front is wider
-/// than a man standing in the way, and this is that difference.
+/// How far a blocker's hands reach. A man with his arms out in front is wider than
+/// a man standing in the way, and the pocket depends on the reach. What was wrong
+/// was not the distance he could start from but that he never closed it: see the
+/// step-in in `resolve_blocks`.
 const BLOCK_REACH: f32 = 1.9;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
@@ -473,6 +478,10 @@ pub struct PlaySim<'a> {
     pub flag: Option<PenaltyCall>,
     /// Sim time the flag came in, so the picture can pulse it.
     pub flag_at: f32,
+    /// Seconds left on the fumble plate, and what it says. Set the frame the ball
+    /// comes out, on any kind of play, so every client raises the same alert.
+    pub fumble_alert: f32,
+    pub fumble_note: String,
     /// True while the player is holding the preview button at the line.
     preview: bool,
     /// Time left of a dummy count being sold at the line.
@@ -634,6 +643,8 @@ impl<'a> PlaySim<'a> {
             possession_start: None,
             flag: None,
             flag_at: 0.0,
+            fumble_alert: 0.0,
+            fumble_note: String::new(),
             preview: false,
             dummy_t: 0.0,
             wrap: None,
@@ -950,10 +961,12 @@ impl<'a> PlaySim<'a> {
 
     pub fn step(&mut self, dt: f32) -> Option<&PlayResult> {
         if self.result.is_some() {
+            self.fumble_alert = (self.fumble_alert - dt.max(0.0)).max(0.0);
             return self.result.as_ref();
         }
         let dt = dt.min(0.05);
         self.t += dt;
+        self.fumble_alert = (self.fumble_alert - dt).max(0.0);
         // Who stands like a blocker this frame. Decided from the play, so a man is
         // posed as one even on a frame where he has nobody's hands on him yet, and
         // the mesh cannot leave a stale flag on the runner.
@@ -2284,6 +2297,16 @@ impl<'a> PlaySim<'a> {
             };
             self.players[i].engaged = Some(d);
             self.players[d].engaged = Some(i);
+            // And he steps into him. Engagement used to start from a body's width
+            // away and never close the gap, so a lineman could be blocking a man
+            // nobody could see him touch. Only the last of it, though: dragging a
+            // man a full yard off his spot every frame took the pocket with it.
+            let gap = self.players[d].pos.dist(self.players[i].pos);
+            if gap > 0.9 && gap < 1.5 {
+                let to = (self.players[d].pos - self.players[i].pos).normalize_or_zero();
+                let close = (gap - 0.9).min(0.6) * (dt * 9.0).min(1.0);
+                self.players[i].pos += to * close;
+            }
 
             // His hands go where the rusher goes: the hand on that side follows
             // him, never more than 45 degrees, and the body comes round after the
@@ -2382,9 +2405,9 @@ impl<'a> PlaySim<'a> {
             // A diving defender gets his hands out further than a man on his feet.
             let reach = if Some(d) == self.human_defender {
                 if self.players[d].dive_t > 0.0 {
-                    TACKLE_RADIUS * 2.1
+                    TACKLE_RADIUS * 1.9
                 } else {
-                    TACKLE_RADIUS * 1.3
+                    TACKLE_RADIUS * 1.15
                 }
             } else {
                 TACKLE_RADIUS
@@ -2691,6 +2714,8 @@ impl<'a> PlaySim<'a> {
             self.name_of(defender),
             self.name_of(carrier)
         );
+        self.fumble_alert = 2.4;
+        self.fumble_note = desc.clone();
         self.start_loose(spot, desc);
     }
 
@@ -4750,6 +4775,45 @@ mod tests {
             "a live ball was booked as {:?}: {}",
             r.outcome,
             r.description
+        );
+    }
+
+    /// A fumble puts the plate up the moment the ball comes out, with the words of
+    /// it, and the plate comes down on its own: it is the only way a player learns
+    /// the ball is on the ground behind him.
+    #[test]
+    fn a_fumble_raises_the_alert() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let play = &book[0];
+        let mut sim = PlaySim::new(&off, &def_, play, &d[0], &setup(38.0, 1, 10.0, 3));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 600 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        let Some(carrier) = sim.carrier else {
+            return;
+        };
+        assert_eq!(sim.fumble_alert, 0.0, "the plate was up before the ball came out");
+        sim.fumble(carrier, 7);
+        assert!(sim.fumble_alert > 0.0, "no alert on a fumble");
+        assert!(
+            sim.fumble_note.contains("loose"),
+            "the alert says nothing: {}",
+            sim.fumble_note
+        );
+        let started = sim.fumble_alert;
+        for _ in 0..40 {
+            if sim.result.is_some() {
+                break;
+            }
+            sim.step(FIXED_DT);
+        }
+        assert!(
+            sim.fumble_alert < started || sim.result.is_some(),
+            "the fumble plate never came down"
         );
     }
 

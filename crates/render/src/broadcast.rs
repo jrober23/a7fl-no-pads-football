@@ -664,6 +664,7 @@ impl Broadcast {
         let camera = throw_off_camera(sim, focus, mode, (self.lens_zoom, self.lens_tilt));
         let mut frame = self.paint_throw_off(&players, ball, camera.clone());
         ui.draw(&mut frame, &camera, &self.scene.projector);
+        Self::fumble_alert(&mut frame, sim.fumble_alert, &sim.fumble_note);
         frame
     }
 
@@ -684,6 +685,7 @@ impl Broadcast {
     ) -> Frame {
         let (mut frame, camera) = self.live_scene(sim, mode);
         ui.draw(&mut frame, &camera, &self.scene.projector);
+        Self::fumble_alert(&mut frame, sim.fumble_alert, &sim.fumble_note);
         frame
     }
 
@@ -1188,15 +1190,18 @@ impl Broadcast {
                 Vec3::new(action.x + d * 19.0, action.y, 0.0),
                 50f32,
             ),
-            // From the crowd, over the near touchline, and well inside it: the old
-            // shot was low and nine yards off the ball's lane, so a play near a
-            // sideline put the lens inside the stand and the picture was the back
-            // of a wall. Above the roofs and over the field, it looks down onto
-            // the grass with nothing in the way, tighter than it used to be.
+            // A cameraman on the field: knee height, seven yards behind the ball
+            // and inside the touchline, close enough that the play fills the shot.
+            // Every seat outside the ground has something between it and the grass
+            // -- a roof, a fascia, the back of a stand -- and on a play near a
+            // sideline the old high lens found all three.
+            // The aim is the ball, not a spot past it: a lens on the field is
+            // close enough that leading the play downfield swings the ball itself
+            // out of the picture on a play near a sideline.
             CameraMode::Replay => (
-                Vec3::new(action.x - d * 6.0, action.y * 0.35, 9.0),
-                Vec3::new(action.x + d * 6.0, action.y * 0.55, 0.9),
-                30f32,
+                Vec3::new(action.x - d * 6.0, action.y * 0.5, 2.1),
+                Vec3::new(action.x + d * 2.0, action.y * 0.95, 0.8),
+                28f32,
             ),
             CameraMode::Endzone => (
                 Vec3::new(field::opponent_goal_side(direction) - d * 12.0, 6.0, 7.5),
@@ -1212,6 +1217,33 @@ impl Broadcast {
         cam.fov = fov.to_radians();
         cam
     }
+
+/// The plate that goes up the moment the ball comes out.
+///
+/// A fumble can happen on any phase of the game -- a snap, a return, a kick that
+/// is muffled -- and it is the one thing on the field a player cannot see while it
+/// is happening. Every client draws this from the same clock on the sim, so the
+/// alert lands at the same moment on all of them.
+fn fumble_alert(frame: &mut Frame, left: f32, note: &str) {
+    if left <= 0.0 {
+        return;
+    }
+    // Fade over the last half second rather than blinking off the screen.
+    let alpha = (left / 0.5).clamp(0.0, 1.0);
+    let w = frame.w as i32;
+    let tw = crate::font::text_width("FUMBLE", 5) as i32;
+    let x = (w - tw) / 2;
+    frame.fill_rect_alpha(x - 20, 30, tw + 40, 44, hud::INK, 0.78 * alpha);
+    frame.fill_rect(x - 20, 30, 5, 44, hud::RED);
+    frame.text_shadowed(x, 37, "FUMBLE", 5, hud::WHITE, 1);
+    if !note.is_empty() {
+        let note = note.to_uppercase();
+        let nw = crate::font::text_width(&note, 2) as i32;
+        let nx = (w - nw) / 2;
+        frame.fill_rect_alpha(nx - 10, 74, nw + 20, 18, hud::INK, 0.62 * alpha);
+        frame.text_shadowed(nx, 77, &note, 2, hud::MUTED, 1);
+    }
+}
 
     /// Rebuild the projector for the camera's field of view. The lights belong to
     /// the building, not to the lens, so they survive every cut.
@@ -1847,6 +1879,36 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    /// The replay is shot from the field: a cameraman's height, inside the
+    /// touchline, close to the ball. A play near a sideline used to put the lens in
+    /// the stand, and the picture was the wall behind it.
+    #[test]
+    fn the_replay_lens_stands_on_the_field() {
+        let teams = league_teams();
+        let b = Broadcast::new(640, 360, [teams[0].clone(), teams[1].clone()]);
+        for y in [-14.0f32, -7.0, 0.0, 7.0, 14.0] {
+            let cam = b.camera_for(CameraMode::Replay, Vec2::new(60.0, y), 1, 45.0, 1.0);
+            assert!(
+                cam.pos.z < 4.0,
+                "the replay sits {:.1} yards up at y {y}",
+                cam.pos.z
+            );
+            assert!(
+                cam.pos.y.abs() < FIELD_HALF_WIDTH - 2.0,
+                "the replay lens is at y {:.1}, off the field, for a ball at y {y}",
+                cam.pos.y
+            );
+            let lens = crate::scene::Projector::new(640, 360, cam.fov);
+            let (sx, sy, _) = lens
+                .project(cam.view(Vec3::new(60.0, y, 1.0)))
+                .unwrap_or_else(|| panic!("the replay lost the ball at y {y}"));
+            assert!(
+                (0.0..640.0).contains(&sx) && (0.0..360.0).contains(&sy),
+                "the replay put the ball off the frame at y {y}: ({sx}, {sy})"
+            );
         }
     }
 

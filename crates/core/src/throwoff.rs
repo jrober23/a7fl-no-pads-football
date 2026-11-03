@@ -211,6 +211,7 @@ struct Flight {
     peak: f32,
 }
 
+#[derive(Clone)]
 pub struct ThrowOffSim<'a> {
     pub setup: ThrowOffSetup,
     pub throwing: &'a Team,
@@ -250,6 +251,10 @@ pub struct ThrowOffSim<'a> {
     /// True when the ball came down in the returner's hands and he did not hold it,
     /// as opposed to landing untouched with nobody under it.
     muffed: bool,
+    /// Seconds left on the fumble plate, and what it says: a muff is a loose ball
+    /// and the player has to be told the ball is on the ground.
+    pub fumble_alert: f32,
+    pub fumble_note: String,
     /// A rule the throw has already broken, kept back until the ball is dead: the
     /// throw still flies, so the player sees it leave the hand.
     violation: Option<(ThrowOffOutcome, String)>,
@@ -353,6 +358,8 @@ impl<'a> ThrowOffSim<'a> {
             human_dir: Vec2::ZERO,
             human_thrower: false,
             fair_catch: false,
+            fumble_alert: 0.0,
+            fumble_note: String::new(),
             catch_t: None,
             return_t: 0.0,
             muffed: false,
@@ -476,9 +483,11 @@ impl<'a> ThrowOffSim<'a> {
 
     pub fn step(&mut self, dt: f32) -> Option<&ThrowOffResult> {
         if self.result.is_some() {
+            self.fumble_alert = (self.fumble_alert - dt.max(0.0)).max(0.0);
             return self.result.as_ref();
         }
         self.t += dt;
+        self.fumble_alert = (self.fumble_alert - dt).max(0.0);
         match self.phase {
             ThrowPhase::Presnap => {
                 if !self.human_thrower && self.t >= self.snap_delay {
@@ -673,12 +682,33 @@ impl<'a> ThrowOffSim<'a> {
 
         // Nobody got under it: it is a live ball on the ground, and it stays live
         // until somebody falls on it.
+        // A kick that comes down untouched is nobody's fumble: it belongs to the
+        // receiving team where it lies and the play is dead there. Only a returner
+        // who has his hands on it and loses it -- a muff -- puts it in play for
+        // anybody else, and even then the throwing team cannot advance it.
         let gap = self.players[returner].pos.dist(landing);
         if gap > CATCH_RADIUS {
-            // Nobody was under it. That is a live ball on the turf -- not a muff,
-            // which is what it was called however far away the returner was --
-            // and the men converging on it settle who gets it.
-            self.loose(landing, false);
+            if self.fair_catch {
+                let desc = "A fair catch was signalled, so the ball is dead where it lands.";
+                self.finish(
+                    ThrowOffOutcome::FairCatch,
+                    self.setup.receiving_team,
+                    landing.x,
+                    0,
+                    None,
+                    desc.to_string(),
+                );
+                return;
+            }
+            let desc = "The kick comes down untouched, and it is the receiving team's ball there.";
+            self.finish(
+                ThrowOffOutcome::Downed,
+                self.setup.receiving_team,
+                landing.x,
+                0,
+                None,
+                desc.to_string(),
+            );
             return;
         }
 
@@ -748,6 +778,10 @@ impl<'a> ThrowOffSim<'a> {
         self.ball_z = 0.3;
         self.loose_t = 0.0;
         self.muffed = muffed;
+        if muffed {
+            self.fumble_alert = 2.4;
+            self.fumble_note = "The returner muffs the kick".to_string();
+        }
         self.events.push("Loose ball on the ground!".to_string());
     }
 
@@ -1361,10 +1395,11 @@ mod tests {
         assert_eq!(sim.phase, ThrowPhase::Flight);
     }
 
-    /// A ball nobody catches is live on the ground before it is dead, not called the
-    /// instant it lands.
+    /// A kick nobody touches is not a live ball: it belongs to the receiving team
+    /// where it comes down. Only a returner who has his hands on it and loses it --
+    /// a muff -- puts it in play for anybody else.
     #[test]
-    fn a_ball_nobody_catches_is_live_before_it_is_dead() {
+    fn an_untouched_kick_is_dead_where_it_lies() {
         let (a, b) = teams();
         let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
         let mut sim = ThrowOffSim::new(&setup, &a, &b);
@@ -1374,25 +1409,33 @@ mod tests {
         sim.human = Some(4);
         sim.human_dir = Vec2::ZERO;
         sim.launch_with(0.8, 0.0);
-        for _ in 0..600 {
-            if sim.phase == ThrowPhase::Loose || sim.result.is_some() {
-                break;
-            }
-            sim.step(1.0 / 60.0);
-        }
-        assert_eq!(sim.phase, ThrowPhase::Loose, "the ball was never live");
-        assert!(sim.result.is_none(), "the loose ball was dead on arrival");
-        // It lies there for a beat while everybody runs to it.
-        for _ in 0..30 {
-            sim.step(1.0 / 60.0);
-        }
-        assert!(sim.result.is_none(), "the loose ball died in half a second");
         let r = sim.run_to_completion();
-        assert!(
-            matches!(r.outcome, ThrowOffOutcome::Downed | ThrowOffOutcome::RecoveredByK),
-            "a loose ball ends up downed, not {:?}",
-            r.outcome
-        );
+        assert_eq!(r.outcome, ThrowOffOutcome::Downed, "{:?}", r.outcome);
+        assert_eq!(r.next_offense, setup.receiving_team, "the kick was handed over");
+        assert_eq!(sim.phase, ThrowPhase::Dead, "the dead ball was still live");
+        assert!((r.start_spot - 0.0).abs() < 1e-3 || r.start_spot > 1.0);
+    }
+
+    /// A fair catch signed for and not fielded is blown dead where the ball lands:
+    /// it is not a fumble, and there is no scramble for it.
+    #[test]
+    fn a_fair_catch_nobody_fields_is_blown_dead() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        sim.players[4].pos = Vec2::new(60.0, 0.0);
+        sim.human = Some(4);
+        sim.human_dir = Vec2::ZERO;
+        sim.launch_with(0.8, 0.0);
+        for _ in 0..2 {
+            sim.step(1.0 / 60.0);
+        }
+        assert!(sim.call_fair_catch(), "the call was refused in flight");
+        let r = sim.run_to_completion();
+        assert_eq!(r.outcome, ThrowOffOutcome::FairCatch, "{:?}", r.outcome);
+        assert!(r.fair_catch);
+        assert_eq!(r.next_offense, setup.receiving_team);
+        assert_eq!(sim.phase, ThrowPhase::Dead);
     }
 
     #[test]
