@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.7-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.8-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -159,7 +159,8 @@ are in.
 
 Then the ground: twenty-two of them, each with a picture of the field you will be
 looking at, so the stadium is picked before anything else happens on it. Pick it and
-you are standing in it.
+you are standing in it. The arrows walk the grid one picture at a time — up is up —
+and stop at the top and bottom of it rather than wrapping round to the other end.
 
 Then the game itself, on one card: **QUARTERS** and **DIFFICULTY**, and then
 **KICK OFF**. Both are about the game you are about to play, so they are asked here
@@ -704,8 +705,13 @@ Then the four the league takes the game to:
   sits on it all, lit.
 - **The Back of Beyond** — a field cut into red earth, with mesas, boulders, a water
   tower and a windmill, and nothing else for miles.
-- **The Strand** — the ocean down one sideline, a resort down the other, palms over
-  both and umbrellas along the sand.
+- **The Strand** — the ocean down one sideline, a hotel down the other, palms and
+  umbrellas over the sand. The sand runs from the boards up the hotel side and round
+  both ends, so the beach is in the shot down the field as well: the far end zone has
+  palms, umbrellas and a lit resort block set back on the sand behind it, and the sea
+  starts out past the grandstand with a strip of wet sand between it and the boards.
+  It used to stop sixteen yards short of the boards on the hotel side and at the end
+  of the resort, so the shot down the field ran out onto nothing.
 - **The Championship** — the final. Both clubs are painted into both end zones in
   their own colours, with bunting down both stands and the confetti already falling.
 

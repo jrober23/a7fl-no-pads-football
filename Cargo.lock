@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "a7fl_cli"
-version = "0.25.7"
+version = "0.25.8"
 dependencies = [
  "a7fl_core",
  "a7fl_render",
@@ -14,11 +14,11 @@ dependencies = [
 
 [[package]]
 name = "a7fl_core"
-version = "0.25.7"
+version = "0.25.8"
 
 [[package]]
 name = "a7fl_render"
-version = "0.25.7"
+version = "0.25.8"
 dependencies = [
  "a7fl_core",
  "gif",

@@ -1758,36 +1758,62 @@ fn outback(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
 }
 
 fn beach(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
-    // Sand beyond the boards on the resort side; the sea on the other.
+    // The ground under the whole picture: the sea on one side of the boards, sand
+    // on the other, and both carried past the ends. The sand used to start sixteen
+    // yards out from the boards and stop at the end of the resort, so there was a
+    // bare strip against the boards on the hotel side and nothing at all past the
+    // end zone — the shot down the field ended on a hole in the world.
+    const NEAR: f32 = 17.6;
+    // The water starts out past the grandstand rather than tight against the
+    // boards: a bright plane at the foot of the stand read as a pool, not a sea.
+    const SHORE: f32 = 31.0;
     mesh.quad_shaded(
-        Vec3::new(-60.0, -120.0, 0.008),
-        Vec3::new(170.0, -120.0, 0.008),
-        Vec3::new(170.0, -34.0, 0.008),
-        Vec3::new(-60.0, -34.0, 0.008),
+        Vec3::new(-220.0, -190.0, 0.006),
+        Vec3::new(340.0, -190.0, 0.006),
+        Vec3::new(340.0, -SHORE, 0.006),
+        Vec3::new(-220.0, -SHORE, 0.006),
         Rgb::hex(0x1C7C96),
         1.0,
     );
-    water(mesh, -60.0, 170.0, -110.0, -40.0, Rgb::hex(0x1E8AA8));
+    // Wet sand between the boards and the water, so there is ground under the
+    // stand rather than a hole the sea shows through.
+    mesh.quad_shaded(
+        Vec3::new(-220.0, -SHORE, 0.007),
+        Vec3::new(340.0, -SHORE, 0.007),
+        Vec3::new(340.0, -NEAR, 0.007),
+        Vec3::new(-220.0, -NEAR, 0.007),
+        Rgb::hex(0xB49A6A),
+        1.0,
+    );
+    water(mesh, -220.0, 340.0, -180.0, -SHORE, Rgb::hex(0x1E8AA8));
     // Breakers: three white lines out from the beach.
-    for (i, y) in [-44.0f32, -52.0, -64.0].iter().enumerate() {
+    for (i, y) in [-34.0f32, -44.0, -58.0].iter().enumerate() {
         let w = 0.8 - i as f32 * 0.2;
         mesh.quad_shaded(
-            Vec3::new(-60.0, *y, 0.03),
-            Vec3::new(170.0, *y, 0.03),
-            Vec3::new(170.0, *y + w, 0.03),
-            Vec3::new(-60.0, *y + w, 0.03),
+            Vec3::new(-220.0, *y, 0.03),
+            Vec3::new(340.0, *y, 0.03),
+            Vec3::new(340.0, *y + w, 0.03),
+            Vec3::new(-220.0, *y + w, 0.03),
             Rgb::hex(0xDFF2F2),
             1.0,
         );
     }
-    mesh.quad_shaded(
-        Vec3::new(-60.0, 34.0, 0.008),
-        Vec3::new(170.0, 34.0, 0.008),
-        Vec3::new(170.0, 120.0, 0.008),
-        Vec3::new(-60.0, 120.0, 0.008),
-        Rgb::hex(0xD8C08A),
-        1.0,
-    );
+    // The sand: up the resort side and round both ends, so the beach is there in
+    // the shot down the field as well as in the sideline shot.
+    for (x0, x1, y0, y1, z) in [
+        (-220.0f32, 340.0, NEAR, 190.0, 0.008f32),
+        (122.0, 340.0, -NEAR, NEAR, 0.0085),
+        (-220.0, -122.0, -NEAR, NEAR, 0.0085),
+    ] {
+        mesh.quad_shaded(
+            Vec3::new(x0, y0, z),
+            Vec3::new(x1, y0, z),
+            Vec3::new(x1, y1, z),
+            Vec3::new(x0, y1, z),
+            Rgb::hex(0xD8C08A),
+            1.0,
+        );
+    }
     // The resort: three towers, balconies, and a lit sign.
     for i in 0..3 {
         let h = 16.0 + i as f32 * 6.0;
@@ -1820,27 +1846,58 @@ fn beach(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
             rand,
         );
     }
-    // A last block of the resort past the far end zone, and palms along the
-    // near end, so the beach reads in the shot down the field as well.
+    // A last block of the resort past the far end zone, set back on the sand
+    // rather than standing in the middle of the shot down the field, and lit on
+    // both end faces: the end-zone lens comes from the +x side, which used to be
+    // the blank wall.
     mesh.box_shaded(
-        Vec3::new(142.0, 14.0, 9.0),
-        Vec3::new(9.0, 12.0, 9.0),
+        Vec3::new(150.0, 34.0, 8.0),
+        Vec3::new(8.0, 10.0, 8.0),
         0.0,
         Rgb::hex(0xE8E2D4),
         1.0,
     );
-    for i in 0..7 {
-        mesh.quad_shaded(
-            Vec3::new(132.8, -12.0 + i as f32 * 8.0, 2.0),
-            Vec3::new(132.8, -8.0 + i as f32 * 8.0, 2.0),
-            Vec3::new(132.8, -8.0 + i as f32 * 8.0, 8.0),
-            Vec3::new(132.8, -12.0 + i as f32 * 8.0, 8.0),
-            Rgb::hex(0x3A6E7E),
-            1.0,
-        );
+    for face in [141.8f32, 158.2] {
+        for floor in 0..5 {
+            let z = 1.8 + floor as f32 * 2.6;
+            for i in 0..4 {
+                let y = 25.6 + i as f32 * 4.2;
+                mesh.quad_shaded(
+                    Vec3::new(face, y, z),
+                    Vec3::new(face, y + 3.4, z),
+                    Vec3::new(face, y + 3.4, z + 1.5),
+                    Vec3::new(face, y, z + 1.5),
+                    Rgb::hex(0x3A6E7E),
+                    1.0,
+                );
+            }
+        }
     }
     for i in 0..5 {
         palm(mesh, Vec3::new(-24.0, -20.0 + i as f32 * 10.0, 0.0), 7.0 + rand() * 2.0, rand);
+    }
+    // Beach at the far end too: palms and umbrellas out past the end zone, so the
+    // end-zone lens looks at sand rather than at boards and a hole.
+    for i in 0..6 {
+        palm(
+            mesh,
+            Vec3::new(132.0 + i as f32 * 26.0, -12.0 + rand() * 22.0, 0.0),
+            6.5 + rand() * 3.5,
+            rand,
+        );
+    }
+    for i in 0..5 {
+        let at = Vec3::new(136.0 + i as f32 * 28.0, -6.0 + rand() * 18.0, 0.0);
+        mesh.cylinder(at, at + Vec3::new(0.0, 0.0, 2.4), 0.08, 0.06, 5, Rgb::hex(0xD8D2C0));
+        let canopy = if i % 2 == 0 { Rgb::hex(0xE4572E) } else { Rgb::hex(0xE8E2D4) };
+        mesh.cylinder(
+            at + Vec3::new(0.0, 0.0, 2.4),
+            at + Vec3::new(0.0, 0.0, 2.9),
+            1.7,
+            0.0,
+            8,
+            canopy,
+        );
     }
     // Umbrellas along the sand.
     for i in 0..10 {

@@ -492,7 +492,15 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         if let d = nav_y.step(input.stick.y, dt) {
             if d != 0 {
-                sel = wrap(sel, all.len(), d * 4);
+                let next = if d > 0 {
+                    sel.checked_sub(4)
+                } else {
+                    let n = sel + 4;
+                    (n < all.len()).then_some(n)
+                };
+                if let Some(n) = next {
+                    sel = n;
+                }
             }
         }
         if input.pressed.a {
@@ -702,7 +710,18 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         }
         if let d = nav_y.step(input.stick.y, dt) {
             if d != 0 {
-                sel = wrap(sel, venues::COUNT, d * GRID_COLS as i8);
+                // Up is up and down is down. The cursor walks one row and stops at
+                // the top and bottom of the grid rather than arriving at the other
+                // end of it, which is what the reversed step used to do.
+                let next = if d > 0 {
+                    sel.checked_sub(GRID_COLS)
+                } else {
+                    let n = sel + GRID_COLS;
+                    (n < venues::COUNT).then_some(n)
+                };
+                if let Some(n) = next {
+                    sel = n;
+                }
             }
         }
         let page = sel / PAGE;
