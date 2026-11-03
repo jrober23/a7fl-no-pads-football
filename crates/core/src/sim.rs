@@ -2867,6 +2867,7 @@ impl<'a> PlaySim<'a> {
         self.return_t = 0.0;
         self.return_throw = None;
         self.return_is_fumble = true;
+        self.carrier_moves.reset();
         self.phase = Phase::Return;
         self.intended = None;
         self.pass_caught = true;
@@ -3566,6 +3567,7 @@ impl<'a> PlaySim<'a> {
         self.return_t = 0.0;
         self.return_throw = Some((thrower, air_yards));
         self.return_is_fumble = false;
+        self.carrier_moves.reset();
         self.phase = Phase::Return;
         self.intended = None;
         self.pass_caught = true;
@@ -3590,15 +3592,25 @@ impl<'a> PlaySim<'a> {
         } else {
             Vec2::ZERO
         };
+        let mut target;
+        let mut spd = self.speed_cap(r);
         if stick.length() > 0.18 {
-            let target = self.players[r].pos + stick.normalize_or_zero() * 4.0;
-            let spd = self.speed_cap(r);
-            self.steer(r, target, spd, dt);
+            target = self.players[r].pos + stick.normalize_or_zero() * 4.0;
         } else {
-            let aim = Vec2::new(goal, (self.players[r].pos.y * 0.35).clamp(-9.0, 9.0));
-            let spd = self.speed_cap(r);
-            self.steer(r, aim, spd, dt);
+            target = Vec2::new(goal, (self.players[r].pos.y * 0.35).clamp(-9.0, 9.0));
         }
+        // The man running it back is a runner, and a runner has the four moves.
+        // A pick or a fumble return used to be the one carry in the game where the
+        // buttons did nothing and the only way past the last man was to outrun him.
+        if let Some(kind) = self.carrier_moves.kind() {
+            spd *= self.carrier_moves.speed_scale();
+            if !kind.steerable() {
+                target = self.players[r].pos + self.carrier_moves.dir() * 2.6;
+            }
+        }
+        self.steer(r, target, spd, dt);
+        self.ball.pos = self.players[r].pos;
+        self.ball.holder = Some(r);
 
         // The chase. The three men nearest the ball when it was picked are the
         // ones with a shot at him; everybody else is behind the play.
@@ -3642,12 +3654,29 @@ impl<'a> PlaySim<'a> {
             self.finish_return(spot, false);
             return;
         }
-        // A hit. Any of the men in the chase close enough to wrap him up ends it.
+        // The end of a dive is the end of the return, the same as it is on offence.
+        if let Some(kind) = self.carrier_moves.step(dt) {
+            if kind.commits() {
+                let name = self.name_of(r);
+                let text = match kind {
+                    Kind::Slide => format!("{name} slides down and gives himself up."),
+                    _ => format!("{name} dives down and is tackled there."),
+                };
+                self.events.push(SimEvent { t: self.t, text });
+                self.finish_return(spot, false);
+                return;
+            }
+        }
+        // A hit. Any of the men in the chase close enough to wrap him up ends it,
+        // and a move makes him a smaller target: a spin or a stiff arm late on the
+        // wrap, and a man in the air over the tackle cannot be wrapped up at all.
+        let wrap = self.carrier_moves.tackle_scale();
         let hit = chasers
             .iter()
             .find(|(i, _)| {
                 self.return_t >= RETURN_GRACE
-                    && self.players[*i].pos.dist(self.players[r].pos) <= TACKLE_RADIUS
+                    && wrap > 0.0
+                    && self.players[*i].pos.dist(self.players[r].pos) <= TACKLE_RADIUS * wrap
             })
             .map(|(i, _)| *i);
         if let Some(i) = hit {
@@ -4844,6 +4873,39 @@ mod tests {
             r.outcome,
             r.description
         );
+    }
+
+    /// A returner is a runner: he gets the four moves the back gets.
+    #[test]
+    fn a_returner_has_the_moves_a_back_has() {
+        let (off, def_) = teams();
+        let play = &playbook()[0];
+        let d = defensive_playbook();
+        let mut sim = PlaySim::new(&off, &def_, play, &d[0], &setup(45.0, 1, 10.0, 1));
+        sim.await_snap(false);
+        let qb = sim.qb;
+        sim.start_return(7, 45.0, qb, 8.0);
+        assert_eq!(sim.phase, Phase::Return);
+        assert_eq!(sim.carrier, Some(7));
+        sim.request_move(Kind::Spin);
+        assert_eq!(
+            sim.carrier_move().kind(),
+            Some(Kind::Spin),
+            "the returner could not spin"
+        );
+        // And a dive ends the return where he lands, like it ends a run.
+        for _ in 0..40 {
+            sim.step(FIXED_DT);
+        }
+        sim.request_move(Kind::Dive);
+        assert_eq!(sim.carrier_move().kind(), Some(Kind::Dive));
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 200 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        assert!(sim.result.is_some(), "a dive on a return never ended the play");
+        assert_eq!(sim.phase, Phase::Dead);
     }
 
     /// A try is over the moment a defender has the ball: no return, no six.

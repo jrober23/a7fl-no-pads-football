@@ -242,6 +242,9 @@ pub struct ThrowOffSim<'a> {
     pub human_thrower: bool,
     /// A tackle the man on the pad asked for, and whether he dived for it.
     human_hit: Option<bool>,
+    /// The move the returner is in the middle of. The throw-off has a runner in it
+    /// too, and he runs with the same four moves the back does.
+    moves: crate::moves::CarrierMove,
     /// The returner has called a fair catch: he takes the ball where it comes
     /// down and does not run it out.
     pub fair_catch: bool,
@@ -370,6 +373,7 @@ impl<'a> ThrowOffSim<'a> {
             violation: None,
             loose_t: 0.0,
             human_hit: None,
+            moves: crate::moves::CarrierMove::default(),
             tackle: None,
         }
     }
@@ -390,6 +394,41 @@ impl<'a> ThrowOffSim<'a> {
 
     /// Ask the man on the pad for a tackle: a wrap-up, or a dive from further
     /// out. Only during the return, and only for a man in coverage.
+    /// The returner asks for a move. Only the man with the ball, only after the
+    /// catch, and only on his feet: a mash of the buttons during the flight must
+    /// not spend the moves before the return starts.
+    pub fn request_move(&mut self, kind: crate::moves::Kind) {
+        if self.phase != ThrowPhase::Return || self.human != Some(self.returner()) {
+            return;
+        }
+        let r = self.returner();
+        if self.players[r].down || self.players[r].tackled > 0.0 || self.tackle.is_some() {
+            return;
+        }
+        let vel = self.players[r].vel;
+        let facing = if vel.length() > 0.4 {
+            vel
+        } else {
+            Vec2::new(self.setup.receive_direction as f32, 0.0)
+        };
+        if !self.moves.start(kind, facing) {
+            return;
+        }
+        let text = match kind {
+            crate::moves::Kind::Spin => format!("{} spins out", self.name(r)),
+            crate::moves::Kind::Hurdle => format!("{} goes over the top", self.name(r)),
+            crate::moves::Kind::Dive => format!("{} dives forward", self.name(r)),
+            crate::moves::Kind::Slide => format!("{} slides down", self.name(r)),
+            crate::moves::Kind::StiffArm => format!("{} puts a hand out", self.name(r)),
+        };
+        self.events.push(text);
+    }
+
+    /// The move the returner is in the middle of, for the picture.
+    pub fn carrier_move(&self) -> crate::moves::CarrierMove {
+        self.moves
+    }
+
     pub fn call_tackle(&mut self, dive: bool) {
         if self.phase == ThrowPhase::Return {
             self.human_hit = Some(dive);
@@ -917,13 +956,64 @@ impl<'a> ThrowOffSim<'a> {
         let target = Vec2::new(goal, self.players[returner].pos.y * 0.6);
         let human = self.human;
         let push = self.human_dir;
-        let speed = self.speed(returner);
-        let target = if human == Some(returner) && push.length() > 0.2 {
+        let mut speed = self.speed(returner);
+        let mut target = if human == Some(returner) && push.length() > 0.2 {
             self.players[returner].pos + push * 4.0
         } else {
             target
         };
+        // The returner is a runner, so he runs like one: a dive goes where it was
+        // aimed, a hurdle carries him through the air and cannot be steered.
+        if let Some(kind) = self.moves.kind() {
+            speed *= self.moves.speed_scale();
+            if !kind.steerable() {
+                target = self.players[returner].pos + self.moves.dir() * 2.6;
+            }
+        }
         self.steer(returner, target, speed, dt);
+        // The end of a dive is the end of the return, the same as it is on offence.
+        if let Some(kind) = self.moves.step(dt) {
+            if kind.commits() {
+                let spot = self.players[returner].pos.x;
+                let in_own_endzone = if dir > 0 {
+                    spot <= 0.0
+                } else {
+                    spot >= FIELD_LENGTH
+                };
+                let yards = (spot - self.setup.spot()).abs();
+                let desc = match kind {
+                    crate::moves::Kind::Slide => format!("{} gives himself up.", self.name(returner)),
+                    _ => format!(
+                        "{} dives down after {} yards.",
+                        self.name(returner),
+                        yards.round() as i32
+                    ),
+                };
+                if in_own_endzone {
+                    self.finish(
+                        ThrowOffOutcome::Safety,
+                        self.setup.receiving_team,
+                        0.0,
+                        2,
+                        Some(self.setup.throwing_team),
+                        desc,
+                    );
+                } else {
+                    self.finish(
+                        ThrowOffOutcome::Returned,
+                        self.setup.receiving_team,
+                        spot,
+                        0,
+                        None,
+                        desc,
+                    );
+                    if let Some(r) = self.result.as_mut() {
+                        r.return_yards = yards;
+                    }
+                }
+                return;
+            }
+        }
         let pos = self.players[returner].pos;
         self.ball = pos;
         self.ball_z = 1.0;
@@ -965,6 +1055,10 @@ impl<'a> ThrowOffSim<'a> {
             return;
         }
 
+        // What a tackle has to beat: a spin or a stiff arm makes him a smaller
+        // target, and a man in the air over the tackle cannot be got at all.
+        let wrap = self.moves.tackle_scale();
+
         // The man on the pad gets his own shot, and he has to ask for it: A wraps
         // him up from arm's length, X dives in from further out.
         if let Some(dive) = self.human_hit.take() {
@@ -973,7 +1067,7 @@ impl<'a> ThrowOffSim<'a> {
                     let p = &self.players[h];
                     (p.team, p.role, p.down, p.pos.dist(pos))
                 };
-                let reach = if dive { 2.2 } else { 1.15 };
+                let reach = (if dive { 2.2 } else { 1.15 }) * wrap;
                 if team == self.setup.throwing_team
                     && role == ThrowRole::Gunner
                     && !down
@@ -1023,7 +1117,7 @@ impl<'a> ThrowOffSim<'a> {
                 continue;
             }
             let dist = self.players[g].pos.dist(pos);
-            if dist < 1.0 {
+            if dist < wrap {
                 let defender = self.attrs(g).tackle_factor();
                 let returner_skill = self.attrs(returner).break_tackle_factor();
                 let p = clamp(0.36 + (defender - returner_skill) * 0.5, 0.1, 0.9);
@@ -1323,6 +1417,54 @@ mod tests {
         assert!(r.touchback, "expected a touchback, got {:?}", r.outcome);
         // Receiving team attacks -x, so its own 20 is x = 80.
         assert!((r.start_spot - 80.0).abs() < 1e-2, "spot {}", r.start_spot);
+    }
+
+    /// The returner is a runner too: the throw-off's man gets the same four moves
+    /// the back gets, and a dive ends his return where he goes down.
+    #[test]
+    fn the_returner_can_use_the_ball_carrier_moves() {
+        use crate::moves::Kind;
+        let (a, b) = teams();
+        let setup = ThrowOffSetup {
+            receive_direction: 1,
+            ..ThrowOffSetup::normal()
+        };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let r = sim.returner();
+        sim.human = Some(r);
+        sim.launch_with(0.7, 0.0);
+        let mut guard = 0;
+        while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(sim.phase, ThrowPhase::Return, "nobody caught it");
+        sim.request_move(Kind::Spin);
+        assert_eq!(
+            sim.carrier_move().kind(),
+            Some(Kind::Spin),
+            "the throw-off returner could not spin"
+        );
+        // Once the spin and its cooldown are out of the way, a dive is a dive.
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 60 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        if sim.result.is_none() {
+            sim.request_move(Kind::Dive);
+            assert_eq!(
+                sim.carrier_move().kind(),
+                Some(Kind::Dive),
+                "the throw-off returner could not dive"
+            );
+            let mut guard = 0;
+            while sim.result.is_none() && guard < 400 {
+                sim.step(1.0 / 60.0);
+                guard += 1;
+            }
+            assert!(sim.result.is_some(), "a dive never ended the return");
+        }
     }
 
     #[test]

@@ -514,10 +514,18 @@ impl Broadcast {
                 wrap: p.wrap,
                 tackled: p.tackled,
                 celebrate: 0.0,
-                // A returner is not moved to a dive or a spin yet: the throw-off
-                // has its own state machine and no move set of its own.
-                motion: None,
-                motion_progress: 0.0,
+                // The returner is a runner: a spin, a hurdle or a dive he asked for
+                // shows on the picture the way it does on a scrimmage run.
+                motion: if p.role == ThrowRole::Returner {
+                    sim.carrier_move().kind()
+                } else {
+                    None
+                },
+                motion_progress: if p.role == ThrowRole::Returner {
+                    sim.carrier_move().progress()
+                } else {
+                    0.0
+                },
             })
             .collect();
         (players, ball)
@@ -865,11 +873,82 @@ impl Broadcast {
 
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
         // Shadows first so every player casts one.
+        self.draw_shadows(frame, camera, bodies);
+        self.paint_men(frame, camera, bodies);
+    }
+
+    /// The men themselves, drawn at twice the canvas and boxed back down.
+    ///
+    /// The picture is a 640x360 canvas stretched over the window, so the worst of
+    /// what read as "low resolution" was never the polygon count: it was a
+    /// silhouette that could only step a whole pixel at a time. At four samples a
+    /// pixel an edge that fell between two pixels comes out as one half-covered
+    /// pixel, which is what a sharper picture actually looks like. Only the men are
+    /// drawn this way, because they are where the stair-step shows and they are a
+    /// small enough part of the frame to afford four samples each: the sky, the
+    /// turf, the stands and the crowd stay at canvas size, and nothing else in the
+    /// picture is four times the pixel count.
+    fn paint_men(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
+        const K: usize = 2;
+        let saved = self.scene.projector;
+        let mut fine = Frame::new(frame.w * K, frame.h * K);
+        // The same field of view at twice the size is exactly twice the focal
+        // length: no lens changes, only the resolution it is resolved at.
+        self.scene.projector = crate::scene::Projector {
+            w: saved.w * K as f32,
+            h: saved.h * K as f32,
+            focal: saved.focal * K as f32,
+        };
+        self.paint_men_at(&mut fine, camera, bodies);
+        self.scene.projector = saved;
+
+        let samples = (K * K) as f32;
+        for y in 0..frame.h {
+            for x in 0..frame.w {
+                let mut acc = [0u32; 3];
+                let mut hit = 0u32;
+                for oy in 0..K {
+                    for ox in 0..K {
+                        let i = (y * K + oy) * fine.w + (x * K + ox);
+                        // Nothing was drawn at this sample, so the turf shows.
+                        if fine.depth[i] <= 0.0 {
+                            continue;
+                        }
+                        let c = fine.color[i];
+                        acc[0] += c.r as u32;
+                        acc[1] += c.g as u32;
+                        acc[2] += c.b as u32;
+                        hit += 1;
+                    }
+                }
+                if hit == 0 {
+                    continue;
+                }
+                let n = hit as f32;
+                let men = Rgb::new(
+                    (acc[0] as f32 / n) as u8,
+                    (acc[1] as f32 / n) as u8,
+                    (acc[2] as f32 / n) as u8,
+                );
+                let i = y * frame.w + x;
+                frame.color[i] = frame.color[i].lerp(men, n / samples);
+            }
+        }
+    }
+
+    /// The shadows, at canvas size: a soft ellipse on the grass has nothing to gain
+    /// from being resolved four times, and it is drawn before the men so nothing
+    /// can land on top of them.
+    fn draw_shadows(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
         for p in bodies {
             let radius = if p.down { 0.72 } else { 0.5 };
             self.scene
                 .draw_shadow(frame, camera, Vec3::new(p.pos.x, p.pos.y, 0.0), radius, 0.42);
         }
+    }
+
+    /// One build and one draw per man, into whichever frame the caller gave it.
+    fn paint_men_at(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
         let mut close_builds = 0;
         for p in bodies {
             let roster = &self.teams[p.team].roster[p.roster];

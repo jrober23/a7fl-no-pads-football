@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.16-windows-x86_64.zip` from the
+Grab `7on7-v0.25.17-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -557,6 +557,12 @@ whistled dead the instant it is caught. Once you have it the three
 gunners are chasing you, so a return is a run rather than a dice roll. Throwing it
 off, you become the gunner nearest the ball and can go down and make the tackle
 yourself.
+
+A return is a run, and a run has the runner's buttons: **[A] spin, [B] hurdle,
+[X] dive, [Y] stiff-arm**, the same four a back gets, with a dive ending the return
+where he goes down. The man who picks off a pass and the man who falls on a fumble
+get them too. A return used to be the one carry in the game where the face buttons
+did nothing and the only way past the last man was to outrun him.
 
 On the cover, a dive that gets there and does not hold on puts the gunner on the
 turf — and he stays there for a beat before he is back on his feet and chasing

@@ -1019,6 +1019,20 @@ impl Arcade {
                 .and_then(|order| live_man(sim, order, cover_pick))
                 .or_else(|| human_man(sim, my_team, cover_pick));
             sim.set_human(mine, stick);
+            // The returner has the ball, so the four buttons are the four moves: the
+            // same set the back gets, on the same buttons.
+            let returning_it = sim.phase == ThrowPhase::Return
+                && mine
+                    .map(|i| sim.players[i].role == ThrowRole::Returner)
+                    .unwrap_or(false);
+            if returning_it {
+                let buttons = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
+                for (slot, kind) in MOVES.iter().enumerate() {
+                    if buttons[slot] {
+                        sim.request_move(*kind);
+                    }
+                }
+            }
             // On the cover: A wraps him up, X dives at him from further out.
             if sim.phase == ThrowPhase::Return && sim.setup.throwing_team == my_team {
                 if input.pressed.a {
@@ -2179,6 +2193,17 @@ fn drive(
                 swat: false,
                 intercept: false,
             }));
+            // The man running it back is a runner, so the four face buttons are the
+            // four moves: a pick return used to be the one carry in the game where
+            // the buttons did nothing.
+            if sim.returner_index().is_some() && sim.returner_index() == sim.human_defender {
+                let set = moves_for(sim);
+                for (slot, kind) in set.iter().enumerate() {
+                    if down[slot] {
+                        sim.request_move(*kind);
+                    }
+                }
+            }
         }
         let turning = turn
             .map(|since| now.duration_since(since) < TURNAROUND)
@@ -2289,11 +2314,30 @@ fn drive(
             let mut lines = vec![header.to_string(), call];
 
             if returning {
-                lines.push(if my_team == sim.setup.defense_team {
-                    "  INTERCEPTION - THE BALL IS YOURS   MOVE TO RUN IT BACK   [START] PAUSE".to_string()
+                if sim.returner_index().is_some() && sim.returner_index() == sim.human_defender {
+                    // He is a runner now, so he gets the runner's row.
+                    let set = moves_for(sim);
+                    let mut row = format!(
+                        "  RETURN IT   [A] {}   [B] {}   [X] {}   [Y] {}",
+                        set[0].label(),
+                        set[1].label(),
+                        set[2].label(),
+                        set[3].label()
+                    );
+                    if let Some(kind) = sim.carrier_move().kind() {
+                        row.push_str(&format!("      {}", kind.label()));
+                    }
+                    lines.push(row);
+                } else if my_team == sim.setup.defense_team {
+                    lines.push(
+                        "  INTERCEPTION - THE BALL IS YOURS   MOVE TO RUN IT BACK   [START] PAUSE"
+                            .to_string(),
+                    );
                 } else {
-                    "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string()
-                });
+                    lines.push(
+                        "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string(),
+                    );
+                }
             } else if running {
                 // The moves, and which one is in flight right now.
                 let set = moves_for(sim);
@@ -2687,8 +2731,20 @@ fn drive_defense(
             continue;
         }
 
+        // The ball in your hands makes you the runner, and the four buttons are the
+        // four moves. B is a move then, so it does not walk the pad around.
+        let my_ball = sim.returner_index().is_some() && sim.returner_index() == sim.human_defender;
+        if my_ball {
+            let set = moves_for(sim);
+            let buttons = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
+            for (slot, kind) in set.iter().enumerate() {
+                if buttons[slot] {
+                    sim.request_move(*kind);
+                }
+            }
+        }
         // B walks the pad round the seven. A wraps up, X dives at him, Y picks.
-        if input.pressed.b && now.duration_since(switched) >= Duration::from_millis(120) {
+        if input.pressed.b && !my_ball && now.duration_since(switched) >= Duration::from_millis(120) {
             sim.cycle_defender();
             switched = now;
             took_control = true;
@@ -2779,10 +2835,24 @@ fn drive_defense(
                 ),
                 format!("  YOU: {role} {who}"),
             ];
-            if sim.phase == Phase::Return {
-                // A pick is not a dead ball: the man who took it is a runner now.
+            if sim.phase == Phase::Return && my_ball {
+                // A pick is not a dead ball: the man who took it is a runner now, and
+                // a runner gets the runner's row of moves.
+                let set = moves_for(sim);
+                let mut row = format!(
+                    "  RETURN IT   [A] {}   [B] {}   [X] {}   [Y] {}",
+                    set[0].label(),
+                    set[1].label(),
+                    set[2].label(),
+                    set[3].label()
+                );
+                if let Some(kind) = sim.carrier_move().kind() {
+                    row.push_str(&format!("      {}", kind.label()));
+                }
+                lines.push(row);
+            } else if sim.phase == Phase::Return {
                 lines.push(
-                    "  INTERCEPTION - THE BALL IS YOURS   RUN IT BACK   [START] PAUSE".to_string(),
+                    "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string(),
                 );
             } else {
                 if sim.previewing() {
@@ -2962,6 +3032,19 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: 
         return format!(
             "  THROW   AIM WITH STICK   HOLD [A] TO LOAD   [SELECT] CAMERA   [START] PAUSE"
         );
+    }
+    if sim.phase == ThrowPhase::Return && sim.setup.receiving_team == my_team {
+        let mut row = format!(
+            "  RETURN IT   [A] {}   [B] {}   [X] {}   [Y] {}      MOVE WITH STICK   [SELECT] {cam}   [START] PAUSE",
+            MOVES[0].label(),
+            MOVES[1].label(),
+            MOVES[2].label(),
+            MOVES[3].label()
+        );
+        if let Some(kind) = sim.carrier_move().kind() {
+            row.push_str(&format!("      {}", kind.label()));
+        }
+        return row;
     }
     if sim.setup.throwing_team == my_team {
         let men = human_men(sim, my_team);

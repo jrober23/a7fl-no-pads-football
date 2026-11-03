@@ -58,6 +58,7 @@ impl Camera {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
 pub struct Projector {
     pub w: f32,
     pub h: f32,
