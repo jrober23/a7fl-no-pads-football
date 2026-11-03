@@ -138,6 +138,32 @@ impl Broadcast {
         Self::with_venue(w, h, teams, crate::venues::Venue::from_index(0))
     }
 
+    /// Put the chosen ground under the game.
+    ///
+    /// The picture is built before the front end has asked the player where he
+    /// wants to play, so it opens on the practice field. This is how the picker's
+    /// answer reaches the world: the ground, its light, its seats and its water are
+    /// rebuilt, and what the player has already tuned -- the lens, the teams, the
+    /// field -- is left alone.
+    pub fn set_venue(&mut self, venue: crate::venues::Venue) {
+        self.venue = venue;
+        self.scene.lighting = venue.lighting();
+        let stands = build_stadium(&self.teams, venue);
+        let crowd = if venue.has_crowd() {
+            build_crowd(&self.teams)
+        } else {
+            Vec::new()
+        };
+        let fish = if matches!(venue.kind(), crate::venues::Kind::Underwater) {
+            crate::venues::school(0xA7F1_5EED)
+        } else {
+            Vec::new()
+        };
+        self.stands = stands;
+        self.crowd = crowd;
+        self.fish = fish;
+    }
+
     /// The same picture, on a particular ground.
     pub fn with_venue(
         w: usize,
@@ -1843,6 +1869,36 @@ mod tests {
     /// the camera has to be on it for the whole flight -- not merely somewhere near
     /// where it left from. This walks a real pass frame by frame and projects the
     /// ball through the same lens the picture uses.
+    /// The ground picked on the front end has to reach the world, not just the
+    /// label on the bug: the picture opens on the practice field, so the choice has
+    /// to rebuild it.
+    #[test]
+    fn set_venue_puts_the_picked_ground_under_the_game() {
+        use crate::venues::{Kind, Venue};
+        let t = league_teams();
+        let mut b = Broadcast::new(320, 180, [t[0].clone(), t[1].clone()]);
+        assert_eq!(
+            b.venue.kind(),
+            Kind::Practice,
+            "the picture did not open on the practice field"
+        );
+        let beach = (0..crate::venues::COUNT)
+            .map(Venue::from_index)
+            .find(|v| v.kind() == Kind::Beach)
+            .expect("the beach is not in the ground list");
+        b.set_venue(beach);
+        assert_eq!(
+            b.venue.kind(),
+            Kind::Beach,
+            "the beach was picked and the practice field was built"
+        );
+        b.set_venue(Venue::from_index(1));
+        assert_eq!(b.venue.kind(), Kind::ClosedPractice);
+        assert!(b.crowd.is_empty(), "the roof-on ground still had a crowd");
+        b.set_venue(Venue::from_index(0));
+        assert!(!b.crowd.is_empty(), "the open ground lost its crowd");
+    }
+
     #[test]
     fn the_shot_keeps_up_with_a_ball_thrown_downfield() {
         for mode in [CameraMode::Classic, CameraMode::Broadcast, CameraMode::SkyCam] {

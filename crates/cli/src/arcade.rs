@@ -327,8 +327,14 @@ impl Arcade {
     }
 
     /// The ground the game is played at, so a rematch opens on the same field.
+    ///
+    /// The picture was built on the practice field before the player had picked
+    /// anything, so the choice has to be built into the world here rather than
+    /// only remembered for the scoreboard.
     pub fn with_venue(mut self, venue: usize) -> Self {
         self.venue = venue;
+        self.broadcast
+            .set_venue(nopads_render::venues::Venue::from_index(venue));
         self
     }
 

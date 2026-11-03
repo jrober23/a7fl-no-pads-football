@@ -482,7 +482,7 @@ dependencies = [
 
 [[package]]
 name = "nopads_cli"
-version = "0.25.10"
+version = "0.25.11"
 dependencies = [
  "gilrs",
  "minifb",
@@ -492,11 +492,11 @@ dependencies = [
 
 [[package]]
 name = "nopads_core"
-version = "0.25.10"
+version = "0.25.11"
 
 [[package]]
 name = "nopads_render"
-version = "0.25.10"
+version = "0.25.11"
 dependencies = [
  "gif",
  "image",
