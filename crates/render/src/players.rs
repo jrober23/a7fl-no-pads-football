@@ -771,10 +771,11 @@ pub fn build_mesh_at(
     let h = player.height_yards().clamp(1.55, 2.05);
     // Body mass is the difference between a wire frame and a football player.
     let bulk = player.build.clamp(0.9, 1.1) * 1.00;
-    // Shoulder span, not a chest measurement: the sheets under this one are
-    // drawn to human proportions, and a half-width much past this stops being a
-    // man and starts being the cartoon bodybuilder the last pass was building.
-    let shoulder_w = (player.shoulder_width() * 0.92).clamp(0.42, 0.54);
+    // Shoulder span, not a chest measurement. The art sheets this is built to are
+    // drawn with a span that is deliberately past human: the deltoids are the
+    // widest thing on the figure and the waist sits well inside them. The clamp
+    // was held down to human proportions, which is why the figures read narrow.
+    let shoulder_w = (player.shoulder_width() * 1.08).clamp(0.52, 0.64);
     let skin = player.skin.rgb();
     let jersey = uniform.jersey;
     let accent = uniform.jersey_accent;
@@ -842,10 +843,10 @@ pub fn build_mesh_at(
     // Legs sized off the body, not off a bodybuilder: the thigh was thick enough
     // that the shorts sat out wider than the shoulders, which is what made the
     // figure read as bottom-heavy rather than athletic.
-    let thigh_r = 0.092 * bulk;
-    let knee_r = 0.058 * bulk;
-    let calf_r = 0.082 * bulk;
-    let ankle_r = 0.043 * bulk;
+    let thigh_r = 0.104 * bulk;
+    let knee_r = 0.064 * bulk;
+    let calf_r = 0.094 * bulk;
+    let ankle_r = 0.047 * bulk;
 
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
         let [thigh, knee, foot] = legs[i];
@@ -1184,8 +1185,8 @@ pub fn build_mesh_at(
             taper3(
                 &mut mesh,
                 shoulder.lerp(shoulder_zone, 0.5) + Vec3::new(0.0, 0.0, 0.004),
-                Vec3::new(0.052, 0.046, 0.020),
-                Vec3::new(0.040, 0.070, 0.017),
+                Vec3::new(0.062, 0.056, 0.024),
+                Vec3::new(0.048, 0.086, 0.021),
                 0.0,
                 chest_yaw,
                 skin,
@@ -1197,7 +1198,7 @@ pub fn build_mesh_at(
         // boulder, not a ball: wide across the top, deeper than it is tall.
         mesh.sphere(
             shoulder,
-            Vec3::new(0.078 * bulk, 0.074 * bulk, 0.068 * bulk),
+            Vec3::new(0.095 * bulk, 0.090 * bulk, 0.082 * bulk),
             if detail.fine() { 4 } else { 2 },
             if detail.fine() { 12 } else { 6 },
             skin,
@@ -1209,7 +1210,7 @@ pub fn build_mesh_at(
         // shoulders.
         mesh.sphere(
             shoulder + Vec3::new(-0.004, 0.0, 0.026 * bulk),
-            Vec3::new(0.072 * bulk, 0.070 * bulk, 0.038 * bulk),
+            Vec3::new(0.088 * bulk, 0.084 * bulk, 0.046 * bulk),
             if detail.fine() { 5 } else { 2 },
             if detail.fine() { 14 } else { 6 },
             jersey,
@@ -1283,13 +1284,13 @@ pub fn build_mesh_at(
         mesh.tube(
             &smooth_profile(
                 &[
-                    (shoulder, 0.062 * bulk),
-                    (bicep, 0.074 * bulk),
-                    (above_elbow, 0.058 * bulk),
-                    (elbow, 0.048 * bulk),
-                    (fore_hi, 0.058 * bulk),
-                    (fore_mid, 0.044 * bulk),
-                    (hand, 0.036 * bulk),
+                    (shoulder, 0.076 * bulk),
+                    (bicep, 0.094 * bulk),
+                    (above_elbow, 0.070 * bulk),
+                    (elbow, 0.058 * bulk),
+                    (fore_hi, 0.072 * bulk),
+                    (fore_mid, 0.054 * bulk),
+                    (hand, 0.044 * bulk),
                 ],
                 detail.rings(),
             ),
@@ -1297,11 +1298,24 @@ pub fn build_mesh_at(
             arm_skin,
             true,
         );
+        if sleeved {
+            let hem_lo = shoulder.lerp(elbow, 0.50);
+            let hem_hi = shoulder.lerp(elbow, 0.58);
+            limb(
+                &mut mesh,
+                hem_lo,
+                hem_hi,
+                0.100 * bulk,
+                0.096 * bulk,
+                sides,
+                accent,
+            );
+        }
         // A cap on the point of the elbow, where the surface turns hardest.
         if detail.fine() {
             mesh.sphere(
                 elbow,
-                Vec3::new(0.052 * bulk, 0.052 * bulk, 0.048 * bulk),
+                Vec3::new(0.062 * bulk, 0.062 * bulk, 0.056 * bulk),
                 2,
                 8,
                 arm_skin,
@@ -1314,8 +1328,8 @@ pub fn build_mesh_at(
             &mut mesh,
             wrist,
             wrist + fore_dir * 0.046,
-            0.042,
-            0.040,
+            0.050,
+            0.048,
             sides,
             accent,
         );
@@ -1329,7 +1343,7 @@ pub fn build_mesh_at(
         };
         mesh.sphere(
             hand + fore_dir * 0.002,
-            Vec3::new(0.046, 0.042, 0.048),
+            Vec3::new(0.053, 0.049, 0.055),
             if detail.fine() { 5 } else { 3 },
             if detail.fine() { 9 } else { 6 },
             glove,
@@ -1337,7 +1351,7 @@ pub fn build_mesh_at(
         // Thumb, laid along the inside of the fist, so the glove has a hand in it.
         mesh.sphere(
             hand + fore_dir * 0.002 + Vec3::new(0.0, side * -0.040, 0.010),
-            Vec3::new(0.018, 0.016, 0.021),
+            Vec3::new(0.021, 0.019, 0.024),
             2,
             6,
             glove,
@@ -1348,8 +1362,8 @@ pub fn build_mesh_at(
             &mut mesh,
             hand - fore_dir * 0.042,
             hand - fore_dir * 0.018,
-            0.040,
-            0.042,
+            0.048,
+            0.050,
             sides,
             accent,
         );

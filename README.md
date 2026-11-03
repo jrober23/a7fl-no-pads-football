@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.19-windows-x86_64.zip` from the
+Grab `7on7-v0.25.20-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -87,7 +87,9 @@ around not needing. With no display it says so and falls back to the terminal.
 ### The look
 
 The picture is treated before it is handed over, in three passes that cost about
-6.5 ms a frame at the canvas size here:
+6.5 ms a frame at the canvas size here. The glow is deliberately kept to a hint —
+at a stronger setting the middle of the field washed out and the whole picture read
+as fog rather than weather:
 
 - **Soft edges.** Hard polygon edges stepping a whole pixel are the loudest
   early-3D tell. Brightness edges are found and blended across, more on a real
@@ -102,7 +104,15 @@ soft edges of its own rather than going through the same wash as the grass.
 Chrome is built from a painted panel — a shadow, a lit top shading to a dark
 bottom, a hairline edge and a highlight — rather than a flat rectangle, and type
 above one pixel is drawn with soft outlines instead of a staircase of whole
-pixels while its strokes stay solid. Add `--flip-y` if your pad
+pixels while its strokes stay solid.
+
+The figures are built to the club art sheets: a shoulder span deliberately past
+human, deltoids as the widest thing on the body, a bicep that swells and a forearm
+that flares under the elbow, heavier quads and calves, a sleeve that ends on a band
+of trim, and gloved fists. `cargo run --release -p nopads_render --example sheet`
+draws one man from four sides at close detail into `artifacts/sheet.png`; on the
+field a player is forty pixels tall, so that sheet is the only way to work on one
+and know whether it got better. Add `--flip-y` if your pad
 reports its stick's vertical axis the other way round. With no controller attached the
 keyboard drives it, so the game is always playable.
 

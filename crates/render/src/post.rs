@@ -17,10 +17,10 @@
 use crate::raster::Frame;
 use nopads_core::math::Rgb;
 
-const BLOOM_THRESHOLD: f32 = 150.0;
-const BLOOM_STRENGTH: f32 = 0.55;
-const EDGE_SOFTNESS: f32 = 0.45;
-const VIGNETTE: f32 = 0.22;
+const BLOOM_THRESHOLD: f32 = 208.0;
+const BLOOM_STRENGTH: f32 = 0.18;
+const EDGE_SOFTNESS: f32 = 0.30;
+const VIGNETTE: f32 = 0.12;
 
 /// Run the whole treatment over a finished world picture.
 pub fn finish(frame: &mut Frame) {
