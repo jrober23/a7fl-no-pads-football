@@ -814,6 +814,7 @@ fn cmd_arcade(args: &[String]) {
     // the film and timing paths want. Everything else opens the menu.
     let scripted = has(args, "--home") || has(args, "--away");
     let mut mine = None;
+    let mut venue = 0usize;
     if scripted {
         match &pad {
             Some(pad) => println!("Controller: {}", pad.name()),
@@ -831,7 +832,10 @@ fn cmd_arcade(args: &[String]) {
                 game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(
                     settings.difficulty,
                 ));
+                // The clock chosen on the setup card is the clock this game runs.
+                game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
                 mine = Some(0);
+                venue = kick.venue;
             }
             None => return,
         }
@@ -842,7 +846,8 @@ fn cmd_arcade(args: &[String]) {
         .with_flip_y(flip_y)
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
-        .with_settings(settings);
+        .with_settings(settings)
+        .with_venue(venue);
     if let Some(mine) = mine {
         arcade = arcade.with_my_team(mine);
     }

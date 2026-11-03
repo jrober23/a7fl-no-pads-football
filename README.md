@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.6-windows-x86_64.zip` from the
+Grab `a7fl-v0.25.7-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -123,10 +123,19 @@ On defense the same pad does different work:
 
 ### The start menu
 
-Bare `a7fl` opens on the start menu: **EXHIBITION**, **SETTINGS**, **QUIT**. The
-stick moves, A selects, START leaves. `a7fl arcade --home 3 --away 7` skips the
-front end and goes straight to kickoff with the clubs named, which is what the film
-and timing paths use.
+Bare `a7fl` opens on the start menu: **EXHIBITION**, **CUSTOMIZATION**, **SETTINGS**,
+**QUIT**. The stick moves, A selects, START leaves. `a7fl arcade --home 3 --away 7`
+skips the front end and goes straight to kickoff with the clubs named, which is what
+the film and timing paths use.
+
+**CUSTOMIZATION** is the league's paperwork, and it is for every club rather than
+only the one you are about to play: pick a club off the sixteen and the screen
+carries its **depth chart** and its **roster**. The depth chart is the eight
+positions down the left with the men who play them, best first, the way the game
+picks its seven — the starter in white, the man behind him greyed. The roster is
+every man on the side beside it, number, name, position and rating, sixteen to a
+page and the stick pages through the rest. The club's overall is on its card in the
+grid, so a side can be read before its roster is opened.
 
 ### Exhibition
 
@@ -152,6 +161,11 @@ Then the ground: twenty-two of them, each with a picture of the field you will b
 looking at, so the stadium is picked before anything else happens on it. Pick it and
 you are standing in it.
 
+Then the game itself, on one card: **QUARTERS** and **DIFFICULTY**, and then
+**KICK OFF**. Both are about the game you are about to play, so they are asked here
+rather than buried in the settings screen, which is where the machine's defaults
+live. The club's name is over the coin, not over a menu.
+
 Then the toss. Call heads or tails and watch the coin come down. Win it and you
 choose whether to throw the opening throw-off or receive it; lose it and the computer
 takes the ball. Either way the next thing you see is the throw-off, not another
@@ -162,10 +176,13 @@ so nothing on a jersey belongs to a club somebody already owns.
 
 ### Settings
 
-Three things, all of them changed without leaving the screen: the default camera
-(CLASSIC, BROADCAST or SKY), the window resolution (960x540, 1280x720, 1600x900,
-1920x1080) and whether the game runs in a window or borderless fullscreen. Left and
-right walk a value and A cycles it. Changes apply as you make them and are written
+Four things, all of them changed without leaving the screen: the default camera
+(CLASSIC, BROADCAST or SKY), the lens, the window resolution (960x540, 1280x720,
+1600x900, 1920x1080) and whether the game runs in a window or borderless fullscreen.
+Left and right walk a value and A cycles it. The game opens on **1920x1080**: the
+canvas is 640x360, so 1080p is exactly three screen pixels to one canvas pixel, with
+no resampling anywhere in the chain. A smaller desktop steps down to 1600x900 or
+1280x720, which are whole-number steps too. Changes apply as you make them and are written
 to `%APPDATA%\a7fl\settings.cfg` on Windows (`~/.config/a7fl/settings.cfg`
 elsewhere), so the next launch opens the way you left it. Delete that file to go back
 to the defaults; a hand-edited or half-written file falls back to them as well.
@@ -332,6 +349,13 @@ START (Esc on the keyboard) pauses the game:
 
 The lens is saved when the game closes, so a shot tuned at the half is still there
 the next time it opens.
+
+### The final whistle
+
+The FINAL card is a choice, not a dead end: **A** plays the game again — the same two
+clubs, on the same ground, under the same clock and difficulty, from zero — and **B**
+goes back to the front end to pick a different game. It used to show the box score
+and stop there, with nothing to press and no way back into the program.
 
 It works on the call sheet and on the fourth-down choice as well, and START no longer
 closes the game anywhere. **LEAVE GAME** asks which game you mean: *BACK TO THE MENU*
@@ -533,6 +557,13 @@ gunners are chasing you, so a return is a run rather than a dice roll. Throwing 
 off, you become the gunner nearest the ball and can go down and make the tackle
 yourself.
 
+On the cover, a dive that gets there and does not hold on puts the gunner on the
+turf — and he stays there for a beat before he is back on his feet and chasing
+again, and he is not steered while he is down. He used to be left on the ground for
+the rest of the return and still driven by the pad, which is a body in a diving pose
+running after the ball. A return that goes twenty-five yards or more is a big play
+like a long snap, so it is flagged for the highlight package.
+
 The return is also where the tackling work starts: the three-on-one geometry the
 throw-off has always had is now something you can drive from either side of it.
 
@@ -543,13 +574,13 @@ controller still works (the keyboard and the window do not depend on it).
 
 ### Difficulty, the lens and the crowd
 
-The settings screen carries three levels. **Easy** is the game as it shipped: the
+The setup card carries three levels. **Easy** is the game as it shipped: the
 other sideline calls a sensible mix and plays what is in front of it. **Normal**
 throws on early downs and pushes the ball downfield instead of grinding for the
 sticks, and is quicker to go for it on fourth down. **Hard** adds a defence that
 hunts the ball: it presses and plays man on third down, and it goes for the strip,
 so a hard side takes the ball away more often, on the ground and in the air. The
-level lives in `settings.cfg` with everything else.
+level is remembered in `settings.cfg`, so the card opens on the last one played.
 
 **Lens** opens a live preview: left and right zoom, up and down tilt, X resets. It is
 the real broadcast camera on a real formation rather than a diagram, and the two
@@ -695,10 +726,11 @@ who will actually be on the field and not on its bench. The three best players o
 the roster are named under the number with their positions and their own ratings,
 which is where the team number comes from.
 
-The settings screen carries the quarter length as well: 4, 6, 8, 10, 12 or 15
-minute quarters, saved in `settings.cfg` and used for every quarter of the game,
+The setup card carries the quarter length as well: 4, 6, 8, 10, 12 or 15 minute
+quarters, remembered in `settings.cfg` and used for every quarter of this game,
 including the clock that runs out at the end of regulation. Fifteen is still the
-league's default, and overtime is unaffected.
+league's default, and overtime is unaffected. A game started from the command line
+takes its clock from the same file.
 
 ### Simulation
 

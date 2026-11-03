@@ -122,6 +122,10 @@ pub struct ThrowPlayer {
     pub pos: Vec2,
     pub vel: Vec2,
     pub down: bool,
+    /// Seconds left on the turf before he is back on his feet. A gunner who went
+    /// down for a dive is out of the play for a beat, not for the rest of the
+    /// return: stuck on the ground, he was steered like a running man.
+    pub down_t: f32,
     pub run_phase: f32,
     pub heading: f32,
     /// 0..1 through the hit: the gunner driving it home, the returner going down.
@@ -291,6 +295,7 @@ impl<'a> ThrowOffSim<'a> {
             pos: Vec2::new(spot, 0.0),
             vel: Vec2::ZERO,
             down: false,
+            down_t: 0.0,
             run_phase: 0.0,
             heading: downfield,
             wrap: 0.0,
@@ -305,6 +310,7 @@ impl<'a> ThrowOffSim<'a> {
                 pos: Vec2::new(spot, y),
                 vel: Vec2::ZERO,
                 down: false,
+                down_t: 0.0,
                 run_phase: 0.0,
                 heading: downfield,
                 wrap: 0.0,
@@ -320,6 +326,7 @@ impl<'a> ThrowOffSim<'a> {
             pos: Vec2::new(clamp(catch_x, 0.0, FIELD_LENGTH), 0.0),
             vel: Vec2::ZERO,
             down: false,
+            down_t: 0.0,
             run_phase: 0.0,
             heading: back,
             wrap: 0.0,
@@ -794,6 +801,18 @@ impl<'a> ThrowOffSim<'a> {
         let dir = self.setup.receive_direction;
         let returner = self.returner();
 
+        // A man who went to the turf gets up again. The dive that missed used to
+        // leave him down and still steered, which is a body in a diving pose
+        // running after the returner.
+        for p in self.players.iter_mut() {
+            if p.down && p.down_t > 0.0 {
+                p.down_t = (p.down_t - dt).max(0.0);
+                if p.down_t <= 0.0 {
+                    p.down = false;
+                }
+            }
+        }
+
         // A tackle that is being made: he has him, and the two of them are going to
         // the turf. The play is over when they get there, not when the hands close.
         if let Some(mut b) = self.tackle {
@@ -847,6 +866,9 @@ impl<'a> ThrowOffSim<'a> {
                 );
                 if let Some(r) = self.result.as_mut() {
                     r.return_yards = b.yards;
+                    // A return that went a long way is a big play like any other,
+                    // so the highlight package can see it.
+                    r.highlight = r.highlight || b.yards >= 25.0;
                 }
             }
             return;
@@ -867,8 +889,12 @@ impl<'a> ThrowOffSim<'a> {
         self.ball = pos;
         self.ball_z = 1.0;
 
-        // Gunners chase, unless one of them is the man the human is driving.
+        // Gunners chase, unless one of them is the man the human is driving, or
+        // he is still on the ground from a dive that did not hold on.
         for g in 1..4 {
+            if self.players[g].down {
+                continue;
+            }
             let speed = self.speed(g);
             let target = if human == Some(g) {
                 self.pad_target(g, push, pos)
@@ -942,8 +968,10 @@ impl<'a> ThrowOffSim<'a> {
                         });
                         return;
                     }
-                    // He got there and did not hold on: he is on the turf.
+                    // He got there and did not hold on: he is on the turf, and he
+                    // has to get up before he can chase again.
                     self.players[h].down = true;
+                    self.players[h].down_t = 1.2;
                     self.events
                         .push(format!("{} dives at him and misses.", self.name(h)));
                 }
@@ -986,6 +1014,7 @@ impl<'a> ThrowOffSim<'a> {
                     return;
                 } else {
                     self.players[g].down = true;
+                    self.players[g].down_t = 1.2;
                     self.events.push(format!("{} breaks free!", self.name(returner)));
                 }
             }
@@ -1582,5 +1611,93 @@ mod tests {
         assert!(t > 0.25, "the hit resolved in {t:.2}s");
         assert!(sim.players[4].down, "the returner never went down");
         assert_eq!(r.outcome, ThrowOffOutcome::Returned, "{:?}", r.outcome);
+    }
+
+    /// A gunner who went to the turf for a dive is not steered while he is down,
+    /// and he is back on his feet a beat later. He used to be left down for the
+    /// rest of the return and still steered, which is a diving pose running.
+    #[test]
+    fn a_gunner_on_the_turf_stays_there_then_gets_up() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup { receive_direction: 1, ..ThrowOffSetup::normal() };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        sim.launch_with(0.7, 0.0);
+        let mut guard = 0;
+        while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 900 {
+            if let Some(spot) = sim.landing_spot() {
+                sim.players[4].pos = spot;
+            }
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(sim.phase, ThrowPhase::Return, "nobody caught it");
+
+        // He went down for a dive that did not hold on. The pad is still pushing
+        // him at the returner.
+        sim.set_human(Some(1), Vec2::new(0.0, -1.0));
+        sim.players[1].down = true;
+        sim.players[1].down_t = 0.5;
+        sim.players[1].vel = Vec2::ZERO;
+        let spot = sim.players[1].pos;
+        for _ in 0..24 {
+            sim.step(1.0 / 60.0);
+        }
+        assert!(sim.players[1].down, "he got up inside half a second");
+        assert!(
+            (sim.players[1].pos - spot).length() < 0.35,
+            "a man on the ground was steered: moved {:.2} yards",
+            (sim.players[1].pos - spot).length()
+        );
+
+        // A beat later he is up and back in the chase.
+        for _ in 0..24 {
+            sim.step(1.0 / 60.0);
+        }
+        assert!(!sim.players[1].down, "he never got back on his feet");
+    }
+
+    /// A return that goes a long way is a big play, the same as a long snap.
+    #[test]
+    fn a_long_return_is_a_big_play() {
+        let (a, b) = teams();
+        let mut checked = 0;
+        for seed in 0..8u64 {
+            let setup = ThrowOffSetup { seed, receive_direction: 1, ..ThrowOffSetup::normal() };
+            let mut sim = ThrowOffSim::new(&setup, &a, &b);
+            sim.launch_with(0.7, 0.0);
+            let mut guard = 0;
+            while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 900 {
+                if let Some(spot) = sim.landing_spot() {
+                    sim.players[4].pos = spot;
+                }
+                sim.step(1.0 / 60.0);
+                guard += 1;
+            }
+            if sim.phase != ThrowPhase::Return {
+                continue;
+            }
+            // Thirty yards past the throw-off spot, with a gunner on his shoulder
+            // every frame, so the return ends in a tackle at that spot.
+            let spot = sim.setup.spot() + 30.0;
+            let mut t = 0;
+            while sim.result.is_none() && t < 240 {
+                sim.players[4].pos = Vec2::new(spot, 0.0);
+                sim.players[1].pos = sim.players[4].pos;
+                sim.players[1].down = false;
+                sim.step(1.0 / 60.0);
+                t += 1;
+            }
+            let Some(r) = sim.result.clone() else { continue };
+            if r.outcome != ThrowOffOutcome::Returned || r.return_yards < 25.0 {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                r.highlight,
+                "seed {seed}: a {} yard return was not a big play",
+                r.return_yards
+            );
+        }
+        assert!(checked > 0, "no long return was played out");
     }
 }

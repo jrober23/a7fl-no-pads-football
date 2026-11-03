@@ -9,14 +9,14 @@ use std::time::{Duration, Instant};
 
 use a7fl_core::game::{GameState, PlayRecord};
 use a7fl_core::math::Rgb;
-use a7fl_core::team::{clubs, league_teams, Club, Division, Team, TeamRatings};
+use a7fl_core::team::{clubs, league_teams, Club, Division, Position, Team, TeamRatings};
 use a7fl_render::raster::Frame;
 use a7fl_render::venues::{self, Venue};
 use a7fl_render::{Broadcast, CameraMode};
 
 use crate::arcade::CAMERA_LABELS;
 use crate::pad::{self, Pad};
-use crate::settings::{Settings, RESOLUTIONS};
+use crate::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
 use crate::view::{View, CANVAS_H, CANVAS_W};
 
 fn paper() -> Rgb {
@@ -53,6 +53,7 @@ pub struct Kickoff {
 
 enum Start {
     Exhibition,
+    Customize,
     Settings,
     Quit,
 }
@@ -63,9 +64,12 @@ pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> O
     loop {
         match start_screen(view, &mut pad, settings)? {
             Start::Exhibition => {
-                if let Some(kick) = exhibition(view, &mut pad) {
+                if let Some(kick) = exhibition(view, &mut pad, settings) {
                     return Some(kick);
                 }
+            }
+            Start::Customize => {
+                customize_screen(view, &mut pad)?;
             }
             Start::Settings => {
                 settings_screen(view, &mut pad, settings)?;
@@ -212,8 +216,8 @@ fn start_screen(
     pad: &mut Option<&mut Pad>,
     _settings: &mut Settings,
 ) -> Option<Start> {
-    const ITEMS: usize = 3;
-    let labels = ["EXHIBITION", "SETTINGS", "QUIT"];
+    const ITEMS: usize = 4;
+    let labels = ["EXHIBITION", "CUSTOMIZATION", "SETTINGS", "QUIT"];
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut last = Instant::now();
@@ -254,7 +258,8 @@ fn start_screen(
         if input.pressed.a {
             return Some(match pick {
                 0 => Start::Exhibition,
-                1 => Start::Settings,
+                1 => Start::Customize,
+                2 => Start::Settings,
                 _ => Start::Quit,
             });
         }
@@ -271,8 +276,7 @@ fn settings_screen(
     pad: &mut Option<&mut Pad>,
     settings: &mut Settings,
 ) -> Option<()> {
-    const ROWS: usize = 7;
-    const DIFFICULTY_LABELS: [&str; 3] = ["EASY", "NORMAL", "HARD"];
+    const ROWS: usize = 5;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut last = Instant::now();
@@ -306,17 +310,6 @@ fn settings_screen(
                     changed = true;
                 }
                 1 => {
-                    settings.difficulty =
-                        ((settings.difficulty as isize + dir).rem_euclid(3)) as usize;
-                    changed = true;
-                }
-                2 => {
-                    let n = a7fl_cli_quarter_count();
-                    let i = ((settings.quarter_index() as isize + dir).rem_euclid(n)) as usize;
-                    settings.set_quarter(i);
-                    changed = true;
-                }
-                3 => {
                     // The lens opens its own live preview: two numbers are easier
                     // to judge against the picture than in a menu row.
                     if forward {
@@ -325,13 +318,13 @@ fn settings_screen(
                         continue;
                     }
                 }
-                4 => {
+                2 => {
                     let n = RESOLUTIONS.len() as isize;
                     let i = ((settings.resolution_index() as isize + dir).rem_euclid(n)) as usize;
                     settings.set_resolution(i);
                     changed = true;
                 }
-                5 => {
+                3 => {
                     settings.fullscreen = !settings.fullscreen;
                     changed = true;
                 }
@@ -355,8 +348,6 @@ fn settings_screen(
         centered(&mut frame, 30, "SETTINGS", 3, accent());
         let rows = [
             ("CAMERA", CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string()),
-            ("DIFFICULTY", DIFFICULTY_LABELS[settings.difficulty % 3].to_string()),
-            ("QUARTERS", settings.quarter_label()),
             ("LENS", settings.lens_label()),
             ("RESOLUTION", settings.resolution_label()),
             ("DISPLAY", settings.display_label().to_string()),
@@ -385,6 +376,241 @@ fn settings_screen(
 }
 
 // ---------------------------------------------------------------------------
+// Game setup
+// ---------------------------------------------------------------------------
+
+/// The card between the ground and the coin: how long the game runs and how hard
+/// the other sideline plays. Both lived on the settings screen, which is where a
+/// player looks for the machine's defaults, not for the rules of the game he is
+/// about to start.
+fn game_setup(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    settings: &mut Settings,
+) -> Option<()> {
+    const ROWS: usize = 3;
+    const DIFFICULTY: [&str; 3] = ["EASY", "NORMAL", "HARD"];
+    let mut pick = 0usize;
+    let mut nav = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return None;
+        }
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, ROWS, -d);
+            }
+        }
+        let left = input.stick.x < -0.55 || input.pressed.x;
+        let right = input.stick.x > 0.55;
+        if left || right || input.pressed.a {
+            let dir = if left { -1isize } else { 1 };
+            match pick {
+                0 => {
+                    let n = QUARTER_CHOICES.len() as isize;
+                    let i = ((settings.quarter_index() as isize + dir).rem_euclid(n)) as usize;
+                    settings.set_quarter(i);
+                    settings.save();
+                }
+                1 => {
+                    settings.difficulty =
+                        ((settings.difficulty as isize + dir).rem_euclid(3)) as usize;
+                    settings.save();
+                }
+                _ => {
+                    if input.pressed.a {
+                        return Some(());
+                    }
+                }
+            }
+        }
+        let rows = [
+            ("QUARTERS", settings.quarter_label()),
+            ("DIFFICULTY", DIFFICULTY[settings.difficulty % 3].to_string()),
+            ("KICK OFF", String::new()),
+        ];
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        night(&mut frame);
+        centered(&mut frame, 34, "GAME SETUP", 3, accent());
+        centered(&mut frame, 76, "HOW LONG, AND HOW HARD", 1, dim());
+        for (i, (name, value)) in rows.iter().enumerate() {
+            let y = 128 + i as i32 * 40;
+            let on = i == pick;
+            if on {
+                frame.fill_rect(118, y - 8, 404, 32, panel());
+                frame.fill_rect(118, y - 8, 4, 32, accent());
+            }
+            frame.text_shadowed(138, y, name, 2, if on { paper() } else { dim() }, 1);
+            if !value.is_empty() {
+                let vx = 500 - text_width(value, 2);
+                frame.text_shadowed(vx, y, value, 2, if on { accent() } else { dim() }, 1);
+            }
+        }
+        centered(&mut frame, 262, "SAVED, AND USED BY THIS GAME", 1, dim());
+        footer(
+            &mut frame,
+            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
+        );
+        if !view.show(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Customization: every club's depth chart and roster
+// ---------------------------------------------------------------------------
+
+/// The clubs, four across, with their ratings. A opens a club's roster.
+fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+    let all = clubs();
+    let ratings: Vec<TeamRatings> = all.iter().map(|c| c.profile(1).0).collect();
+    let mut sel = 0usize;
+    let mut nav_x = Repeat::default();
+    let mut nav_y = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 {
+                sel = wrap(sel, all.len(), d);
+            }
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                sel = wrap(sel, all.len(), d * 4);
+            }
+        }
+        if input.pressed.a {
+            roster_screen(view, pad, &all[sel])?;
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        night(&mut frame);
+        centered(&mut frame, 12, "CUSTOMIZATION", 3, accent());
+        centered(&mut frame, 44, "DEPTH CHART AND ROSTER FOR EVERY CLUB", 1, dim());
+        for i in 0..all.len() {
+            let col = (i % 4) as i32;
+            let row = (i / 4) as i32;
+            let cx = 94 + col * 152;
+            let cy = 96 + row * 60;
+            let on = i == sel;
+            if on {
+                frame.rounded_rect(cx - 62, cy - 28, 124, 56, 8, panel());
+                frame.fill_rect(cx - 62, cy - 28, 124, 2, accent());
+            }
+            badge(&mut frame, cx - 34, cy, 26, &all[i], on);
+            frame.text_shadowed(cx - 12, cy - 14, all[i].abbr, 2, if on { accent() } else { dim() }, 1);
+            let ovr = format!("{} OVR", ratings[i].overall);
+            frame.text_shadowed(cx - 12, cy + 2, &ovr, 1, if on { paper() } else { dim() }, 1);
+            frame.text_shadowed(cx - 12, cy + 14, all[i].city, 1, dim(), 1);
+        }
+        footer(&mut frame, "[STICK] CLUB   [A] ROSTER   [B] BACK");
+        if !view.show(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// One club's depth chart, best man first at every position, with the full roster
+/// beside it. The depths are the same ordering the game uses to pick its seven.
+fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Option<()> {
+    const ROWS: usize = 16;
+    const ORDER: [Position; 8] = [
+        Position::Qb,
+        Position::Rb,
+        Position::Wr,
+        Position::Te,
+        Position::Ol,
+        Position::Dl,
+        Position::Lb,
+        Position::Db,
+    ];
+    let roster = club.roster();
+    let mut depth: Vec<(Position, Vec<usize>)> = Vec::new();
+    for pos in ORDER {
+        let mut men: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].pos == pos).collect();
+        men.sort_by_key(|&i| std::cmp::Reverse(roster[i].overall()));
+        depth.push((pos, men));
+    }
+    let pages = roster.len().div_ceil(ROWS).max(1);
+    let mut page = 0usize;
+    let mut nav = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        if let d = nav.step(input.stick.x, dt) {
+            if d != 0 {
+                page = wrap(page, pages, d);
+            }
+        }
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        night(&mut frame);
+        centered(&mut frame, 8, &club.full_name().to_uppercase(), 2, accent());
+        frame.fill_rect(20, 30, 600, 1, Rgb::new(48, 92, 148));
+        frame.text_shadowed(20, 38, "DEPTH CHART", 1, paper(), 1);
+        let title = format!("ROSTER   {} / {}", page + 1, pages);
+        frame.text_shadowed(330, 38, &title, 1, paper(), 1);
+        for (row, (pos, men)) in depth.iter().enumerate() {
+            let y = 58 + row as i32 * 30;
+            frame.text_shadowed(20, y + 2, pos.abbr(), 2, accent(), 1);
+            for (n, &i) in men.iter().take(2).enumerate() {
+                let p = &roster[i];
+                let line = format!(
+                    "{:>2}  {:<12}{}",
+                    p.number,
+                    p.last_name().to_uppercase(),
+                    p.overall()
+                );
+                let color = if n == 0 { paper() } else { dim() };
+                frame.text_shadowed(58, y + 2 + n as i32 * 12, &line, 1, color, 1);
+            }
+        }
+        frame.fill_rect(320, 52, 1, 268, Rgb::new(48, 92, 148));
+        for (n, i) in (page * ROWS..(page * ROWS + ROWS).min(roster.len())).enumerate() {
+            let p = &roster[i];
+            let line = format!(
+                "#{:>2} {:<13} {:<3} {}",
+                p.number,
+                p.last_name().to_uppercase(),
+                p.pos.abbr(),
+                p.overall()
+            );
+            frame.text_shadowed(334, 56 + n as i32 * 15, &line, 1, paper(), 1);
+        }
+        footer(&mut frame, "[LEFT/RIGHT] PAGE ROSTER   [B] BACK");
+        if !view.show(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Exhibition
 // ---------------------------------------------------------------------------
 
@@ -392,7 +618,11 @@ fn ids_in(all: &[Club], division: Division) -> Vec<usize> {
     (0..all.len()).filter(|&i| all[i].division == division).collect()
 }
 
-fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
+fn exhibition(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    settings: &mut Settings,
+) -> Option<Kickoff> {
     let all = clubs();
     // One roster build per club: the card's ratings and the men it names come
     // off the same roster, so sixteen cards cost sixteen rosters, not thirty-two.
@@ -420,6 +650,9 @@ fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
     // The ground comes before the toss: the player picks where the game is
     // played, and then stands on it to call the coin.
     let venue = pick_venue(view, pad, yours)?;
+    // How long and how hard, then the coin: both are about this game, so they are
+    // asked here rather than buried in the settings screen.
+    game_setup(view, pad, settings)?;
     let receive = coin_flip(view, pad, &all, yours, theirs, venue)?;
     Some(Kickoff { yours, theirs, receive, venue })
 }
@@ -429,11 +662,6 @@ fn exhibition(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Kickoff> {
 struct Card {
     ratings: TeamRatings,
     stars: Vec<(String, u8)>,
-}
-
-/// How many quarter lengths the settings screen can offer.
-fn a7fl_cli_quarter_count() -> isize {
-    crate::settings::QUARTER_CHOICES.len() as isize
 }
 
 /// The picker's grid: a picture of each ground, four across and three deep.

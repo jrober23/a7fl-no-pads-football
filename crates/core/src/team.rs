@@ -834,6 +834,13 @@ impl Club {
         format!("{} {}", self.city, self.name)
     }
 
+    /// The club's full roster, built from its seed. The customization screen
+    /// shows a depth chart and a list, so it needs every man, not the three the
+    /// card names.
+    pub fn roster(&self) -> Vec<Player> {
+        generate_roster(self.seed, self.level)
+    }
+
     /// The card's numbers and the men worth naming, off one roster build: the
     /// menu shows sixteen of these, so it must not build thirty-two rosters.
     pub fn profile(&self, stars: usize) -> (TeamRatings, Vec<(Position, String, u8)>) {

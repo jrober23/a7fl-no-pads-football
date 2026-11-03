@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 /// The sizes the settings screen offers, in the order it offers them. The canvas
 /// is 640x360, so every one of these is a whole-number scale of it and nothing
-/// gets resampled off a pixel grid.
+/// gets resampled off a pixel grid. The game opens on 1080p: it is the size a
+/// 1080p or 1440p desktop has, and 3x is the largest whole-number step of the
+/// canvas that fits it.
 pub const RESOLUTIONS: [(usize, usize); 4] = [(960, 540), (1280, 720), (1600, 900), (1920, 1080)];
 
 /// The quarter lengths the settings screen offers, in minutes. The league plays
@@ -37,8 +39,8 @@ impl Default for Settings {
     fn default() -> Self {
         Settings {
             camera: 0,
-            width: RESOLUTIONS[1].0,
-            height: RESOLUTIONS[1].1,
+            width: RESOLUTIONS[3].0,
+            height: RESOLUTIONS[3].1,
             fullscreen: false,
             lens_zoom: 1.0,
             lens_tilt: 0.0,
@@ -289,7 +291,7 @@ mod tests {
     #[test]
     fn the_resolution_row_walks_the_list_and_wraps() {
         let mut s = Settings::default();
-        assert_eq!(s.resolution_index(), 1);
+        assert_eq!(s.resolution_index(), 3);
         s.set_resolution(4);
         assert_eq!(s.resolution_label(), "960x540");
     }

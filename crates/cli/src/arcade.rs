@@ -261,6 +261,17 @@ pub struct Arcade {
     /// The settings this game was started with, kept so a lens moved in the pause
     /// menu is still there the next time the game opens.
     settings: Option<Settings>,
+    /// The ground the game is played at, so a rematch is played on it too.
+    venue: usize,
+}
+
+/// What the player asked for at the final whistle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterFinal {
+    /// The same two clubs, on the same ground, from zero.
+    Again,
+    /// Back to the front end.
+    Menu,
 }
 
 impl Arcade {
@@ -286,6 +297,7 @@ impl Arcade {
             quit: false,
             flip_y: false,
             settings: None,
+            venue: 0,
         }
     }
 
@@ -314,6 +326,12 @@ impl Arcade {
         self
     }
 
+    /// The ground the game is played at, so a rematch opens on the same field.
+    pub fn with_venue(mut self, venue: usize) -> Self {
+        self.venue = venue;
+        self
+    }
+
     /// The side of the ball the player runs, chosen in exhibition.
     pub fn with_my_team(mut self, side: usize) -> Self {
         self.my_team = Some(side.min(1));
@@ -329,7 +347,7 @@ impl Arcade {
         loop {
             BACK_TO_MENU.store(false, Ordering::Relaxed);
             self.quit = false;
-            self.play();
+            let after = self.play();
             // A lens moved in the pause menu is the player's lens too: it goes
             // back into the settings file rather than lasting only as long as
             // this game.
@@ -343,10 +361,22 @@ impl Arcade {
                     settings.save();
                 }
             }
-            // Leaving a game no longer closes the program: the player picks the
-            // clubs and goes again, and only the menu's own quit ends it.
-            if !BACK_TO_MENU.load(Ordering::Relaxed) || !self.reopen_menu() {
-                break;
+            // The final card asks what is next. Playing again is the same two
+            // clubs on the same ground; the other way out is the front end. Only
+            // the menu's own quit, or a closed window, ends the program.
+            match after {
+                Some(AfterFinal::Again) => self.restart(),
+                Some(AfterFinal::Menu) => {
+                    if !self.reopen_menu() {
+                        break;
+                    }
+                }
+                None => {
+                    if BACK_TO_MENU.load(Ordering::Relaxed) && self.reopen_menu() {
+                        continue;
+                    }
+                    break;
+                }
             }
         }
         if terminal_mode {
@@ -381,14 +411,44 @@ impl Arcade {
             a7fl_render::venues::Venue::from_index(kick.venue),
         );
         self.broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
+        self.venue = kick.venue;
         self.game = game;
         self.my_team = Some(0);
         true
     }
 
-    fn play(&mut self) {
+    /// A rematch: the same two clubs, on the same ground, under the same clock
+    /// and the same difficulty, as a new game rather than the one that ended.
+    fn restart(&mut self) {
+        let teams = [self.game.teams[0].clone(), self.game.teams[1].clone()];
+        let seed = self.game.seed ^ 0x00A7_1206;
+        let mut game = GameState::new(teams[0].clone(), teams[1].clone(), seed);
+        game.set_opening_receiver(0);
+        if let Some(settings) = &self.settings {
+            game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(
+                settings.difficulty,
+            ));
+            game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
+        }
+        self.broadcast = Broadcast::with_venue(
+            CANVAS_W,
+            CANVAS_H,
+            [game.teams[0].clone(), game.teams[1].clone()],
+            a7fl_render::venues::Venue::from_index(self.venue),
+        );
+        if let Some(settings) = &self.settings {
+            self.broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
+        }
+        self.game = game;
+        self.my_team = Some(0);
+        self.form = 0;
+        self.sheet_pick = 0;
+        self.def_pick = 0;
+    }
+
+    fn play(&mut self) -> Option<AfterFinal> {
         if !self.kickoff_card() {
-            return;
+            return None;
         }
         while !self.game.is_over() && !self.quit {
             match self.game.action() {
@@ -434,9 +494,10 @@ impl Arcade {
                 }
             }
         }
-        if !self.quit {
-            self.show_final();
+        if self.quit {
+            return None;
         }
+        self.show_final()
     }
 
     // ------------------------------------------------------------------
@@ -1421,7 +1482,7 @@ impl Arcade {
         }
     }
 
-    fn show_final(&mut self) {
+    fn show_final(&mut self) -> Option<AfterFinal> {
         let winner = self.game.winner.unwrap_or(0);
         let mut lines = vec![
             String::new(),
@@ -1457,14 +1518,17 @@ impl Arcade {
             lines.push(format!("  · {line}"));
         }
         lines.push(String::new());
-        lines.push("  [A] EXIT".to_string());
+        lines.push("  [A] PLAY AGAIN    [B] MAIN MENU".to_string());
         if !self.view.page(&lines) {
-            return;
+            return None;
         }
         loop {
             let input = self.wait(Duration::from_millis(30));
             if input.pressed.a || input.pressed.start {
-                break;
+                return Some(AfterFinal::Again);
+            }
+            if input.pressed.b {
+                return Some(AfterFinal::Menu);
             }
         }
     }
