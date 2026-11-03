@@ -25,7 +25,17 @@ use crate::team::{Attributes, Team};
 /// How close a defender's hands have to be to a man to get hold of him. It was
 /// nearly a yard of daylight, and the picture showed the gap: a runner was stopped
 /// by a man he was plainly not touching yet.
+/// How close a defender has to be to lay a hand on the carrier.
+///
+/// This is body to body: the men are held 0.55 apart by the separation pass, so
+/// anything at or under that never fires at all, and the whole offence stops
+/// ending its plays. 0.75 is the floor the running game is tuned against, and
+/// nobody — the man on the pad included — reaches further than it.
 pub const TACKLE_RADIUS: f32 = 0.75;
+/// How much room the wrap itself is given once it has started: the two men close
+/// to arm's length and the tackler rides him down from there. The radius grows
+/// from [`TACKLE_RADIUS`] to this the moment the hands are on him.
+pub const ARM_REACH: f32 = 0.44;
 /// How far a diving defender throws himself at the man with the ball.
 pub const DIVE_LUNGE: f32 = 1.05;
 /// How long a dive keeps the longer reach, in seconds.
@@ -2434,13 +2444,11 @@ impl<'a> PlaySim<'a> {
             if self.players[d].down || self.players[d].stun > 0.0 || self.players[d].tackle_cooldown > 0.0 {
                 continue;
             }
-            // A diving defender gets his hands out further than a man on his feet.
-            let reach = if Some(d) == self.human_defender {
-                if self.players[d].dive_t > 0.0 {
-                    TACKLE_RADIUS * 1.9
-                } else {
-                    TACKLE_RADIUS * 1.15
-                }
+            // A dive is a lunge and gets its hands out further; a man on his feet
+            // has only his arms, and the man on the pad gets no bonus reach. The
+            // extra reach the pad used to carry is what pulled carriers backwards.
+            let reach = if self.players[d].dive_t > 0.0 && Some(d) == self.human_defender {
+                TACKLE_RADIUS * 1.9
             } else {
                 TACKLE_RADIUS
             };
@@ -2679,7 +2687,7 @@ impl<'a> PlaySim<'a> {
         // exact spot put two bodies inside each other, which renders as one man
         // made of both of them.
         let away = (spot - self.players[w.tackler].pos).normalize_or_zero();
-        let contact = spot - away * 0.44;
+        let contact = spot - away * ARM_REACH;
         let d = &mut self.players[w.tackler];
         d.pos = d.pos.lerp(contact, (dt * 7.0).min(1.0));
         if away.length() > 0.01 {
@@ -3329,6 +3337,22 @@ impl<'a> PlaySim<'a> {
             da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
         });
         out
+    }
+
+    /// The man the flag is on, as an index into `players`.
+    ///
+    /// The call records a roster number and a side, which is what the box score
+    /// wants; the picture needs the body on the field, so that a replay can point
+    /// at him wherever he has run to.
+    pub fn flagged_player(&self) -> Option<usize> {
+        let call = self.flag.as_ref()?;
+        let roster = call.player?;
+        let side = match call.against {
+            FoulTeam::Offense => Side::Offense,
+            FoulTeam::Defense => Side::Defense,
+        };
+        (0..self.players.len())
+            .find(|&i| self.players[i].side == side && self.roster_index(i) == roster)
     }
 
     /// The man the pad should start on: the defender closest to the ball.

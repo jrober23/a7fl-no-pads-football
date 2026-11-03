@@ -526,10 +526,119 @@ fn format_time(seconds: f32) -> String {
     format!("{}:{:02}", total / 60, total % 60)
 }
 
+
+/// An arrow hanging over a point on the field, pointing down at it.
+///
+/// Drawn in pixels over the picture rather than in the world: a cone in the scene
+/// is a thing the camera can lose behind a helmet, and this must always be the
+/// clearest mark on the frame.
+pub fn draw_down_arrow(frame: &mut Frame, x: i32, y: i32, color: Rgb, floor: i32) {
+    // A dark edge under it, so the arrow reads over a white jersey as well as a
+    // green field.
+    let edge = Rgb::hex(0x0B1017);
+    // The shaft, then a head that comes to a point at the foot of it.
+    for (w, shade) in [(5, edge), (3, color)] {
+        for row in 0..14 {
+            frame.fill_rect(x - w / 2, y + row, w, 1, shade);
+        }
+    }
+    for row in 0..9 {
+        let half = 9 - row;
+        for (grow, shade) in [(1, edge), (0, color)] {
+            frame.fill_rect(x - half - grow, y + 14 + row, half * 2 + 1 + grow * 2, 1, shade);
+        }
+    }
+    frame.fill_rect(x, y + 23, 1, 2, color);
+    // A stub of shadow on the ground under the point, so it sits on him.
+    let foot = (y + 27).min(floor - 4);
+    frame.fill_rect_alpha(x - 10, foot, 20, 4, edge, 0.35);
+}
+
+/// A full-screen presentation card: a title, a subtitle and two columns.
+///
+/// The same panel as the box score, used for the matchup before the game and for
+/// each play in the halftime reel, so the broadcast graphics look like one set.
+pub fn draw_card(
+    frame: &mut Frame,
+    title: &str,
+    subtitle: &str,
+    left: &[String],
+    right: &[String],
+    accent: Rgb,
+) {
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    frame.fill_rect_alpha(0, 0, w, h, INK, 0.82);
+    let panel_w = 900;
+    let panel_h = 480;
+    let x = (w - panel_w) / 2;
+    let y = (h - panel_h) / 2;
+    frame.panel(
+        x,
+        y,
+        panel_w,
+        panel_h,
+        14,
+        Rgb::hex(0x1C2533),
+        Rgb::hex(0x0B1017),
+        PANEL_EDGE,
+        0.8,
+    );
+    frame.fill_rect(x + 14, y + 6, panel_w - 28, 5, accent);
+    font::draw_centered(frame, x + panel_w / 2, y + 26, title, 5, WHITE, 3);
+    if !subtitle.is_empty() {
+        font::draw_centered(frame, x + panel_w / 2, y + 74, subtitle, 2, accent, 1);
+    }
+    frame.fill_rect(x + 40, y + 106, panel_w - 80, 2, PANEL_EDGE);
+    for (col, lines) in [left, right].iter().enumerate() {
+        let cx = if col == 0 { x + 48 } else { x + panel_w / 2 + 24 };
+        for (row, line) in lines.iter().enumerate() {
+            let ry = y + 128 + row as i32 * 36;
+            if ry > y + panel_h - 40 {
+                break;
+            }
+            font::draw_styled(frame, cx, ry, line, 2, WHITE, 1, false);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use nopads_core::team::league_teams;
+
+
+    #[test]
+    fn the_flag_arrow_points_down_and_is_not_a_speck() {
+        let mut f = Frame::new(120, 120);
+        draw_down_arrow(&mut f, 60, 10, Rgb::hex(0xF2C14E), 120);
+        let ink = |c: &Rgb| *c != Rgb::new(0, 0, 0);
+        let painted = f.color.iter().filter(|c| ink(c)).count();
+        assert!(painted > 120, "the arrow is a speck: {painted} px");
+        let row = |y: usize| f.color[y * 120..y * 120 + 120].iter().filter(|c| ink(c)).count();
+        // x is 60 and y is 10: the shaft runs down to 24, the head 24 to 33, and
+        // the two-pixel point closes it at 34.
+        let (shaft, head, tip) = (row(12), row(26), row(34));
+        assert!(head > shaft, "the head is not wider than the shaft: {head} vs {shaft}");
+        assert!(tip < head, "the point never narrows: {tip} vs {head}");
+    }
+
+    #[test]
+    fn a_card_draws_both_columns() {
+        let mut f = Frame::new(640, 360);
+        let left = vec!["LEFT ONE".to_string(), "LEFT TWO".to_string()];
+        let right = vec!["RIGHT ONE".to_string()];
+        draw_card(&mut f, "MATCHUP", "BOS AT CHI", &left, &right, Rgb::hex(0xE2572B));
+        let ink = |c: &Rgb| *c != Rgb::new(0, 0, 0);
+        let half = |x0: usize, x1: usize| {
+            (0..360)
+                .flat_map(|y| (x0..x1).map(move |x| (y, x)))
+                .filter(|(y, x)| ink(&f.color[y * 640 + x]))
+                .count()
+        };
+        assert!(half(0, 320) > 2_000, "the left column is empty");
+        assert!(half(320, 640) > 2_000, "the right column is empty");
+    }
 
     #[test]
     fn the_scoreboard_draws_over_the_picture_inside_the_canvas() {

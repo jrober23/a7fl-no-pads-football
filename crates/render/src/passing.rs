@@ -75,6 +75,8 @@ pub struct PassUi {
     pub short: bool,
     /// Meter reading that would just reach it.
     pub needed: Option<f32>,
+    /// The man a foul was called on: an arrow hangs over him, pointing down.
+    pub flag: Option<Vec3>,
 }
 
 impl PassUi {
@@ -96,7 +98,16 @@ impl PassUi {
         if let Some(power) = self.power {
             draw_meter(frame, power, self.short, self.needed);
         }
-    }
+    
+        // The flag: an arrow over the man the call was on. A replay that only
+        // shows the spot of the foul makes the viewer hunt the frame for who did
+        // it; the arrow is the answer, and it tracks him as he moves.
+        if let Some(at) = self.flag {
+            if let Some((x, y)) = project(at) {
+                crate::hud::draw_down_arrow(frame, x, y - 44, Rgb::hex(0xF2C14E), frame.h as i32);
+            }
+        }
+}
 }
 
 fn shade_for(color: Rgb) -> Rgb {
@@ -263,6 +274,7 @@ mod tests {
         let mut frame = Frame::new(320, 180);
         frame.clear(Rgb::BLACK);
         let ui = PassUi {
+            flag: None,
             focus: None,
             badges: vec![Badge {
                 at: Vec3::new(2.0, 1.0, 2.1),
@@ -292,6 +304,7 @@ mod tests {
         let mut frame = Frame::new(320, 180);
         frame.clear(Rgb::BLACK);
         let ui = PassUi {
+            flag: None,
             focus: None,
             badges: vec![Badge {
                 at: Vec3::new(-40.0, 0.0, 2.1),

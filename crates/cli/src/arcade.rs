@@ -263,6 +263,8 @@ pub struct Arcade {
     settings: Option<Settings>,
     /// The ground the game is played at, so a rematch is played on it too.
     venue: usize,
+    /// Halftime is a presentation, not a question: it runs once.
+    halftime_shown: bool,
 }
 
 /// What the player asked for at the final whistle.
@@ -281,6 +283,7 @@ impl Arcade {
         let teams = [game.teams[0].clone(), game.teams[1].clone()];
         let broadcast = Broadcast::new(CANVAS_W, CANVAS_H, teams);
         Arcade {
+            halftime_shown: false,
             game,
             pad,
             view,
@@ -457,6 +460,14 @@ impl Arcade {
             return None;
         }
         while !self.game.is_over() && !self.quit {
+            // The second half opens with the numbers and the reel, the way the
+            // broadcast does, before the reversed throw-off.
+            if self.game.quarter >= 3 && !self.halftime_shown {
+                self.halftime_shown = true;
+                if !self.halftime() {
+                    return None;
+                }
+            }
             match self.game.action() {
                 Action::GameOver => break,
                 Action::ThrowOff => {
@@ -504,6 +515,138 @@ impl Arcade {
             return None;
         }
         self.show_final()
+    }
+
+    /// Stop the clock, if the rules and the allowance let it be stopped.
+    ///
+    /// SELECT used to cycle the camera, which was the wrong job for a button in
+    /// the middle of the pad: a lens is a setting and a timeout is a decision, and
+    /// the decision is the one that wants to be a single press away.
+    fn call_timeout(&mut self) {
+        let side = self.my_team.unwrap_or(self.game.possession);
+        // The call writes its own line into the commentary; one the rules refuse
+        // simply does not happen.
+        let _ = self.game.use_timeout(side);
+    }
+
+    /// The matchup before the kick: who is playing, what they are good at, and who
+    /// to watch. It replaces a line of text at the top of the first card with the
+    /// introduction a broadcast would open on.
+    fn matchup_screen(&mut self) -> bool {
+        let block = |teams: &Arcade, t: usize| -> Vec<String> {
+            let team = &teams.game.teams[t];
+            let r = team.ratings();
+            let mut stars: Vec<(u8, String)> = team
+                .roster
+                .iter()
+                .map(|p| (p.overall(), format!("#{} {}", p.number, p.full_name())))
+                .collect();
+            stars.sort_by(|a, b| b.0.cmp(&a.0));
+            let mut lines = vec![
+                team.display_upper(),
+                format!("OVERALL {}   OFF {}   DEF {}", r.overall, r.offense, r.defense),
+                String::new(),
+                "PLAYERS TO WATCH".to_string(),
+            ];
+            for (overall, name) in stars.into_iter().take(3) {
+                lines.push(format!("{name}  {overall}"));
+            }
+            lines.push(String::new());
+            lines.push(
+                if r.offense >= r.defense + 6 {
+                    "THEY WILL THROW IT"
+                } else if r.defense >= r.offense + 6 {
+                    "THEY WILL COME AFTER YOU"
+                } else {
+                    "NO WEAKNESS TO PICK ON"
+                }
+                .to_string(),
+            );
+            lines
+        };
+        let left = block(self, 0);
+        let right = block(self, 1);
+        let accent = self.game.teams[self.my_team.unwrap_or(0)]
+            .primary
+            .lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3);
+        let title = format!(
+            "{} AT {}",
+            self.game.teams[0].abbr.to_uppercase(),
+            self.game.teams[1].abbr.to_uppercase()
+        );
+        let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
+        nopads_render::hud::draw_card(&mut frame, "MATCHUP", &title, &left, &right, accent);
+        let lines = vec![self.header(), String::new(), "  [A] KICK OFF".to_string()];
+        if !self.view.show(&mut frame, &lines) {
+            return false;
+        }
+        loop {
+            let input = self.wait(Duration::from_millis(24));
+            if input.pressed.a || input.pressed.start {
+                return true;
+            }
+        }
+    }
+
+    /// Halftime: the numbers first, then the reel of the half's big plays.
+    fn halftime(&mut self) -> bool {
+        let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
+        nopads_render::hud::draw_stats_panel(&mut frame, &self.game, "HALFTIME");
+        let lines = vec![self.header(), String::new(), "  [A] HIGHLIGHTS".to_string()];
+        if !self.view.show(&mut frame, &lines) {
+            return false;
+        }
+        loop {
+            let input = self.wait(Duration::from_millis(24));
+            if input.pressed.a || input.pressed.start {
+                break;
+            }
+        }
+        self.highlight_reel()
+    }
+
+    /// The reel: the plays that made the half, one card each over the picture.
+    ///
+    /// A card per play rather than a replay: the tape a snap is replayed from
+    /// borrows the roster and the call sheet it was run with, so keeping one from
+    /// the first quarter to the half would mean keeping the whole game alive at
+    /// once. What the reel shows is the play, held long enough to read it.
+    fn highlight_reel(&mut self) -> bool {
+        let accent = self.game.teams[self.my_team.unwrap_or(0)]
+            .primary
+            .lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3);
+        let plays = self.game.recent_plays(3);
+        if plays.is_empty() {
+            return true;
+        }
+        let count = plays.len();
+        for (i, play) in plays.iter().enumerate() {
+            let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
+            let left = vec![play.to_uppercase()];
+            nopads_render::hud::draw_card(
+                &mut frame,
+                "HIGHLIGHT",
+                &format!("{} OF {}", i + 1, count),
+                &left,
+                &[],
+                accent,
+            );
+            let lines = vec![String::new(), "  [A] NEXT".to_string()];
+            if !self.view.show(&mut frame, &lines) {
+                return false;
+            }
+            let start = Instant::now();
+            loop {
+                let input = self.wait(Duration::from_millis(30));
+                if input.pressed.a
+                    || input.pressed.start
+                    || start.elapsed() >= Duration::from_millis(2600)
+                {
+                    break;
+                }
+            }
+        }
+        true
     }
 
     // ------------------------------------------------------------------
@@ -557,6 +700,11 @@ impl Arcade {
                 return None;
             }
             let input = self.input();
+            if input.pressed.select {
+                self.call_timeout();
+                last = Instant::now();
+                continue;
+            }
             if input.pressed.start {
                 // The call sheet is where a player spends most of the game, so this
                 // is the door to the camera setting and to quitting, not an instant
@@ -636,12 +784,12 @@ impl Arcade {
         ];
         if self.in_plays {
             lines.push(
-                "  [STICK] PLAY   [A] CALL IT   [B] BACK TO FORMATIONS   [Y] FLIP   [START] PAUSE"
+                "  [STICK] PLAY   [A] CALL IT   [B] BACK   [Y] FLIP   [SELECT] TIMEOUT   [START] PAUSE"
                     .to_string(),
             );
         } else {
             lines.push(
-                "  [STICK] FORMATION   [A]/[RIGHT] INTO THE PLAYS   [Y] FLIP   [START] PAUSE"
+                "  [STICK] FORMATION   [A] INTO THE PLAYS   [Y] FLIP   [SELECT] TIMEOUT   [START] PAUSE"
                     .to_string(),
             );
         }
@@ -761,6 +909,11 @@ impl Arcade {
     /// player straight into a throw-off that was already in the air, so this holds
     /// the kickoff until he has seen the matchup and knows what the pad does.
     fn kickoff_card(&mut self) -> bool {
+        // The introduction comes before anything is asked: whoever is playing,
+        // the first thing on the screen is who is playing.
+        if !self.matchup_screen() {
+            return false;
+        }
         // The menu picked the club and tossed for the ball, so there is nothing
         // left to ask. A scripted run (`--home`/`--away`) still gets the card.
         if self.my_team.is_some() {
@@ -957,10 +1110,9 @@ impl Arcade {
                 acc = 0.0;
                 continue;
             }
-            // SELECT cycles the lens while you are covering or returning; the
-            // trigger is the throw itself, so it cannot be both.
-            let throwing = sim.phase == ThrowPhase::Presnap && sim.human_thrower;
-            if input.pressed.select && !throwing {
+            // The camera is on the left bumper: SELECT is the timeout button now,
+            // and the trigger is the throw, so neither can be the camera.
+            if input.pressed.dummy {
                 self.cam = (self.cam + 1) % CAMS.len();
             }
             // The same screen mapping as a scrimmage snap, pointed the way this
@@ -1095,6 +1247,7 @@ impl Arcade {
                     label: "YOU".to_string(),
                 });
                 let ui = PassUi {
+                    flag: None,
                     focus,
                     badges: Vec::new(),
                     guide,
@@ -1619,6 +1772,7 @@ fn paused_still(
         PausedShot::Play(sim) => Some(broadcast.live_frame(sim, mode)),
         PausedShot::ThrowOff(sim) => {
             let ui = PassUi {
+                flag: None,
                 focus: None,
                 badges: Vec::new(),
                 guide: None,
@@ -1878,16 +2032,22 @@ fn play_back_tape(
     mode: CameraMode,
     label: &str,
 ) -> bool {
-    let ui = PassUi {
-        focus: None,
-        badges: Vec::new(),
-        guide: None,
-        power: None,
-        short: false,
-        needed: None,
-    };
     let screen = broadcast;
     play_back_frames(tape, view, pad, label, false, |snap| {
+        // The arrow follows the man the flag is on, frame by frame: he is running
+        // while the tape plays, so a marker pinned to the spot of the foul would
+        // be pointing at empty grass by the third frame.
+        let ui = PassUi {
+            flag: snap
+                .flagged_player()
+                .map(|i| Vec3::new(snap.players[i].pos.x, snap.players[i].pos.y, 0.0)),
+            focus: None,
+            badges: Vec::new(),
+            guide: None,
+            power: None,
+            short: false,
+            needed: None,
+        };
         screen.live_frame_ui(snap, mode, &ui)
     })
 }
@@ -1905,6 +2065,7 @@ fn play_back_throw_off(
     pad: Option<&mut Pad>,
 ) -> bool {
     let ui = PassUi {
+        flag: None,
         focus: None,
         badges: Vec::new(),
         guide: None,
@@ -2051,8 +2212,9 @@ fn drive(
             acc = 0.0;
             continue;
         }
-        // SELECT cycles the camera: the trigger is not a camera button any more.
-        if input.pressed.select {
+        // The camera is on the left bumper, except at the line, where the bumper
+        // is the hard count. SELECT is the timeout, and it is called at the sheet.
+        if input.pressed.dummy && sim.phase != Phase::PreSnap {
             *cam = (*cam + 1) % CAMS.len();
         }
         let view_mode = CAMS[*cam % CAMS.len()];
@@ -2282,6 +2444,7 @@ fn drive(
                 })
             };
             let ui = PassUi {
+                flag: None,
                 focus,
                 badges,
                 guide,
@@ -2674,7 +2837,6 @@ fn drive_defense(
     let mut turn: Option<Instant> = None;
     let mut switched = Instant::now() - Duration::from_millis(400);
     // The player has taken the pad somewhere himself; the follow leaves it there.
-    let mut took_control = false;
     // The snap frame by frame, for the replay.
     let mut tape: Vec<PlaySim> = Vec::new();
 
@@ -2693,7 +2855,7 @@ fn drive_defense(
             acc = 0.0;
             continue;
         }
-        if input.pressed.select {
+        if input.pressed.dummy {
             *cam = (*cam + 1) % CAMS.len();
         }
         let view_mode = CAMS[*cam % CAMS.len()];
@@ -2747,16 +2909,11 @@ fn drive_defense(
         if input.pressed.b && !my_ball && now.duration_since(switched) >= Duration::from_millis(120) {
             sim.cycle_defender();
             switched = now;
-            took_control = true;
         }
-        // Their ball: the pad goes to the man closest to the carrier, so the player
-        // is always steering somebody who can get to the play. B still overrides it,
-        // and after a turnover the ball is the defence's, so the follow stands down.
-        if !took_control {
-            if let Some(nearest) = sim.nearest_defender_to_carrier() {
-                sim.set_human_defender(Some(nearest));
-            }
-        }
+        // The pad stays on the man it was put on. It used to follow the nearest
+        // defender to the carrier every frame, which took the pad off the man the
+        // player had just moved: choosing who you cover with is the point of the
+        // switch button, and a pad that walks itself makes the choice meaningless.
         sim.set_def_control(Some(DefControl {
             move_dir: stick,
             tackle: input.pressed.a,
@@ -2801,6 +2958,7 @@ fn drive_defense(
                 label: "YOU".to_string(),
             });
             let ui = PassUi {
+                flag: None,
                 focus,
                 badges: Vec::new(),
                 guide: None,

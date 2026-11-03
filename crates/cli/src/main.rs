@@ -761,6 +761,7 @@ fn cmd_arcade(args: &[String]) {
             });
         }
         let ui = PassUi {
+            flag: None,
             focus: None,
             badges,
             guide,
@@ -795,6 +796,7 @@ fn cmd_arcade(args: &[String]) {
         let plan = off.throw_off_plan(0.62, 5.0);
         let hand = off.players[0].pos;
         let ui = PassUi {
+            flag: None,
             focus: None,
             badges: Vec::new(),
             guide: Some(Guide {
@@ -824,7 +826,7 @@ fn cmd_arcade(args: &[String]) {
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2".to_string(),
             "A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9".to_string(),
-            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] CLASSIC   [START] PAUSE"
+            "NEW ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [LB] CAMERA   [START] PAUSE"
                 .to_string(),
         ];
         let framed = view::with_hud(live.live_frame(&sim, CameraMode::Classic), &lines);
@@ -852,7 +854,7 @@ fn cmd_arcade(args: &[String]) {
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "ZONE READ - RUN - PISTOL   KAISER 6 for 9".to_string(),
             "  [A] SPIN   [B] HURDLE   [X] DIVE   [Y] STIFF ARM      SPIN".to_string(),
-            "NEW ball   MOVE   [A/B/X/Y] MOVES   [SELECT] CLASSIC   [START] PAUSE".to_string(),
+            "NEW ball   MOVE   [A/B/X/Y] MOVES   [LB] CAMERA   [START] PAUSE".to_string(),
         ];
         let framed = view::with_hud(live.live_frame(&sim, CameraMode::Classic), &lines);
         let path = "out/14_running.png";
