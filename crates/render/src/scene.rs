@@ -1,6 +1,6 @@
 //! Perspective camera, mesh primitives and the software 3D pipeline.
 
-use a7fl_core::math::{clamp, Rgb, Vec3};
+use nopads_core::math::{clamp, Rgb, Vec3};
 
 use crate::raster::{Frame, Texture};
 

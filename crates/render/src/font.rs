@@ -3,7 +3,7 @@
 //! Deliberately tiny and dependency free: glyphs are 7 rows of 5 bits so a whole
 //! font fits in a few hundred bytes and scales crisply to any size.
 
-use a7fl_core::math::Rgb;
+use nopads_core::math::Rgb;
 
 use crate::raster::Frame;
 

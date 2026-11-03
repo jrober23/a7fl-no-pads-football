@@ -8,8 +8,8 @@
 //! kind of picture the offensive sheet does, from the same `DefCall` data the snap
 //! is played with, so a card can never advertise a defence the game does not run.
 
-use a7fl_core::math::{Rgb, Vec2};
-use a7fl_core::playbook::{def_calls_in, defender_positions, DefCall, DefFront, DefRole};
+use nopads_core::math::{Rgb, Vec2};
+use nopads_core::playbook::{def_calls_in, defender_positions, DefCall, DefFront, DefRole};
 
 use crate::playsheet::{
     ACCENT, BACKDROP, BLOCK, CARD, CARD_ON, CARRY, EDGE, GAP, HEADER, INK, LOS, MARGIN, MUTED, TURF,
@@ -254,7 +254,7 @@ impl Board {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::playbook::{defensive_playbook, fronts_in};
+    use nopads_core::playbook::{defensive_playbook, fronts_in};
 
     #[test]
     fn every_call_draws_a_diagram() {
@@ -290,7 +290,7 @@ mod tests {
                 for x in 0..640 {
                     assert_eq!(
                         frame.color[y * 640 + x],
-                        a7fl_core::math::Rgb::hex(0x0B0F16),
+                        nopads_core::math::Rgb::hex(0x0B0F16),
                         "card into the bar at {x},{y} on front {i}"
                     );
                 }
@@ -303,7 +303,7 @@ mod tests {
         let book = defensive_playbook();
         let fronts = fronts_in(&book);
         let a = book.iter().position(|c| c.coverage.is_man()).unwrap();
-        let b = book.iter().position(|c| c.coverage == a7fl_core::playbook::Coverage::Cover3).unwrap();
+        let b = book.iter().position(|c| c.coverage == nopads_core::playbook::Coverage::Cover3).unwrap();
         let mut fa = Frame::new(640, 360);
         let mut fb = Frame::new(640, 360);
         let draw_one = |frame: &mut Frame, index: usize| {

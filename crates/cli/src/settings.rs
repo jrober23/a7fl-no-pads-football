@@ -105,12 +105,12 @@ impl Settings {
             .or_else(|| std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from))
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
             .unwrap_or_else(|| PathBuf::from("."));
-        base.join("a7fl").join("settings.cfg")
+        base.join("7on7").join("settings.cfg")
     }
 
     pub fn text(&self) -> String {
         format!(
-            "# A7FL settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\n",
+            "# 7 on 7 No Pads Football settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\n",
             self.camera,
             self.width,
             self.height,

@@ -12,8 +12,8 @@
 //! Everything is in the figure's own frame: `+x` is the way he faces, `+y` his
 //! left, `+z` up. The camera is the only thing that turns.
 
-use a7fl_core::math::{Rgb, Vec3};
-use a7fl_core::team::{HairStyle, Player};
+use nopads_core::math::{Rgb, Vec3};
+use nopads_core::team::{HairStyle, Player};
 
 use crate::scene::Mesh;
 

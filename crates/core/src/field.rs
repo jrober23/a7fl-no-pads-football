@@ -1,6 +1,6 @@
-//! A7FL field geometry.
+//! 7 on 7 field geometry.
 //!
-//! Official A7FL field: 120 yards long overall, 100 yards of field of play between
+//! Official 7 on 7 field: 120 yards long overall, 100 yards of field of play between
 //! the goal lines, 10-yard end zones and 37.5 yards wide. No goal posts are used.
 //!
 //! Canonical simulation coordinates:
@@ -27,7 +27,7 @@ pub const FAR_GOAL_LINE: f32 = FIELD_LENGTH;
 pub const BACK_OF_LEFT_ENDZONE: f32 = -ENDZONE_DEPTH;
 /// Right edge of the right end zone.
 pub const BACK_OF_RIGHT_ENDZONE: f32 = FIELD_LENGTH + ENDZONE_DEPTH;
-/// The A7FL keeps the hashes narrow thanks to the 37.5 yard field.
+/// 7 on 7 keeps the hashes narrow thanks to the 37.5 yard field.
 pub const HASH_Y: f32 = 9.0;
 
 /// Attack direction for the team that owns the ball, given a canonical spot.

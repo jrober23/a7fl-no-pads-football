@@ -1,5 +1,5 @@
 //! The game: quarters, clock, downs, throw-offs, conversions, overtime and the
-//! A7FL mercy rule.
+//! 7 on 7 mercy rule.
 //!
 //! This state machine consumes snapshot results from [`crate::sim`] and
 //! [`crate::throwoff`] and applies the rulebook. Every executed snap is kept in a
@@ -437,7 +437,7 @@ impl GameState {
         }
     }
 
-    /// Fourth-down throw-off (the A7FL replacement for a punt).
+    /// Fourth-down throw-off (the 7 on 7 replacement for a punt).
     pub fn fourth_down_throw_off(&mut self) -> Option<PlayRecord> {
         if self.phase != GamePhase::Scrimmage || self.down != 4 {
             return None;
@@ -905,7 +905,7 @@ impl GameState {
         self.finish_throw_off(setup, result)
     }
 
-    /// The fourth-down throw-off (the A7FL replacement for a punt), set up but
+    /// The fourth-down throw-off (the 7 on 7 replacement for a punt), set up but
     /// not run.
     pub fn fourth_down_throw_off_setup(&mut self) -> Option<ThrowOffSetup> {
         if self.phase != GamePhase::Scrimmage || self.down != 4 {

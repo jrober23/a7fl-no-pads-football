@@ -1,4 +1,4 @@
-//! The A7FL rulebook as data.
+//! The 7 on 7 rulebook as data.
 //!
 //! Everything here comes from the published "Official Rules of American 7s Football
 //! League": 4 x 15 minute quarters, a 30 second play clock, throw-offs instead of
@@ -7,7 +7,7 @@
 //! quarter, seven after it).
 //!
 //! Penalty distances, dead/live status, "loss of down" and automatic first downs are
-//! transcribed from the A7FL penalty summary. Enforcement uses `BasicSpot`,
+//! transcribed from the 7 on 7 penalty summary. Enforcement uses `BasicSpot`,
 //! `PreviousSpot`, `SpotOfFoul` and `EndOfRun` semantics like the rulebook describes,
 //! including the "no penalty exceeds half the distance to the goal" cap.
 
@@ -24,7 +24,7 @@ pub const TIMEOUT_SECONDS: f32 = 30.0;
 pub const PLAYERS_ON_FIELD: usize = 7;
 pub const TWO_MINUTE_WARNING: f32 = 120.0;
 
-/// Between snaps the game clock keeps running in the A7FL (running clock). This is
+/// Between snaps the game clock keeps running in 7 on 7 (running clock). This is
 /// the huddle / play-clock time we burn per snap so a simulated game lasts about
 /// as long as a real one.
 pub const TIME_BETWEEN_SNAPS: f32 = 22.0;
@@ -56,8 +56,8 @@ pub const CONVERSION_ONE_POINT_YARDS: f32 = 5.0;
 pub const CONVERSION_TWO_POINT_YARDS: f32 = 10.0;
 
 /// Visual accent shared by the broadcast package.
-pub const A7FL_RED: Rgb = Rgb::hex(0xE4572E);
-pub const A7FL_INK: Rgb = Rgb::hex(0x0E1116);
+pub const BRAND_RED: Rgb = Rgb::hex(0xE4572E);
+pub const BRAND_INK: Rgb = Rgb::hex(0x0E1116);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum FoulTeam {

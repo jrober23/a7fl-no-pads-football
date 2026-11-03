@@ -3,11 +3,11 @@
 //! These tests drive a real run play to the handoff and then work the buttons,
 //! because the point of a move is what the defence does about it.
 
-use a7fl_core::math::Vec2;
-use a7fl_core::moves::{Kind, HURDLE_TIME};
-use a7fl_core::playbook::{defensive_playbook, playbook};
-use a7fl_core::sim::{PlayOutcome, PlaySim, QbControl, SnapSetup};
-use a7fl_core::team::{league_teams, Team};
+use nopads_core::math::Vec2;
+use nopads_core::moves::{Kind, HURDLE_TIME};
+use nopads_core::playbook::{defensive_playbook, playbook};
+use nopads_core::sim::{PlayOutcome, PlaySim, QbControl, SnapSetup};
+use nopads_core::team::{league_teams, Team};
 
 fn setup(seed: u64) -> SnapSetup {
     SnapSetup {

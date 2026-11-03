@@ -1,11 +1,11 @@
 //! The interactive path: a human steering the quarterback through a snap.
 
-use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord};
-use a7fl_core::throwoff::simulate_throw_off;
-use a7fl_core::math::Vec2;
-use a7fl_core::playbook::{defensive_playbook, playbook};
-use a7fl_core::sim::{PlaySim, QbControl, SnapSetup, SNAP_DELAY};
-use a7fl_core::team::league_teams;
+use nopads_core::game::{Action, GamePhase, GameState, PlayRecord};
+use nopads_core::throwoff::simulate_throw_off;
+use nopads_core::math::Vec2;
+use nopads_core::playbook::{defensive_playbook, playbook};
+use nopads_core::sim::{PlaySim, QbControl, SnapSetup, SNAP_DELAY};
+use nopads_core::team::league_teams;
 
 fn setup(seed: u64) -> SnapSetup {
     SnapSetup {
@@ -140,12 +140,12 @@ fn a_human_snap_is_booked_by_the_game() {
     // Clear the opening throw-off, and the try if it was run all the way back:
     // the test needs a scrimmage down, not a particular first play.
     let mut guard = 0;
-    while !matches!(game.action(), a7fl_core::game::Action::CallPlay { .. }) && guard < 4 {
+    while !matches!(game.action(), nopads_core::game::Action::CallPlay { .. }) && guard < 4 {
         game.simulate_next();
         guard += 1;
     }
     assert!(
-        matches!(game.action(), a7fl_core::game::Action::CallPlay { .. }),
+        matches!(game.action(), nopads_core::game::Action::CallPlay { .. }),
         "the game never reached a scrimmage down"
     );
     let before = game.total_plays();
@@ -183,7 +183,7 @@ fn a_human_snap_is_booked_by_the_game() {
     assert!(drove, "the driver closure never ran");
     assert_eq!(game.total_plays(), before + 1);
     assert!(record.description().len() > 3);
-    assert!(matches!(game.action(), a7fl_core::game::Action::CallPlay { .. }));
+    assert!(matches!(game.action(), nopads_core::game::Action::CallPlay { .. }));
 }
 
 #[test]

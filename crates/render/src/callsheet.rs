@@ -7,7 +7,7 @@
 //! the same `Play` data the simulation runs, so the card and the snap cannot
 //! disagree.
 
-use a7fl_core::playbook::{Formation, Play};
+use nopads_core::playbook::{Formation, Play};
 
 use crate::playsheet::{self, Dir};
 use crate::raster::Frame;
@@ -52,7 +52,7 @@ pub fn draw_layered(
     if formations.is_empty() {
         return;
     }
-    let list: Vec<usize> = a7fl_core::playbook::plays_in(book, formations[form_pick.min(formations.len() - 1)]);
+    let list: Vec<usize> = nopads_core::playbook::plays_in(book, formations[form_pick.min(formations.len() - 1)]);
     let x0 = MARGIN + SIDE + GAP;
     let w = frame.w as i32 - x0 - MARGIN;
     let top = 26;
@@ -101,15 +101,15 @@ mod tests {
 
     #[test]
     fn a_formation_with_no_plays_draws_nothing_and_panics_at_nothing() {
-        let book = a7fl_core::playbook::playbook();
+        let book = nopads_core::playbook::playbook();
         let mut frame = Frame::new(640, 360);
         draw_layered(&mut frame, &book, &[Formation::Empty], 0, 0, true, false);
     }
 
     #[test]
     fn the_layered_sheet_keeps_the_text_bar_clear() {
-        let book = a7fl_core::playbook::playbook();
-        let forms = a7fl_core::playbook::formations_in(&book);
+        let book = nopads_core::playbook::playbook();
+        let forms = nopads_core::playbook::formations_in(&book);
         for (i, _) in forms.iter().enumerate() {
             let mut frame = Frame::new(640, 360);
             draw_layered(&mut frame, &book, &forms, i, 0, true, false);
@@ -117,7 +117,7 @@ mod tests {
                 for x in 0..640 {
                     assert_eq!(
                         frame.color[y * 640 + x],
-                        a7fl_core::math::Rgb::hex(0x0B0F16),
+                        nopads_core::math::Rgb::hex(0x0B0F16),
                         "card into the bar at {x},{y} on formation {i}"
                     );
                 }

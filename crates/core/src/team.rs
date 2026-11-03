@@ -1,4 +1,4 @@
-//! Teams, players, attributes and A7FL uniform specs.
+//! Teams, players, attributes and 7 on 7 uniform specs.
 //!
 //! Everything is generated deterministically from a seed so a saved game can be
 //! replayed and rendered pixel-for-pixel.
@@ -294,7 +294,7 @@ impl Player {
         self.attrs.overall(self.pos)
     }
 
-    /// A7FL players wear jersey + shorts, no pads, so the visual silhouette is
+    /// 7 on 7 players wear jersey + shorts, no pads, so the visual silhouette is
     /// narrower than an NFL player's and depends on real body size.
     pub fn shoulder_width(&self) -> f32 {
         lerp(0.44, 0.62, (self.weight as f32 - 165.0) / 110.0) * self.build
@@ -318,7 +318,7 @@ pub enum JerseyPattern {
     Hoops,
 }
 
-/// A7FL kit: sleeveless jersey, no shoulder pads, matching shorts and low socks.
+/// 7 on 7 kit: sleeveless jersey, no shoulder pads, matching shorts and low socks.
 #[derive(Clone, Copy, Debug)]
 pub struct Uniform {
     pub jersey: Rgb,
@@ -734,7 +734,7 @@ fn body(pos: Position, rng: &mut Rng) -> (u8, u16, f32) {
 
 fn generate_roster(seed: u64, level: i32) -> Vec<Player> {
     let mut rng = Rng::new(seed);
-    // A7FL rosters run 14 minimum, 35 max for inter-division play.
+    // 7 on 7 rosters run 14 minimum, 35 max for inter-division play.
     let plan: &[(Position, usize)] = &[
         (Position::Qb, 2),
         (Position::Ol, 4),

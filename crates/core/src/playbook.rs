@@ -1,6 +1,6 @@
 //! Offensive formations and concepts, plus the defensive call sheet.
 //!
-//! A7FL offenses field seven players: a quarterback, two down linemen and four
+//! 7 on 7 offenses field seven players: a quarterback, two down linemen and four
 //! eligibles. The published rules note that teams "can run bone or pistol", so both
 //! families are here along with trips, doubles and spread looks. All route
 //! waypoints are relative to the receiver's alignment: `+x` is downfield, `+y` is
@@ -467,7 +467,7 @@ pub fn plays_in(book: &[Play], formation: Formation) -> Vec<usize> {
         .collect()
 }
 
-/// The full A7FL playbook. `l` in the mirrored designs is the role's side sign.
+/// The full 7 on 7 playbook. `l` in the mirrored designs is the role's side sign.
 pub fn playbook() -> Vec<Play> {
     use OffRole::*;
     vec![

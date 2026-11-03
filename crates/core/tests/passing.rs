@@ -5,10 +5,10 @@
 //! end has to be slow and lofted, and the hard end has to be the only way to get
 //! the ball downfield.
 
-use a7fl_core::math::Vec2;
-use a7fl_core::playbook::{defensive_playbook, playbook};
-use a7fl_core::sim::{PlaySim, QbControl, SnapSetup, SNAP_DELAY};
-use a7fl_core::team::{league_teams, Team};
+use nopads_core::math::Vec2;
+use nopads_core::playbook::{defensive_playbook, playbook};
+use nopads_core::sim::{PlaySim, QbControl, SnapSetup, SNAP_DELAY};
+use nopads_core::team::{league_teams, Team};
 
 fn setup(seed: u64) -> SnapSetup {
     SnapSetup {

@@ -4,11 +4,11 @@
 //! Everything is painted at 12 pixels per yard: mown stripes, yard lines, hash
 //! marks, painted numbers, end zone wordmarks and the home club's midfield mark.
 
-use a7fl_core::field::{
+use nopads_core::field::{
     ENDZONE_DEPTH, FIELD_HALF_WIDTH, FIELD_LENGTH, HASH_Y,
 };
-use a7fl_core::math::{Rgb, Rng};
-use a7fl_core::team::Team;
+use nopads_core::math::{Rgb, Rng};
+use nopads_core::team::Team;
 
 use crate::font::{self, draw_flat, draw_rot90};
 use crate::raster::{Frame, Texture};
@@ -256,7 +256,7 @@ pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
     // The home club's mark at midfield, not a league wordmark.
     let home = left_team.abbr.to_uppercase();
     font::draw_centered(&mut frame, cx, cy - 16, &home, 4, Rgb::hex(0xE8EAE2), 1);
-    font::draw_centered(&mut frame, cx, cy + 18, "NO PADS", 2, Rgb::hex(0xE8EAE2), 1);
+    font::draw_centered(&mut frame, cx, cy + 18, "7-ON-7", 2, Rgb::hex(0xE8EAE2), 1);
 
     // Goal post-less, just like the rulebook says. Nothing to draw.
 
@@ -280,7 +280,7 @@ pub fn coverage() -> (f32, f32, f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::team::league_teams;
+    use nopads_core::team::league_teams;
 
     /// The numbers are painted for the stand they belong to: feet toward that
     /// sideline, top toward midfield, and straddling the yard line between the

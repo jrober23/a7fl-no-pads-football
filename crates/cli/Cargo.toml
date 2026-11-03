@@ -1,17 +1,17 @@
 [package]
-name = "a7fl_cli"
+name = "nopads_cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Game client for No Pads Football"
+description = "Game client for 7 on 7 No Pads Football"
 
 [[bin]]
-name = "a7fl"
+name = "7on7"
 path = "src/main.rs"
 
 [dependencies]
-a7fl_core = { path = "../core" }
-a7fl_render = { path = "../render" }
+nopads_core = { path = "../core" }
+nopads_render = { path = "../render" }
 gilrs = { version = "0.11", optional = true }
 minifb = "0.29.0"
 

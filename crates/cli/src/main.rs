@@ -1,26 +1,26 @@
-//! `a7fl` — command line client for No Pads Football.
+//! `7on7` — command line client for No Pads Football.
 //!
 //! ```text
-//! a7fl sim   [--seed N] [--home IDX] [--away IDX] [--verbose]
-//! a7fl play  [--seed N] [--home IDX] [--away IDX]
-//! a7fl film  [--seed N] [--out DIR]
-//! a7fl teams
-//! a7fl rules
+//! 7on7 sim   [--seed N] [--home IDX] [--away IDX] [--verbose]
+//! 7on7 play  [--seed N] [--home IDX] [--away IDX]
+//! 7on7 film  [--seed N] [--out DIR]
+//! 7on7 teams
+//! 7on7 rules
 //! ```
 
 use std::io::{self, BufRead, Write};
 
-use a7fl_core::ai;
-use a7fl_core::game::{GamePhase, GameState, PlayRecord};
-use a7fl_core::math::{Vec2, Vec3};
-use a7fl_core::playbook::{defensive_playbook, playbook, DefCall, Play};
-use a7fl_core::sim::PlaySim;
-use a7fl_core::team::{league_teams, Team};
-use a7fl_render::broadcast::{Broadcast, CameraMode};
-use a7fl_render::capture::{write_gif, write_png};
-use a7fl_render::hud;
-use a7fl_render::passing::{Badge, Guide, PassUi, Tone};
-use a7fl_render::raster::Frame;
+use nopads_core::ai;
+use nopads_core::game::{GamePhase, GameState, PlayRecord};
+use nopads_core::math::{Vec2, Vec3};
+use nopads_core::playbook::{defensive_playbook, playbook, DefCall, Play};
+use nopads_core::sim::PlaySim;
+use nopads_core::team::{league_teams, Team};
+use nopads_render::broadcast::{Broadcast, CameraMode};
+use nopads_render::capture::{write_gif, write_png};
+use nopads_render::hud;
+use nopads_render::passing::{Badge, Guide, PassUi, Tone};
+use nopads_render::raster::Frame;
 
 mod arcade;
 mod menu;
@@ -30,7 +30,7 @@ mod view;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // Bare `a7fl` starts the game; anything else is a named command.
+    // Bare `7on7` starts the game; anything else is a named command.
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("arcade");
     let rest = if args.len() > 1 { &args[1..] } else { &args[0..0] };
     match cmd {
@@ -62,15 +62,15 @@ fn has(args: &[String], name: &str) -> bool {
 }
 
 fn print_help() {
-    println!("No Pads Football — simulation and broadcast renderer");
+    println!("7 on 7 No Pads Football — simulation and broadcast renderer");
     println!();
     println!("USAGE");
-    println!("  a7fl sim   [--seed N] [--home IDX] [--away IDX] [--verbose]");
-    println!("  a7fl play  [--seed N] [--home IDX] [--away IDX]");
-    println!("  a7fl film  [--seed N] [--out DIR]");
-    println!("  a7fl arcade [--seed N] [--home IDX] [--away IDX] [--terminal]");
-    println!("  a7fl teams");
-    println!("  a7fl rules");
+    println!("  7on7 sim   [--seed N] [--home IDX] [--away IDX] [--verbose]");
+    println!("  7on7 play  [--seed N] [--home IDX] [--away IDX]");
+    println!("  7on7 film  [--seed N] [--out DIR]");
+    println!("  7on7 arcade [--seed N] [--home IDX] [--away IDX] [--terminal]");
+    println!("  7on7 teams");
+    println!("  7on7 rules");
     println!();
     println!("  sim    simulate a full game and print the box score");
     println!("  play   call plays yourself from the terminal");
@@ -309,7 +309,7 @@ fn cmd_teams() {
 // ---------------------------------------------------------------------------
 
 fn cmd_rules() {
-    println!("NO PADS FOOTBALL RULESET IMPLEMENTED");
+    println!("7 ON 7 NO PADS FOOTBALL RULESET IMPLEMENTED");
     println!("  field        120 x 37.5 yards, 100 yard field of play, 10 yard end zones, no goal posts");
     println!("  players      7 on 7: QB + 2 down linemen + 4 eligibles vs 2 DL + 2 LB + 3 DB");
     println!("  clock        4 x 15 minutes (set per game in settings), 30 second play clock");
@@ -332,27 +332,27 @@ fn cmd_rules() {
     println!();
     println!("PENALTIES ENFORCED");
     for kind in [
-        a7fl_core::rules::PenaltyKind::FalseStart,
-        a7fl_core::rules::PenaltyKind::OffsideDefense,
-        a7fl_core::rules::PenaltyKind::DelayOfGame,
-        a7fl_core::rules::PenaltyKind::Holding,
-        a7fl_core::rules::PenaltyKind::IllegalBlockInTheBack,
-        a7fl_core::rules::PenaltyKind::Clipping,
-        a7fl_core::rules::PenaltyKind::BlockingBelowWaist,
-        a7fl_core::rules::PenaltyKind::ChopBlock,
-        a7fl_core::rules::PenaltyKind::IntentionalGrounding,
-        a7fl_core::rules::PenaltyKind::OffensivePassInterference,
-        a7fl_core::rules::PenaltyKind::DefensivePassInterference,
-        a7fl_core::rules::PenaltyKind::DefensiveHolding,
-        a7fl_core::rules::PenaltyKind::IllegalContact,
-        a7fl_core::rules::PenaltyKind::RoughingThePasser,
-        a7fl_core::rules::PenaltyKind::LateHit,
-        a7fl_core::rules::PenaltyKind::Unsportsmanlike,
-        a7fl_core::rules::PenaltyKind::Targeting,
-        a7fl_core::rules::PenaltyKind::HorseCollar,
-        a7fl_core::rules::PenaltyKind::BlindsideBlock,
+        nopads_core::rules::PenaltyKind::FalseStart,
+        nopads_core::rules::PenaltyKind::OffsideDefense,
+        nopads_core::rules::PenaltyKind::DelayOfGame,
+        nopads_core::rules::PenaltyKind::Holding,
+        nopads_core::rules::PenaltyKind::IllegalBlockInTheBack,
+        nopads_core::rules::PenaltyKind::Clipping,
+        nopads_core::rules::PenaltyKind::BlockingBelowWaist,
+        nopads_core::rules::PenaltyKind::ChopBlock,
+        nopads_core::rules::PenaltyKind::IntentionalGrounding,
+        nopads_core::rules::PenaltyKind::OffensivePassInterference,
+        nopads_core::rules::PenaltyKind::DefensivePassInterference,
+        nopads_core::rules::PenaltyKind::DefensiveHolding,
+        nopads_core::rules::PenaltyKind::IllegalContact,
+        nopads_core::rules::PenaltyKind::RoughingThePasser,
+        nopads_core::rules::PenaltyKind::LateHit,
+        nopads_core::rules::PenaltyKind::Unsportsmanlike,
+        nopads_core::rules::PenaltyKind::Targeting,
+        nopads_core::rules::PenaltyKind::HorseCollar,
+        nopads_core::rules::PenaltyKind::BlindsideBlock,
     ] {
-        use a7fl_core::rules::FoulTeam;
+        use nopads_core::rules::FoulTeam;
         let team = match kind.against() {
             FoulTeam::Offense => "offense",
             FoulTeam::Defense => "defense",
@@ -377,7 +377,7 @@ fn cmd_play(args: &[String]) {
     let seed = num(args, "--seed", 12);
     let (home, away) = pick_teams(args);
     let mut game = GameState::new(home, away, seed);
-    println!("NO PADS FOOTBALL — {}", game.teams[0].full_name());
+    println!("7 ON 7 NO PADS FOOTBALL — {}", game.teams[0].full_name());
     println!("vs {}", game.teams[1].full_name());
     println!("Type a play number to call it, 'a' to let the coach call it, 'q' to quit.");
 
@@ -388,13 +388,13 @@ fn cmd_play(args: &[String]) {
         print_situation(&game);
 
         match game.action() {
-            a7fl_core::game::Action::GameOver => break,
-            a7fl_core::game::Action::ThrowOff => {
+            nopads_core::game::Action::GameOver => break,
+            nopads_core::game::Action::ThrowOff => {
                 let rec = game.simulate_next();
                 report(rec.as_ref());
                 continue;
             }
-            a7fl_core::game::Action::ChooseConversion => {
+            nopads_core::game::Action::ChooseConversion => {
                 println!("  Conversion: [1] from the 5  [2] from the 10");
                 let two = read_choice(&["1", "2"]).map(|c| c == "2");
                 let rec = match two {
@@ -404,7 +404,7 @@ fn cmd_play(args: &[String]) {
                 report(rec.as_ref());
                 continue;
             }
-            a7fl_core::game::Action::CallPlay { fourth_down } => {
+            nopads_core::game::Action::CallPlay { fourth_down } => {
                 if fourth_down {
                     println!("  Fourth down: [g] go for it  [t] throw-off");
                     if let Some(choice) = read_choice(&["g", "t"]) {
@@ -457,7 +457,7 @@ fn choose_defense_for(game: &GameState, seed: u64) -> DefCall {
     let _ = seed;
     let book = defensive_playbook();
     let s = ai::Situation::from_game(game);
-    let mut rng = a7fl_core::math::Rng::new(game.seed ^ 0xBEEF);
+    let mut rng = nopads_core::math::Rng::new(game.seed ^ 0xBEEF);
     if s.yards_to_goal <= 5.0 {
         return book.iter().find(|d| d.name == "GOAL LINE BEAR").cloned().unwrap_or_else(|| book[0].clone());
     }
@@ -482,7 +482,7 @@ fn print_situation(game: &GameState) {
         game.teams[1].abbr,
         game.score[1],
         game.down_and_distance(),
-        a7fl_core::field::ball_on_label(game.yards_to_goal())
+        nopads_core::field::ball_on_label(game.yards_to_goal())
     );
     if matches!(game.phase, GamePhase::Conversion { .. }) {
         println!("  (conversion attempt)");
@@ -619,7 +619,7 @@ fn cmd_arcade(args: &[String]) {
                     air.players[*a].pos.dist(qb).total_cmp(&air.players[*b].pos.dist(qb))
                 });
             if let Some(index) = deep {
-                air.set_control(Some(a7fl_core::sim::QbControl {
+                air.set_control(Some(nopads_core::sim::QbControl {
                     move_dir: Vec2::ZERO,
                     target: Some(index),
                     throw: true,
@@ -724,11 +724,11 @@ fn cmd_arcade(args: &[String]) {
         // comes down.
         let throw_home = live.teams[0].clone();
         let throw_away = live.teams[1].clone();
-        let setup = a7fl_core::throwoff::ThrowOffSetup {
+        let setup = nopads_core::throwoff::ThrowOffSetup {
             seed: 7,
-            ..a7fl_core::throwoff::ThrowOffSetup::normal()
+            ..nopads_core::throwoff::ThrowOffSetup::normal()
         };
-        let off = a7fl_core::throwoff::ThrowOffSim::new(&setup, &throw_home, &throw_away);
+        let off = nopads_core::throwoff::ThrowOffSim::new(&setup, &throw_home, &throw_away);
         let plan = off.throw_off_plan(0.62, 5.0);
         let hand = off.players[0].pos;
         let ui = PassUi {
@@ -741,8 +741,8 @@ fn cmd_arcade(args: &[String]) {
             }),
             power: Some(0.62),
             short: plan.too_short,
-            needed: Some(a7fl_core::throwoff::power_for_air(
-                a7fl_core::rules::THROW_OFF_MIN_AIR_YARDS,
+            needed: Some(nopads_core::throwoff::power_for_air(
+                nopads_core::rules::THROW_OFF_MIN_AIR_YARDS,
             )),
         };
         let lines = vec![
@@ -771,8 +771,8 @@ fn cmd_arcade(args: &[String]) {
         }
 
         // The call sheet, the way it is drawn when the player is picking a play.
-        let mut sheet = a7fl_render::Frame::new(640, 360);
-        a7fl_render::playsheet::draw(&mut sheet, &playbook(), 1);
+        let mut sheet = nopads_render::Frame::new(640, 360);
+        nopads_render::playsheet::draw(&mut sheet, &playbook(), 1);
         let lines = vec![
             "NEW 14 - 7  PAT   2ND 6:41   1ST & 10   BALL ON OWN 34".to_string(),
             "  POWER O          RUN / BONE          PLAY 2 OF 22   SET 1 OF 3".to_string(),
@@ -829,7 +829,7 @@ fn cmd_arcade(args: &[String]) {
                 let teams = league_teams();
                 game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
                 game.set_opening_receiver(if kick.receive { 0 } else { 1 });
-                game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(
+                game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
                     settings.difficulty,
                 ));
                 // The clock chosen on the setup card is the clock this game runs.
@@ -886,7 +886,7 @@ fn cmd_film(args: &[String]) {
                 if score_play.is_none() && r.result.touchdown {
                     score_play = Some(rec.clone());
                 }
-                if interception.is_none() && r.result.outcome == a7fl_core::sim::PlayOutcome::Interception {
+                if interception.is_none() && r.result.outcome == nopads_core::sim::PlayOutcome::Interception {
                     interception = Some(rec.clone());
                 }
             }

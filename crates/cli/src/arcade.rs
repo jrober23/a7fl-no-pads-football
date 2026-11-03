@@ -1,4 +1,4 @@
-//! `a7fl arcade` — play the game live, in a window or in the terminal.
+//! `7on7 arcade` — play the game live, in a window or in the terminal.
 //!
 //! The field is drawn by the same software renderer the broadcast package uses:
 //! a real window when the machine has a display, ANSI colour blocks when it does
@@ -11,25 +11,25 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-use a7fl_core::ai;
-use a7fl_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
-use a7fl_core::math::{Rgb, Rng, Vec2, Vec3};
-use a7fl_core::moves::Kind;
-use a7fl_core::playbook::{
+use nopads_core::ai;
+use nopads_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
+use nopads_core::math::{Rgb, Rng, Vec2, Vec3};
+use nopads_core::moves::Kind;
+use nopads_core::playbook::{
     def_calls_in, defensive_playbook, formations_in, fronts_in, playbook, plays_in, DefCall,
     DefFront, DefRole, Formation, Play,
 };
-use a7fl_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
-use a7fl_core::sim::{DefControl, Phase, PlaySim, QbControl};
-use a7fl_core::team::league_teams;
-use a7fl_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
-use a7fl_render::broadcast::{Broadcast, CameraMode};
-use a7fl_render::hud;
-use a7fl_render::passing::{Badge, Focus, Guide, PassUi, Tone};
-use a7fl_render::callsheet;
-use a7fl_render::defsheet;
-use a7fl_render::playsheet::Dir;
-use a7fl_render::terminal;
+use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
+use nopads_core::sim::{DefControl, Phase, PlaySim, QbControl};
+use nopads_core::team::league_teams;
+use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
+use nopads_render::broadcast::{Broadcast, CameraMode};
+use nopads_render::hud;
+use nopads_render::passing::{Badge, Focus, Guide, PassUi, Tone};
+use nopads_render::callsheet;
+use nopads_render::defsheet;
+use nopads_render::playsheet::Dir;
+use nopads_render::terminal;
 
 use crate::menu;
 use crate::pad::{self, Input, Pad};
@@ -400,7 +400,7 @@ impl Arcade {
         let seed = self.game.seed ^ 0x00A7_F1E5;
         let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
         game.set_opening_receiver(if kick.receive { 0 } else { 1 });
-        game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(settings.difficulty));
+        game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(settings.difficulty));
         // The quarter length and the ground are chosen on the front end, so the
         // game is built to them rather than patched afterwards.
         game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
@@ -408,7 +408,7 @@ impl Arcade {
             CANVAS_W,
             CANVAS_H,
             [game.teams[0].clone(), game.teams[1].clone()],
-            a7fl_render::venues::Venue::from_index(kick.venue),
+            nopads_render::venues::Venue::from_index(kick.venue),
         );
         self.broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
         self.venue = kick.venue;
@@ -425,7 +425,7 @@ impl Arcade {
         let mut game = GameState::new(teams[0].clone(), teams[1].clone(), seed);
         game.set_opening_receiver(0);
         if let Some(settings) = &self.settings {
-            game.set_difficulty(a7fl_core::difficulty::Difficulty::from_index(
+            game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
                 settings.difficulty,
             ));
             game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
@@ -434,7 +434,7 @@ impl Arcade {
             CANVAS_W,
             CANVAS_H,
             [game.teams[0].clone(), game.teams[1].clone()],
-            a7fl_render::venues::Venue::from_index(self.venue),
+            nopads_render::venues::Venue::from_index(self.venue),
         );
         if let Some(settings) = &self.settings {
             self.broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
@@ -535,7 +535,7 @@ impl Arcade {
             let list = plays_in(&self.book, forms[self.form]);
             self.sheet_pick = self.sheet_pick.min(list.len().saturating_sub(1));
 
-            let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
+            let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
             callsheet::draw_layered(
                 &mut frame,
                 &self.book,
@@ -725,7 +725,7 @@ impl Arcade {
         ];
         match self.ask(
             "CONVERSION",
-            &["The A7FL lets the offense pick the try, and it is locked in."],
+            &["7 on 7 lets the offense pick the try, and it is locked in."],
             &options,
             0,
         ) {
@@ -734,7 +734,7 @@ impl Arcade {
         }
     }
 
-    /// Fourth down: go for it, or use the A7FL throw-off in place of a punt.
+    /// Fourth down: go for it, or use the throw-off in place of a punt.
     fn ask_throw_off(&mut self) -> bool {
         let options = vec![
             "GO FOR IT  - SNAP THE FOURTH DOWN".to_string(),
@@ -782,7 +782,7 @@ impl Arcade {
             ];
             let lines = vec![
                 String::new(),
-                "  A7FL NO PADS FOOTBALL".to_string(),
+                "  7-ON-7 NO PADS FOOTBALL".to_string(),
                 String::new(),
                 format!("  {} AT {}", names[throwing], names[receiving]),
                 String::new(),
@@ -1270,7 +1270,7 @@ impl Arcade {
             let list = def_calls_in(&self.defbook, fronts[front]);
             pick = pick.min(list.len().saturating_sub(1));
 
-            let mut frame = a7fl_render::Frame::new(CANVAS_W, CANVAS_H);
+            let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
             defsheet::draw_layered(&mut frame, &self.defbook, &fronts, front, pick, in_calls);
             let lines = self.def_sheet_lines(fronts[front], &list, pick, in_calls);
             if !self.view.show(&mut frame, &lines) {
@@ -1382,7 +1382,7 @@ impl Arcade {
             self.game.quarter_text(),
             self.game.clock_text(),
             self.game.down_and_distance(),
-            a7fl_core::field::ball_on_label(self.game.yards_to_goal())
+            nopads_core::field::ball_on_label(self.game.yards_to_goal())
         )
     }
 
@@ -1405,7 +1405,7 @@ impl Arcade {
             .player
             .and_then(|i| self.game.teams[team].roster.get(i))
             .map(|p| p.last_name().to_string());
-        let from = a7fl_core::field::yards_to_goal(record.setup.los, record.setup.direction);
+        let from = nopads_core::field::yards_to_goal(record.setup.los, record.setup.direction);
         let mut lines = vec![
             self.header(),
             String::new(),
@@ -1424,8 +1424,8 @@ impl Arcade {
         lines.push(format!("  {} YARDS WALKED OFF", record.penalty_yards));
         lines.push(format!(
             "  BALL MOVED FROM {} TO {}",
-            a7fl_core::field::ball_on_label(from),
-            a7fl_core::field::ball_on_label(self.game.yards_to_goal())
+            nopads_core::field::ball_on_label(from),
+            nopads_core::field::ball_on_label(self.game.yards_to_goal())
         ));
         lines.push(String::new());
         lines.push(format!("  {}", record.result.description.to_uppercase()));
@@ -1556,7 +1556,7 @@ fn paused_still(
     broadcast: &mut Broadcast,
     shot: &PausedShot<'_, '_>,
     mode: CameraMode,
-) -> Option<a7fl_render::Frame> {
+) -> Option<nopads_render::Frame> {
     match shot {
         PausedShot::None => None,
         PausedShot::Play(sim) => Some(broadcast.live_frame(sim, mode)),
@@ -1575,7 +1575,7 @@ fn paused_still(
 }
 
 /// The menu, set over the frozen picture rather than on a page of their own.
-fn draw_pause_lines(frame: &mut a7fl_render::Frame, lines: &[String]) {
+fn draw_pause_lines(frame: &mut nopads_render::Frame, lines: &[String]) {
     let line_h = 18;
     let h = lines.len() as i32 * line_h + 20;
     let y0 = ((frame.h as i32 - h) / 2).max(0);
@@ -1625,7 +1625,7 @@ fn pause_menu(
     let mut leaving: Option<usize> = None;
     let mut last = Instant::now();
     // The picture as the lens last saw it, redrawn only when the lens moves.
-    let mut still: Option<a7fl_render::Frame> = None;
+    let mut still: Option<nopads_render::Frame> = None;
     // A button still held from the game must not select the first item.
     view.reset();
     let keep = loop {
@@ -1801,7 +1801,7 @@ fn play_back(
         .iter()
         .rev()
         .find_map(|snap| snap.flag.as_ref())
-        .map(|call| a7fl_core::math::Vec2::new(call.spot_of_foul, 0.0));
+        .map(|call| nopads_core::math::Vec2::new(call.spot_of_foul, 0.0));
     let (mode, label) = if flag.is_some() {
         (CameraMode::Replay, "THE FLAG")
     } else {
@@ -1857,7 +1857,7 @@ fn play_back_tape(
             }
         }
         let mut frame = broadcast.live_frame_ui(snapshot, mode, &ui);
-        let tw = a7fl_render::font::text_width(label, 3) as i32;
+        let tw = nopads_render::font::text_width(label, 3) as i32;
         frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
         frame.fill_rect(12, 12, 4, 30, hud::RED);
         frame.text_shadowed(23, 20, label, 3, hud::WHITE, 1);
@@ -1874,7 +1874,7 @@ fn play_back_tape(
         return true;
     };
     let mut frame = broadcast.live_frame_ui(last, mode, &ui);
-    let tw = a7fl_render::font::text_width("END OF PLAY", 3) as i32;
+    let tw = nopads_render::font::text_width("END OF PLAY", 3) as i32;
     frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
     frame.fill_rect(12, 12, 4, 30, hud::RED);
     frame.text_shadowed(23, 20, "END OF PLAY", 3, hud::WHITE, 1);
@@ -2338,8 +2338,8 @@ fn popup_window(pick: usize) -> usize {
 /// A small card drawn over the live picture. The full sheet used to take the
 /// field away, which meant a player checking out of a call could not see the look
 /// he was checking out of.
-fn draw_popup(frame: &mut a7fl_render::Frame, title: &str, cards: &[String], pick: usize) {
-    use a7fl_core::math::Rgb;
+fn draw_popup(frame: &mut nopads_render::Frame, title: &str, cards: &[String], pick: usize) {
+    use nopads_core::math::Rgb;
     let ink = Rgb::hex(0x0E1116);
     let accent = Rgb::hex(0xFFC440);
     let paper = Rgb::new(232, 238, 246);

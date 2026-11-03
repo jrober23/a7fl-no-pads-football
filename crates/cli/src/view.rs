@@ -7,9 +7,9 @@
 
 use std::io::{self, Write};
 
-use a7fl_core::math::{Rgb, Vec2};
-use a7fl_render::raster::Frame;
-use a7fl_render::terminal::{self, Screen};
+use nopads_core::math::{Rgb, Vec2};
+use nopads_render::raster::Frame;
+use nopads_render::terminal::{self, Screen};
 
 use crate::pad::{Buttons, Input};
 use crate::settings::Settings;
@@ -135,7 +135,7 @@ pub struct WindowView {
 impl WindowView {
     fn open(settings: &Settings) -> Option<WindowView> {
         let mut window = minifb::Window::new(
-            "No Pads Football",
+            "7 on 7 No Pads Football",
             settings.width,
             settings.height,
             minifb::WindowOptions {
@@ -278,7 +278,7 @@ fn draw_hud(frame: &mut Frame, lines: &[String]) {
 
 /// A page of text: title rule, then wrapped lines in the same font.
 fn draw_page(frame: &mut Frame, lines: &[String]) {
-    use a7fl_render::font;
+    use nopads_render::font;
 
     frame.clear(backdrop());
     frame.fill_rect(0, 0, CANVAS_W as i32, 2, Rgb::new(52, 104, 168));

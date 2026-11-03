@@ -8,7 +8,7 @@
 
 use std::fmt::Write as _;
 
-use a7fl_core::math::Rgb;
+use nopads_core::math::Rgb;
 
 use crate::raster::Frame;
 

@@ -5,8 +5,8 @@
 //! simulation runs, so a card can never advertise a play the game does not play.
 //! The client highlights one with the d-pad and snaps it with the A button.
 
-use a7fl_core::math::{Rgb, Vec2};
-use a7fl_core::playbook::{personnel_label, Assign, Formation, OffRole, Play};
+use nopads_core::math::{Rgb, Vec2};
+use nopads_core::playbook::{personnel_label, Assign, Formation, OffRole, Play};
 
 use crate::raster::Frame;
 
@@ -344,7 +344,7 @@ pub fn draw_play_card(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::playbook::playbook;
+    use nopads_core::playbook::playbook;
 
     #[test]
     fn sideways_stays_in_the_set_and_wraps() {

@@ -1,4 +1,4 @@
-//! The A7FL throw-off: the league's replacement for the kickoff.
+//! The 7 on 7 throw-off: the league's replacement for the kickoff.
 //!
 //! Rules implemented here, straight from the rulebook:
 //!

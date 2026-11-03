@@ -6,8 +6,8 @@
 //! procedural player models in no-pads kit — jerseys and shorts, no pads and no
 //! helmets.
 //!
-//! [`broadcast`] ties it together: given a [`a7fl_core::game::GameState`] and one of
-//! its [`a7fl_core::game::PlayRecord`]s it replays the exact same deterministic
+//! [`broadcast`] ties it together: given a [`nopads_core::game::GameState`] and one of
+//! its [`nopads_core::game::PlayRecord`]s it replays the exact same deterministic
 //! simulation and renders camera framings of it, so a rendered frame always matches
 //! the text play-by-play.
 

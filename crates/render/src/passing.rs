@@ -5,7 +5,7 @@
 //! was rendered with, so a badge sits on a man's head wherever he is on the field
 //! and the aim guide runs along the grass rather than across the screen.
 
-use a7fl_core::math::{Rgb, Vec3};
+use nopads_core::math::{Rgb, Vec3};
 
 use crate::font;
 use crate::raster::Frame;
@@ -248,7 +248,7 @@ fn draw_meter(frame: &mut Frame, power: f32, short: bool, needed: Option<f32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::math::Vec3;
+    use nopads_core::math::Vec3;
 
     fn camera() -> Camera {
         let mut cam = Camera::new(Vec3::new(0.0, 20.0, 14.0), 0.0, 0.0);

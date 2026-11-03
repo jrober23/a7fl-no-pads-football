@@ -2,7 +2,7 @@
 //!
 //! Every snap is advanced in fixed timesteps so the broadcast renderer can draw any
 //! frame of it, and so a whole game can be simulated headlessly at high speed. The
-//! simulation owns all of the A7FL mechanics that matter on a snap:
+//! simulation owns all of the 7 on 7 mechanics that matter on a snap:
 //!
 //! * two down linemen who may release up to five yards, four eligibles,
 //! * no blitz restrictions (a defense may rush as many as it likes, which leaves
@@ -2219,7 +2219,7 @@ impl<'a> PlaySim<'a> {
                 self.players[d].engaged = None;
                 self.players[i].engaged = None;
                 self.players[i].stun = 0.45;
-                // A hold while getting beaten is the classic A7FL 10-yard foul.
+                // A hold while getting beaten is the classic 7 on 7 10-yard foul.
                 if self.rng.chance(0.012) {
                     let mut call = PenaltyCall::new(PenaltyKind::Holding, self.players[i].pos.x);
                     call.player = Some(self.roster_index(i));
@@ -2289,7 +2289,7 @@ impl<'a> PlaySim<'a> {
         for (d, _) in attempts {
             let carrier_attrs = self.attrs(carrier);
             let defender_attrs = self.attrs(d);
-            // Wrap tackling: the A7FL requires an actual attempt to wrap up.
+            // Wrap tackling: 7 on 7 requires an actual attempt to wrap up.
             let closing = (self.players[d].vel - self.players[carrier].vel).length();
             let mut p = 0.30
                 + (defender_attrs.tackle_factor() - carrier_attrs.break_tackle_factor()) * 0.55
@@ -2808,7 +2808,7 @@ impl<'a> PlaySim<'a> {
 
     /// A flag on the field.
     ///
-    /// The play keeps going. A7FL fouls are walked off after the ball is dead, and
+    /// The play keeps going. 7 on 7 fouls are walked off after the ball is dead, and
     /// stopping the snap on the whistle turned every hold into a play that never
     /// happened: the runner had nowhere to go, the pass was never thrown, and the
     /// yardage screen came up over a frozen picture. The flag stays on the field and

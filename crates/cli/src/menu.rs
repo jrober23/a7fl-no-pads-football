@@ -7,12 +7,12 @@
 
 use std::time::{Duration, Instant};
 
-use a7fl_core::game::{GameState, PlayRecord};
-use a7fl_core::math::Rgb;
-use a7fl_core::team::{clubs, league_teams, Club, Division, Position, Team, TeamRatings};
-use a7fl_render::raster::Frame;
-use a7fl_render::venues::{self, Venue};
-use a7fl_render::{Broadcast, CameraMode};
+use nopads_core::game::{GameState, PlayRecord};
+use nopads_core::math::Rgb;
+use nopads_core::team::{clubs, league_teams, Club, Division, Position, Team, TeamRatings};
+use nopads_render::raster::Frame;
+use nopads_render::venues::{self, Venue};
+use nopads_render::{Broadcast, CameraMode};
 
 use crate::arcade::CAMERA_LABELS;
 use crate::pad::{self, Pad};
@@ -238,7 +238,7 @@ fn start_screen(
 
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
         night(&mut frame);
-        centered(&mut frame, 34, "NO PADS", 7, accent());
+        centered(&mut frame, 34, "7-ON-7", 7, accent());
         centered(&mut frame, 100, "NO PADS FOOTBALL", 2, paper());
         frame.fill_rect(150, 168, 340, 1, Rgb::new(48, 92, 148));
         for (i, label) in labels.iter().enumerate() {
@@ -1309,10 +1309,10 @@ mod tests {
 /// The lens screen: the shot the player is tuning, live, with the two numbers
 /// that make it. Left and right zoom, up and down tilt, X puts it back.
 fn lens_screen(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settings) {
-    use a7fl_core::playbook::{defensive_playbook, playbook};
-    use a7fl_core::sim::{PlaySim, SnapSetup};
-    use a7fl_core::team::league_teams;
-    use a7fl_render::broadcast::{Broadcast, CameraMode};
+    use nopads_core::playbook::{defensive_playbook, playbook};
+    use nopads_core::sim::{PlaySim, SnapSetup};
+    use nopads_core::team::league_teams;
+    use nopads_render::broadcast::{Broadcast, CameraMode};
 
     let teams = league_teams();
     let home = teams[0].clone();

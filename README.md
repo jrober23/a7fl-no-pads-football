@@ -1,6 +1,6 @@
-# No Pads Football
+# 7 on 7 No Pads Football
 
-A playable no-pads football game written in Rust: a complete 7 on 7 rules engine,
+A playable 7 on 7 no-pads football game written in Rust: a complete 7 on 7 rules engine,
 a simulated season-length game, and a software-rendered broadcast package in the
 spirit of the ESPN NFL 2K5 presentation. Players wear no-pads kit — sleeveless
 jersey, shorts, bare arms and legs, no helmets, no pads.
@@ -12,9 +12,9 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `a7fl-v0.25.8-windows-x86_64.zip` from the
+Grab `7on7-v0.25.9-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
-it anywhere and run `a7fl.exe`. Switch the pad on before launching: the client
+it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
 10 or 11, no runtime or installer needed. The build is unsigned, so SmartScreen may
 ask you to confirm first (More info → Run anyway).
@@ -62,7 +62,7 @@ nothing at a pixel and a half.
 
 ## Playing with a controller
 
-`a7fl arcade` is the real-time client: plug in a controller (an 8BitDo works in
+`7on7 arcade` is the real-time client: plug in a controller (an 8BitDo works in
 XInput, DirectInput or Switch mode) and run `cargo run --release`. It opens a
 window (1280x720 by default, resizable) and draws the field with the same
 software renderer as the broadcast package — no GPU, no game engine. Run it with
@@ -123,8 +123,8 @@ On defense the same pad does different work:
 
 ### The start menu
 
-Bare `a7fl` opens on the start menu: **EXHIBITION**, **CUSTOMIZATION**, **SETTINGS**,
-**QUIT**. The stick moves, A selects, START leaves. `a7fl arcade --home 3 --away 7`
+Bare `7on7` opens on the start menu: **EXHIBITION**, **CUSTOMIZATION**, **SETTINGS**,
+**QUIT**. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
 skips the front end and goes straight to kickoff with the clubs named, which is what
 the film and timing paths use.
 
@@ -184,7 +184,7 @@ Left and right walk a value and A cycles it. The game opens on **1920x1080**: th
 canvas is 640x360, so 1080p is exactly three screen pixels to one canvas pixel, with
 no resampling anywhere in the chain. A smaller desktop steps down to 1600x900 or
 1280x720, which are whole-number steps too. Changes apply as you make them and are written
-to `%APPDATA%\a7fl\settings.cfg` on Windows (`~/.config/a7fl/settings.cfg`
+to `%APPDATA%\7on7\settings.cfg` on Windows (`~/.config/7on7/settings.cfg`
 elsewhere), so the next launch opens the way you left it. Delete that file to go back
 to the defaults; a hand-edited or half-written file falls back to them as well.
 
@@ -740,11 +740,11 @@ takes its clock from the same file.
 
 ### Simulation
 
-`a7fl_core::sim` runs one snap as a continuous 7 on 7 play at 60 Hz: dropback,
+`nopads_core::sim` runs one snap as a continuous 7 on 7 play at 60 Hz: dropback,
 route running against man and zone coverage, pass rush and holding, quarterback
 progression reads, throw power and accuracy, catch radius, wrap tackles, broken
 tackles, fumbles, interceptions, defensive pass interference, sacks, safeties,
-touchdowns and out-of-bounds. `a7fl_core::throwoff` runs the throw-off the same
+touchdowns and out-of-bounds. `nopads_core::throwoff` runs the throw-off the same
 way, phase by phase (presnap, flight, return, result), with fair catches, muffs,
 touchbacks, return touchdowns and safeties.
 
@@ -763,7 +763,7 @@ and manages timeouts and clock.
 
 ### Presentation
 
-The renderer is a small software 3D pipeline (`a7fl_render`): z-buffered,
+The renderer is a small software 3D pipeline (`nopads_render`): z-buffered,
 perspective-correct textured triangles, near-plane clipping, distance fog and soft
 ground shadows, plus five camera setups — high sideline broadcast, behind the
 quarterback, sky cam, low replay and end zone.
@@ -840,7 +840,7 @@ panel and the highlight loop.
 ## Architecture
 
 ```
-crates/core     a7fl_core   — no dependencies
+crates/core     nopads_core   — no dependencies
   math.rs       vectors, colours, deterministic PCG random
   field.rs      canonical field geometry (100 yards + two 10-yard end zones, 37.5 wide)
   rules.rs      penalty catalog and enforcement
@@ -852,7 +852,7 @@ crates/core     a7fl_core   — no dependencies
   ai.rs         play calling and game management
   game.rs       quarters, clock, downs, conversions, overtime, mercy, play log
 
-crates/render   a7fl_render — depends on `image` (PNG) and `gif`
+crates/render   nopads_render — depends on `image` (PNG) and `gif`
   raster.rs     framebuffer, z-buffer, textured/flat/alpha triangles, bitmap font
   font.rs       5x7 bitmap font
   scene.rs      camera, projector, near clipping, mesh primitives, lighting, fog
@@ -862,10 +862,10 @@ crates/render   a7fl_render — depends on `image` (PNG) and `gif`
   hud.rs        score bug, banners, ticker, stats panel
   capture.rs    PNG and GIF writers
 
-crates/cli      the `a7fl` binary
+crates/cli      the `7on7` binary
 ```
 
-The `a7fl_core` crate has no dependencies and no rendering code, so the rules and
+The `nopads_core` crate has no dependencies and no rendering code, so the rules and
 simulation can be unit tested (39 tests) without touching the renderer.
 
 ## Honest limits

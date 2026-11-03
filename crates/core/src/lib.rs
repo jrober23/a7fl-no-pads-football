@@ -1,9 +1,9 @@
-//! A7FL No Pads Football — simulation core.
+//! 7 on 7 No Pads Football — simulation core.
 //!
 //! Layers:
 //!
-//! * [`rules`] / [`field`] — the A7FL rulebook as data plus enforcement math.
-//! * [`team`] — teams, rosters, attributes, A7FL uniform specs.
+//! * [`rules`] / [`field`] — the 7 on 7 rulebook as data plus enforcement math.
+//! * [`team`] — teams, rosters, attributes, 7 on 7 uniform specs.
 //! * [`playbook`] — formations, route concepts and defensive calls.
 //! * [`sim`] — the continuous-time 7 on 7 snap simulation.
 //! * [`game`] — quarters, clock, downs, conversions, overtime, mercy rule.

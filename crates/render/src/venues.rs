@@ -8,8 +8,8 @@
 //! Everything here is generated from a fixed seed, so a ground looks the same
 //! on every replay of every play at it.
 
-use a7fl_core::math::{Rgb, Vec3};
-use a7fl_core::team::{clubs, Team};
+use nopads_core::math::{Rgb, Vec3};
+use nopads_core::team::{clubs, Team};
 
 use crate::scene::{Lighting, Mesh};
 
@@ -18,7 +18,7 @@ use crate::scene::{Lighting, Mesh};
 const FIELD_LEN: f32 = 120.0;
 /// Half the width of the paint, taken from the field itself: anything hung off
 /// these lines has to clear the sidelines, or it hangs over the field.
-const HALF_WIDTH: f32 = a7fl_core::field::FIELD_HALF_WIDTH;
+const HALF_WIDTH: f32 = nopads_core::field::FIELD_HALF_WIDTH;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -2053,7 +2053,7 @@ pub fn school_frame(fish: &[FishFigure], t: f32) -> Mesh {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::team::league_teams;
+    use nopads_core::team::league_teams;
     use crate::broadcast::Broadcast;
 
     #[test]
@@ -2114,7 +2114,7 @@ mod tests {
     /// on purpose, so it is left out of the sweep.
     #[test]
     fn nothing_is_standing_on_the_field() {
-        use a7fl_core::field::{BACK_OF_LEFT_ENDZONE, BACK_OF_RIGHT_ENDZONE, FIELD_HALF_WIDTH};
+        use nopads_core::field::{BACK_OF_LEFT_ENDZONE, BACK_OF_RIGHT_ENDZONE, FIELD_HALF_WIDTH};
         let teams = league_teams();
         for i in 0..COUNT {
             let venue = Venue::from_index(i);

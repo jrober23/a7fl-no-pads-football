@@ -1,4 +1,4 @@
-//! A7FL player figures: sleeveless jersey, shorts, bare arms and no helmet.
+//! 7 on 7 player figures: sleeveless jersey, shorts, bare arms and no helmet.
 //!
 //! A figure is a small skeleton — pelvis, two-segment spine, head, and two joints
 //! per limb — posed from a stride cycle and built out of lofted bodies, limbs and
@@ -20,9 +20,9 @@
 //!   is one pair of steps of a fixed length. Feet keep their grip at any speed,
 //!   and the cadence stays in a range a human could actually run in.
 
-use a7fl_core::math::{Rgb, Vec3};
-use a7fl_core::moves::Kind;
-use a7fl_core::team::{JerseyPattern, Player, Uniform};
+use nopads_core::math::{Rgb, Vec3};
+use nopads_core::moves::Kind;
+use nopads_core::team::{JerseyPattern, Player, Uniform};
 
 use crate::head::Head;
 use crate::scene::Mesh;
@@ -1522,7 +1522,7 @@ mod tests {
     // ---------------------------------------------------------------
 
     fn figure(motion: Option<Kind>, progress: f32) -> Mesh {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let pose = Pose {
             run_phase: 0.3,
             speed: 0.75,
@@ -1591,7 +1591,7 @@ mod tests {
     /// cloth over the deltoid, bare arm underneath.
     #[test]
     fn the_jersey_covers_the_shoulder_cap() {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let player = &teams[0].roster[0];
         let uniform = &teams[0].home;
         let pose = Pose { run_phase: 0.3, speed: 0.0, ..Default::default() };
@@ -1663,7 +1663,7 @@ mod tests {
     /// not.
     #[test]
     fn the_jersey_carries_a_number() {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let player = &teams[0].roster[0];
         let uniform = &teams[0].home;
         let pose = Pose { run_phase: 0.3, speed: 0.7, ..Default::default() };
@@ -1701,7 +1701,7 @@ mod tests {
             tris > 1200,
             "the figure has gone back to being a stack of boxes: {tris} tris"
         );
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let player = &teams[0].roster[0];
         let uniform = &teams[0].home;
         let pose = Pose { run_phase: 0.3, speed: 0.75, carrying: true, ..Default::default() };
@@ -1736,7 +1736,7 @@ mod tests {
     /// aperture rather than the mask being a second skin over it.
     #[test]
     fn every_head_wears_a_balaclava() {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let player = &teams[0].roster[0];
         let uniform = &teams[0].home;
         let pose = Pose::default();
@@ -1761,7 +1761,7 @@ mod tests {
     /// some do not, and it is the same men every time the roster is dressed.
     #[test]
     fn sleeves_and_tights_are_dealt_out_but_not_to_everybody() {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         for team in &teams {
             let n = team.roster.len();
             let sleeves = team.roster.iter().filter(|p| wears_sleeves(p, 0)).count();
@@ -1778,7 +1778,7 @@ mod tests {
     /// ears, smooth-shaded rather than a ball with dots on it.
     #[test]
     fn the_head_is_a_face_and_not_a_ball() {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let player = &teams[0].roster[0];
         let uniform = &teams[0].home;
         let pose = Pose { run_phase: 0.3, speed: 0.0, ..Default::default() };
@@ -1805,7 +1805,7 @@ mod tests {
     /// one plane floating in front of — or behind — the chest.
     #[test]
     fn the_number_is_painted_on_the_cloth_not_in_front_of_it() {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let player = &teams[0].roster[0];
         let uniform = &teams[0].home;
         let paint = uniform.readable_number_color();
@@ -1923,7 +1923,7 @@ mod tests {
     }
 
     fn posed(wrapping: f32, tackled: f32) -> Mesh {
-        let teams = a7fl_core::team::league_teams();
+        let teams = nopads_core::team::league_teams();
         let pose = Pose {
             run_phase: 0.3,
             speed: 0.75,

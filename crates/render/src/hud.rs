@@ -4,8 +4,8 @@
 //! The overlay draws from [`HudState`] rather than the live game so a rendered
 //! frame of an old play shows the score, clock and down that existed *then*.
 
-use a7fl_core::game::{GamePhase, GameState};
-use a7fl_core::math::Rgb;
+use nopads_core::game::{GamePhase, GameState};
+use nopads_core::math::Rgb;
 
 use crate::font;
 use crate::raster::Frame;
@@ -103,7 +103,7 @@ fn team_row(
     y: i32,
     w: i32,
     h: i32,
-    team: &a7fl_core::team::Team,
+    team: &nopads_core::team::Team,
     score: u32,
     possession: bool,
     timeouts: u8,
@@ -160,7 +160,7 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     frame.fill_rect(dx, by, 4, dcard_h, game.teams[state.possession].primary);
     font::draw_styled(frame, dx + 18, by + 12, &state.down_and_distance(), 4, WHITE, 1, false);
     let side = if state.yards_to_goal > 50.0 { "OWN" } else { "OPP" };
-    let spot = a7fl_core::field::ball_on_label(state.yards_to_goal);
+    let spot = nopads_core::field::ball_on_label(state.yards_to_goal);
     font::draw_styled(
         frame,
         dx + 18,
@@ -182,7 +182,7 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
     let lw = 178;
     let lx = w - lw - 28;
     frame.rounded_rect(lx, 24, lw, 46, 8, RED);
-    font::draw_styled(frame, lx + 16, 32, "NO PADS", 3, WHITE, 2, true);
+    font::draw_styled(frame, lx + 16, 32, "7-ON-7", 3, WHITE, 2, true);
     font::draw_styled(frame, lx + 16, 58, "FOOTBALL", 2, WHITE, 1, false);
 
     // ------------------------------- ticker --------------------------------
@@ -332,7 +332,7 @@ impl Scoreboard {
 
     fn ball_on(&self) -> String {
         let side = if self.yards_to_goal > 50.0 { "OWN" } else { "OPP" };
-        let spot = a7fl_core::field::ball_on_label(self.yards_to_goal);
+        let spot = nopads_core::field::ball_on_label(self.yards_to_goal);
         format!("BALL ON {side} {spot}")
     }
 }
@@ -476,7 +476,7 @@ fn format_time(seconds: f32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::team::league_teams;
+    use nopads_core::team::league_teams;
 
     #[test]
     fn the_scoreboard_draws_over_the_picture_inside_the_canvas() {

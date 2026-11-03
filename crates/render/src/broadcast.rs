@@ -4,13 +4,13 @@
 //! deterministic snap simulation up to that moment, so a rendered still always
 //! matches the play-by-play.
 
-use a7fl_core::field::{self, FIELD_HALF_WIDTH, FIELD_LENGTH};
-use a7fl_core::game::{GamePhase, GameState, PlayRecord, ScrimmageRecord, ThrowOffRecord};
-use a7fl_core::math::{clamp, Rgb, Vec2, Vec3};
-use a7fl_core::playbook::OffRole;
-use a7fl_core::sim::{PlaySim, Side};
-use a7fl_core::team::{Team, Uniform};
-use a7fl_core::throwoff::{ThrowOffSim, ThrowPhase, ThrowRole};
+use nopads_core::field::{self, FIELD_HALF_WIDTH, FIELD_LENGTH};
+use nopads_core::game::{GamePhase, GameState, PlayRecord, ScrimmageRecord, ThrowOffRecord};
+use nopads_core::math::{clamp, Rgb, Vec2, Vec3};
+use nopads_core::playbook::OffRole;
+use nopads_core::sim::{PlaySim, Side};
+use nopads_core::team::{Team, Uniform};
+use nopads_core::throwoff::{ThrowOffSim, ThrowPhase, ThrowRole};
 
 use crate::fieldtex;
 use crate::hud::{self, Banner, INK};
@@ -54,7 +54,7 @@ struct RenderPlayer {
     celebrate: f32,
     /// The move this man is in the middle of, if he is the carrier, and how far
     /// through it he is.
-    motion: Option<a7fl_core::moves::Kind>,
+    motion: Option<nopads_core::moves::Kind>,
     motion_progress: f32,
 }
 
@@ -361,13 +361,13 @@ impl Broadcast {
         state.under_two = (record.quarter == 2 || record.quarter == 4) && record.clock <= 120.0;
         if record.is_try {
             state.down = 1;
-            state.to_go = a7fl_core::field::yards_to_goal(record.setup.los, record.setup.direction);
+            state.to_go = nopads_core::field::yards_to_goal(record.setup.los, record.setup.direction);
             state.yards_to_goal = state.to_go;
             state.phase = GamePhase::Conversion { offense: record.setup.offense_team, points: 1 };
         } else {
             state.down = record.down;
             state.to_go = record.to_go;
-            state.yards_to_goal = a7fl_core::field::yards_to_goal(record.setup.los, record.setup.direction);
+            state.yards_to_goal = nopads_core::field::yards_to_goal(record.setup.los, record.setup.direction);
             state.phase = GamePhase::Scrimmage;
         }
         if record.result.touchdown {
@@ -449,7 +449,7 @@ impl Broadcast {
 
     /// Where every man is and where the ball is, from a throw-off being played or
     /// replayed.
-    pub fn throw_off_players(sim: &ThrowOffSim) -> (Vec<RenderPlayer>, (a7fl_core::math::Vec2, f32)) {
+    pub fn throw_off_players(sim: &ThrowOffSim) -> (Vec<RenderPlayer>, (nopads_core::math::Vec2, f32)) {
         let ball = sim.ball_position();
         let players = sim
             .players
@@ -486,8 +486,8 @@ impl Broadcast {
     /// The called play on the field: each eligible man's route as the sim has it
     /// built, drawn on the turf from where he is standing to where it ends.
     fn paint_routes(&self, frame: &mut Frame, camera: &Camera, sim: &PlaySim, emphasis: bool) {
-        const ROUTE: a7fl_core::math::Rgb = a7fl_core::math::Rgb::hex(0xEAF3FF);
-        const END: a7fl_core::math::Rgb = a7fl_core::math::Rgb::hex(0xFFD84A);
+        const ROUTE: nopads_core::math::Rgb = nopads_core::math::Rgb::hex(0xEAF3FF);
+        const END: nopads_core::math::Rgb = nopads_core::math::Rgb::hex(0xFFD84A);
         for i in 0..7 {
             let p = &sim.players[i];
             if p.route.is_empty() {
@@ -540,7 +540,7 @@ impl Broadcast {
     fn paint_throw_off(
         &mut self,
         players: &[RenderPlayer],
-        ball: (a7fl_core::math::Vec2, f32),
+        ball: (nopads_core::math::Vec2, f32),
         camera: Camera,
     ) -> Frame {
         self.sync_lens(&camera);
@@ -692,7 +692,7 @@ impl Broadcast {
         &mut self,
         frame: &mut Frame,
         camera: &Camera,
-        flag: &a7fl_core::rules::PenaltyCall,
+        flag: &nopads_core::rules::PenaltyCall,
         since: f32,
     ) {
         let pulse = 0.55 + 0.45 * (since * 7.0).sin().abs();
@@ -719,7 +719,7 @@ impl Broadcast {
     /// The word over a dead ball: SACK, TACKLE FOR LOSS, INTERCEPTION, PASS BATTED
     /// DOWN. The card explains it a beat later; this is what the picture says while
     /// the two men who just hit each other are still on the ground.
-    fn paint_result_word(&self, frame: &mut Frame, result: &a7fl_core::sim::PlayResult) {
+    fn paint_result_word(&self, frame: &mut Frame, result: &nopads_core::sim::PlayResult) {
         let Some(word) = result.headline() else {
             return;
         };
@@ -1349,7 +1349,7 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
         );
     };
     centred(&teams[0].abbr.to_uppercase(), 0.55, 8.8, Rgb::hex(0xE8EAE2), &mut mesh);
-    centred("NO PADS", 0.26, 6.5, teams[0].accent, &mut mesh);
+    centred("7-ON-7", 0.26, 6.5, teams[0].accent, &mut mesh);
 
     // ------------------------------------------------------------------
     // Four banks of lights, out at the corners of the site.
@@ -1441,15 +1441,15 @@ fn throw_off_camera(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use a7fl_core::playbook::{defensive_playbook, playbook};
-    use a7fl_core::sim::SnapSetup;
-    use a7fl_core::team::league_teams;
+    use nopads_core::playbook::{defensive_playbook, playbook};
+    use nopads_core::sim::SnapSetup;
+    use nopads_core::team::league_teams;
 
     /// Three gunners, one returner, and the thrower gone from the coverage.
     #[test]
     fn the_throw_off_shot_shows_three_gunners_and_no_thrower() {
         let teams = league_teams();
-        let setup = a7fl_core::throwoff::ThrowOffSetup::normal();
+        let setup = nopads_core::throwoff::ThrowOffSetup::normal();
         let mut sim = ThrowOffSim::new(&setup, &teams[0], &teams[1]);
         let (presnap, _) = Broadcast::throw_off_players(&sim);
         assert_eq!(presnap.len(), 5, "the thrower is on the field until he throws");
@@ -1541,8 +1541,8 @@ mod tests {
         let clean = broadcast.live_frame(&sim, CameraMode::Broadcast);
         let amber = |f: &Frame| f.color.iter().filter(|c| **c == hud::YELLOW).count();
 
-        sim.flag = Some(a7fl_core::rules::PenaltyCall::new(
-            a7fl_core::rules::PenaltyKind::Holding,
+        sim.flag = Some(nopads_core::rules::PenaltyCall::new(
+            nopads_core::rules::PenaltyKind::Holding,
             45.0,
         ));
         sim.flag_at = sim.t;
@@ -1794,7 +1794,7 @@ mod tests {
     }
 
     fn flight_stays_in_frame(mode: CameraMode) {
-        use a7fl_core::sim::{QbControl, SNAP_DELAY};
+        use nopads_core::sim::{QbControl, SNAP_DELAY};
 
         let teams = league_teams();
         let play = playbook()

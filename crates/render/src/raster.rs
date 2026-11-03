@@ -1,7 +1,7 @@
 //! A small CPU rasteriser: colour framebuffer, z-buffer, triangles, lines and
 //! alpha blending. Everything the broadcast draws goes through here.
 
-use a7fl_core::math::{clamp, Rgb};
+use nopads_core::math::{clamp, Rgb};
 
 use crate::font;
 

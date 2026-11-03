@@ -1,11 +1,11 @@
 [package]
-name = "a7fl_render"
+name = "nopads_render"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Software 3D broadcast renderer for the A7FL game"
+description = "Software 3D broadcast renderer for 7 on 7 No Pads Football"
 
 [dependencies]
-a7fl_core = { path = "../core" }
+nopads_core = { path = "../core" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 gif = "0.13"

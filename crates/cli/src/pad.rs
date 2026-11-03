@@ -5,7 +5,7 @@
 //! per-controller code here. Built with `--no-default-features` the crate has no
 //! controller support at all and [`open`] simply returns `None`.
 
-use a7fl_core::math::Vec2;
+use nopads_core::math::Vec2;
 
 /// Buttons the game cares about, named for what they do rather than where they
 /// sit, so an 8BitDo in Switch layout still throws with the shoulder trigger.
@@ -81,7 +81,7 @@ mod backend {
     use gilrs::{Axis, Button, Gilrs};
 
     use super::{Buttons, Input};
-    use a7fl_core::math::Vec2;
+    use nopads_core::math::Vec2;
 
     pub struct Pad {
         gilrs: Gilrs,
