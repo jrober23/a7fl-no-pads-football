@@ -2648,8 +2648,12 @@ impl<'a> PlaySim<'a> {
         // happened to be and then slide him in, which read as the runner being
         // held in place by nothing. Close the gap on the frame of the hit instead:
         // the reach is the arm's, and it is spent arriving, not drifting.
+        // Unless he is in the air. A dive reaches further than a man on his feet,
+        // so snapping him to arm's length would be a teleport across a yard: the
+        // lunge is his arrival, and the wrap closes from wherever it puts him.
+        let diving = self.players[tackler].dive_t > 0.0;
         let gap = self.players[tackler].pos.dist(self.players[carrier].pos);
-        if gap > ARM_REACH {
+        if !diving && gap > ARM_REACH {
             let toward = (self.players[tackler].pos - self.players[carrier].pos)
                 .normalize_or_zero();
             self.players[tackler].pos =
@@ -4753,6 +4757,47 @@ mod tests {
         assert!(reached, "a dive from {gap} yards got nowhere");
     }
 
+
+
+    #[test]
+    fn a_dive_is_never_teleported_onto_the_carrier() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 3));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+        let spot = sim.players[carrier].pos.x;
+
+        // In the air, a yard short of him: the lunge is his arrival, and nothing
+        // may move him onto the carrier.
+        sim.players[7].pos = sim.players[carrier].pos + Vec2::new(1.0, 0.0);
+        sim.players[7].dive_t = 0.2;
+        let before = sim.players[7].pos;
+        sim.start_wrap(carrier, 7, PlayOutcome::Run, spot, "a dive".to_string(), 0, false);
+        sim.wrap = None;
+        assert!(
+            sim.players[7].pos.dist(before) < 0.01,
+            "a dive teleported {:.2} yards onto the carrier",
+            sim.players[7].pos.dist(before)
+        );
+
+        // On his feet inside the radius, the reach is spent arriving: he closes
+        // to arm's length and no further.
+        sim.players[7].dive_t = 0.0;
+        sim.players[7].pos = sim.players[carrier].pos + Vec2::new(TACKLE_RADIUS - 0.02, 0.0);
+        sim.start_wrap(carrier, 7, PlayOutcome::Run, spot, "a wrap".to_string(), 0, false);
+        let gap = sim.players[7].pos.dist(sim.players[carrier].pos);
+        assert!(
+            gap <= ARM_REACH + 0.01,
+            "the wrap started {gap:.2} yards away, so he glides in"
+        );
+    }
 
     #[test]
     fn a_wrap_starts_with_the_tackler_on_him() {

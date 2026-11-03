@@ -610,6 +610,12 @@ pub fn draw_card(
 /// half of the screen, and the panel is see-through the way the pause menu is,
 /// so the warm-up behind it is still the picture. One set carries the teams and
 /// their unit matchups, the next carries the men to watch.
+/// The pause menu's own veil, so the introduction and the pause screen are the
+/// same piece of glass: `crates/cli/src/menu.rs` washes the frame in this colour
+/// at this weight when the game is paused over a live picture.
+const PAUSE_INK: Rgb = Rgb::new(4, 6, 10);
+const PAUSE_VEIL: f32 = 0.62;
+
 pub fn draw_half_cards(
     frame: &mut Frame,
     title: &str,
@@ -630,7 +636,7 @@ pub fn draw_half_cards(
     // A slim banner at the top: this is a set of cards, not a page.
     let banner_w = 520;
     let bx = (w - banner_w) / 2;
-    frame.fill_rect_alpha(bx, 26, banner_w, 76, Rgb::hex(0x0B1017), 0.38);
+    frame.fill_rect_alpha(bx, 26, banner_w, 76, PAUSE_INK, PAUSE_VEIL);
     frame.fill_rect(bx, 26, banner_w, 3, accents[0]);
     frame.fill_rect(bx + banner_w - 140, 26, 140, 3, accents[1]);
     font::draw_centered(frame, w / 2, 36, title, 3, WHITE, 2);
@@ -649,7 +655,7 @@ pub fn draw_half_cards(
             Rgb::hex(0x1C2533),
             Rgb::hex(0x0B1017),
             PANEL_EDGE,
-            0.42,
+            PAUSE_VEIL,
         );
         frame.fill_rect(cx + 12, y + 5, card_w - 24, 4, accents[i]);
         for (row, line) in lines.iter().enumerate() {
