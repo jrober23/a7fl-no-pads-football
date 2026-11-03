@@ -12,7 +12,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.9-windows-x86_64.zip` from the
+Grab `7on7-v0.25.10-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -617,6 +617,19 @@ The rule set follows the 7 on 7 no-pads rulebook rather than the NFL's:
   his own end zone concedes a safety. A returner alone under the ball always fields
   it: only a catch made in contact can be muffed.
 - **Fourth down becomes a throw-off** from the line of scrimmage instead of a punt.
+- **Laterals are live.** A pass thrown backwards that hits the turf is not an
+  incompletion: it is a loose ball, and either side can come up with it.
+- **A fumble does not stop the play.** The ball comes out, it rolls, both teams go
+  after it, and whoever recovers it is a ball carrier: he runs with it, with every
+  runner's move, until he is tackled. Only then is the ball dead, and a defender
+  who recovers can take it back for six.
+- **A backed-up computer throws it off.** On Easy and Normal it takes the throw-off
+  from anywhere on its own side of the field rather than snap a long fourth down.
+  Hard will go for it instead when it is behind late enough that it has to have the
+  ball, and otherwise decides on down and distance.
+- **The preview button works on defence too.** Hold it at the line and the picture
+  lifts over your own call: man cover gets a line to his man, zones get the ground
+  they own, and the rushers get their track.
 - **Conversions are chosen, not kicked.** 1 point from the 5 or 2 points from the
   10, and the choice is locked in for the game.
 - **Overtime** gives each side a possession from the 25 with two first downs

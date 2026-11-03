@@ -523,6 +523,57 @@ impl Broadcast {
         }
     }
 
+    /// The defensive call on the field: where each of the seven has been sent.
+    ///
+    /// The other half of the preview. The same button that lifts the shot over
+    /// the route tree when the player has the ball shows his own coverage when he
+    /// does not, so a player learning to defend can see what his call does before
+    /// the snap instead of after it. Man cover gets a line to his man, a zone gets
+    /// the ring he is responsible for, and a rusher gets the track he is coming on.
+    fn paint_coverage(&self, frame: &mut Frame, camera: &Camera, sim: &PlaySim) {
+        use nopads_core::sim::CoverageJob;
+        const MARK: nopads_core::math::Rgb = nopads_core::math::Rgb::hex(0x74D7FF);
+        const SPOT: nopads_core::math::Rgb = nopads_core::math::Rgb::hex(0xFFD84A);
+        let dirf = sim.dir as f32;
+        for d in 7..sim.players.len() {
+            let p = &sim.players[d];
+            let (aim, zone) = match p.job {
+                CoverageJob::Man(t) | CoverageJob::Spy(t) if t < sim.players.len() => {
+                    (sim.players[t].pos, None)
+                }
+                CoverageJob::DeepZone { y, depth } => (
+                    Vec2::new(sim.los + dirf * depth.max(1.0), y),
+                    Some(6.0),
+                ),
+                CoverageJob::UnderZone { y, depth } => (
+                    Vec2::new(sim.los + dirf * depth.max(1.0), y),
+                    Some(4.5),
+                ),
+                _ => (Vec2::new(p.pos.x + dirf * 3.5, p.pos.y), None),
+            };
+            if let (Some((x0, y0, _)), Some((x1, y1, _))) = (
+                self.scene
+                    .projector
+                    .project(camera.view(Vec3::new(p.pos.x, p.pos.y, 0.05))),
+                self.scene
+                    .projector
+                    .project(camera.view(Vec3::new(aim.x, aim.y, 0.05))),
+            ) {
+                frame.line(x0 as i32, y0 as i32, x1 as i32, y1 as i32, MARK, 2);
+                frame.fill_rect_alpha(x1 as i32 - 4, y1 as i32 - 3, 8, 6, SPOT, 0.95);
+            }
+            if let Some(radius) = zone {
+                self.scene.draw_ground_ring(
+                    frame,
+                    camera,
+                    Vec3::new(aim.x, aim.y, 0.0),
+                    radius,
+                    MARK,
+                );
+            }
+        }
+    }
+
     /// The ball has no shadow once it is above head height, and a throw-off
     /// sends it forty yards up. A ring on the turf under it is the only way to
     /// read where it is coming down, so it is drawn for every ball in flight --
@@ -668,7 +719,13 @@ impl Broadcast {
         // The call is only on the grass while the preview is held. Drawn all the
         // time it was a call sheet lying open for whoever is on the other side.
         if sim.previewing() {
-            self.paint_routes(&mut frame, &camera, sim, true);
+            // The preview is the call on the field: the route tree when the
+            // player has the ball, his own coverage when he is defending.
+            if sim.human_defender.is_some() {
+                self.paint_coverage(&mut frame, &camera, sim);
+            } else {
+                self.paint_routes(&mut frame, &camera, sim, true);
+            }
         }
         self.draw_bodies(&mut frame, &camera, &players);
         if let Some(flag) = &sim.flag {

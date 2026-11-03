@@ -236,22 +236,35 @@ pub fn choose_defense(g: &GameState, seed: u64) -> DefCall {
 }
 
 /// Should the offense throw off on fourth down instead of snapping it?
+///
+/// Deep in its own half a computer side takes the throw-off almost every time:
+/// there is nothing to gain by snapping it on its own 25. Easy and Normal do not
+/// gamble there at all. Hard reads the scoreboard instead -- it will snap it from
+/// its own side when it has to have the ball, and otherwise takes its chances on
+/// down and distance.
 pub fn choose_fourth_down(g: &GameState, seed: u64) -> FourthDownChoice {
     let s = Situation::from_game(g);
+    // Still on its own side of the field: fifty yards or more from the goal.
+    let backed_up = s.yards_to_goal > 50.0;
+    if backed_up && g.difficulty != Difficulty::Hard {
+        return FourthDownChoice::ThrowOff;
+    }
     // Going for it is attractive inside the opponent's 45 or with very little to go.
-    let go_chance = if s.yards_to_goal <= 45.0 && s.to_go <= 4.0 {
+    let go_chance = if s.desperate() {
+        // Behind late: the throw-off hands the ball straight back, so a side that
+        // needs a score snaps it, backed up or not.
+        0.85
+    } else if s.yards_to_goal <= 45.0 && s.to_go <= 4.0 {
         0.85
     } else if s.yards_to_goal <= 50.0 && s.to_go <= 2.0 {
         0.7
     } else if s.yards_to_goal <= 35.0 && s.to_go <= 8.0 {
         0.55
-    } else if s.desperate() {
-        0.85
     } else {
         0.12
     };
     let mut rng = Rng::new(seed ^ 0x4D_0000);
-    // A hard side backs itself on fourth down.
+    // A hard side backs itself on fourth down, including from its own half.
     let go_chance = if g.difficulty == Difficulty::Hard { go_chance + 0.08 } else { go_chance };
     if rng.chance(go_chance) {
         FourthDownChoice::GoForIt
@@ -338,5 +351,70 @@ pub fn outcome_verb(outcome: PlayOutcome) -> &'static str {
         PlayOutcome::Safety => "SAFETY",
         PlayOutcome::Penalty => "PENALTY",
         PlayOutcome::ThrowAway => "THROWN AWAY",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::team::league_teams;
+
+    fn fourth_down_on_our_own_28(difficulty: Difficulty) -> GameState {
+        let t = league_teams();
+        let mut g = GameState::new(t[0].clone(), t[1].clone(), 77);
+        g.set_difficulty(difficulty);
+        g.spot = 28.0;
+        g.direction = 1;
+        g.down = 4;
+        g.to_go = 12.0;
+        g
+    }
+
+    /// Backed up on its own side, a computer side takes the throw-off: there is
+    /// nothing to snap a fourth and twelve for from its own 28.
+    #[test]
+    fn a_backed_up_computer_throws_it_off_on_easy_and_normal() {
+        for difficulty in [Difficulty::Easy, Difficulty::Normal] {
+            let g = fourth_down_on_our_own_28(difficulty);
+            for seed in 0..64u64 {
+                assert_eq!(
+                    choose_fourth_down(&g, seed),
+                    FourthDownChoice::ThrowOff,
+                    "{difficulty:?} went for it from its own 28 on seed {seed}"
+                );
+            }
+        }
+    }
+
+    /// Hard backs itself sometimes from there, but not blindly.
+    #[test]
+    fn a_hard_side_mixes_going_for_it_from_its_own_end() {
+        let g = fourth_down_on_our_own_28(Difficulty::Hard);
+        let went = (0..256u64)
+            .filter(|&seed| choose_fourth_down(&g, seed) == FourthDownChoice::GoForIt)
+            .count();
+        assert!(went > 0, "a hard side never backed itself from its own 28");
+        assert!(
+            went < 128,
+            "a hard side went for it from its own 28 {went} times in 256"
+        );
+    }
+
+    /// Behind late, a hard side snaps it even backed up: the throw-off hands the
+    /// ball straight back, and it needs the ball.
+    #[test]
+    fn a_desperate_hard_side_goes_for_it_from_its_own_end() {
+        let mut g = fourth_down_on_our_own_28(Difficulty::Hard);
+        g.quarter = 4;
+        g.clock = 45.0;
+        g.score = [0, 7];
+        g.possession = 0;
+        let went = (0..256u64)
+            .filter(|&seed| choose_fourth_down(&g, seed) == FourthDownChoice::GoForIt)
+            .count();
+        assert!(
+            went > 150,
+            "a desperate side only went for it {went} times in 256"
+        );
     }
 }

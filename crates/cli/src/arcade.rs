@@ -2557,6 +2557,11 @@ fn drive_defense(
         let view_mode = CAMS[*cam % CAMS.len()];
         let stick = stick_to_world(input.stick, flip_y, view_mode, sim.facing());
 
+        // The preview button is the same one the offense holds: it lifts the shot
+        // over the whole field, and while it is down the defence's assignments are
+        // on the grass instead of the offense's routes.
+        sim.set_preview(sim.phase == Phase::PreSnap && input.held.preview);
+
         // RB checks the defence at the line: three calls at a time over the
         // picture, so the look being checked out of stays on the field.
         if sim.phase == Phase::PreSnap && input.pressed.shoulder {
@@ -2673,9 +2678,16 @@ fn drive_defense(
                     "  INTERCEPTION - THE BALL IS YOURS   RUN IT BACK   [START] PAUSE".to_string(),
                 );
             } else {
-                if sim.phase == Phase::PreSnap {
+                if sim.previewing() {
+                    lines.push(format!(
+                        "  YOUR CALL: {} - {} - {} RUSH - LET GO OF [LT] TO GET BACK TO THE LINE",
+                        sim.def.name,
+                        sim.def.coverage.label(),
+                        sim.def.rushers(),
+                    ));
+                } else if sim.phase == Phase::PreSnap {
                     lines.push(
-                        "  WALK UP TO THE LINE   [RB] CHECK THE CALL   [B] SWITCH   [SELECT] CAMERA   DO NOT JUMP THE SNAP"
+                        "  WALK UP TO THE LINE   HOLD [LT] PREVIEW YOUR CALL   [RB] CHECK   [B] SWITCH   [SELECT] CAMERA"
                             .to_string(),
                     );
                 } else {

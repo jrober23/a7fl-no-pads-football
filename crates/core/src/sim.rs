@@ -33,6 +33,12 @@ pub const DIVE_WINDOW: f32 = 0.45;
 /// resolved on the frame the defender arrived was a teleport with a sound effect:
 /// there was nothing on the field to see, and the next screen was already coming.
 pub const WRAP_SECONDS: f32 = 0.42;
+/// How long a loose ball rolls before anybody may fall on it: long enough for the
+/// men around it to turn and get a hand on it, short enough that a fumble is a
+/// scramble rather than a pile that sits there.
+pub const LOOSE_GRACE: f32 = 0.35;
+/// How close a man has to get to a loose ball to come up with it.
+pub const RECOVER_RADIUS: f32 = 1.15;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
@@ -232,6 +238,9 @@ pub enum Phase {
     BallInAir,
     /// The ball was picked off and the man who has it is running the other way.
     Return,
+    /// The ball is on the ground and nobody has it. A fumble, or a backward pass
+    /// that hit the turf: the play is still live and both teams are after it.
+    Loose,
     Dead,
 }
 
@@ -305,6 +314,19 @@ pub struct Ball {
     pub pos: Vec2,
     pub z: f32,
     pub flight: Option<Flight>,
+}
+
+/// A ball on the ground that nobody has yet.
+///
+/// It rolls, it slows, and both sides go and get it. The play is not dead until a
+/// man comes up with it and is put on the ground, which is the whole difference
+/// between a fumble and a tackle.
+#[derive(Clone, Debug)]
+struct LooseBall {
+    at: Vec2,
+    vel: Vec2,
+    /// Seconds since the ball came out.
+    t: f32,
 }
 
 /// A ball on its way to the ground that nobody is going to catch. The play is
@@ -444,6 +466,13 @@ pub struct PlaySim<'a> {
     dummy_t: f32,
     /// A tackle in progress: the hit is on and the two men are going down.
     pub wrap: Option<Wrap>,
+    /// A ball on the turf with both teams chasing it.
+    loose: Option<LooseBall>,
+    /// Which side came up with a loose ball, once somebody has it. The tackle
+    /// that ends the play is booked as a fumble rather than as a run.
+    loose_recovery: Option<Side>,
+    /// The man running it back got the ball off the ground, not out of the air.
+    return_is_fumble: bool,
     /// Whether a defender has already had his chance at a ball in the air, so one
     /// throw is not swatted at on every frame of its flight.
     pass_contacted: bool,
@@ -589,6 +618,9 @@ impl<'a> PlaySim<'a> {
             preview: false,
             dummy_t: 0.0,
             wrap: None,
+            loose: None,
+            loose_recovery: None,
+            return_is_fumble: false,
             pass_contacted: false,
             elapsed_override: None,
             falling: None,
@@ -968,6 +1000,13 @@ impl<'a> PlaySim<'a> {
             return self.result.as_ref();
         }
 
+        // A loose ball is the play. Nobody has it, everybody is after it, and it
+        // is not dead until a man comes up with it and is put on the ground.
+        if self.phase == Phase::Loose {
+            self.update_loose(dt);
+            return self.result.as_ref();
+        }
+
         // An interception is not the end of the play: the man who picked it off
         // has the ball, and the men who threw it are the ones chasing now.
         if self.phase == Phase::Return {
@@ -1030,14 +1069,23 @@ impl<'a> PlaySim<'a> {
         let name = self.name_of(h);
         let running = self.carrier == Some(h) && self.face_buttons_are_moves();
         if running {
-            let outcome = if self.pass_caught {
+            let outcome = if self.loose_recovery == Some(Side::Offense) {
+                // He fell on a loose ball earlier in the play, so this is a
+                // fumble however far he got after picking it up.
+                PlayOutcome::FumbleRecovered
+            } else if self.pass_caught {
                 PlayOutcome::PassComplete
             } else if self.scramble_started && h == self.qb {
                 PlayOutcome::QbScramble
             } else {
                 PlayOutcome::Run
             };
-            let msg = if gain < -0.5 {
+            let msg = if self.loose_recovery == Some(Side::Offense) {
+                format!(
+                    "{name} comes up with the loose ball and is run down {} yards past it.",
+                    gain.round().abs() as i32
+                )
+            } else if gain < -0.5 {
                 format!(
                     "{name} is caught {} yards behind the line.",
                     (-gain).round() as i32
@@ -2379,7 +2427,11 @@ impl<'a> PlaySim<'a> {
                 self.penalty(call);
             }
 
-            let outcome = if sack {
+            let outcome = if self.loose_recovery == Some(Side::Offense) {
+                // The ball came out earlier in this play and he fell on it: the
+                // play is a fumble however far he ran after picking it up.
+                PlayOutcome::FumbleRecovered
+            } else if sack {
                 PlayOutcome::Sack
             } else if self.pass_caught {
                 PlayOutcome::PassComplete
@@ -2406,6 +2458,12 @@ impl<'a> PlaySim<'a> {
                     self.name_of(carrier),
                     yards.round() as i32,
                     self.name_of(d)
+                ),
+                PlayOutcome::FumbleRecovered => format!(
+                    "{} comes up with the loose ball and is stopped by {} {} yards from the spot.",
+                    self.name_of(carrier),
+                    self.name_of(d),
+                    yards.round().abs() as i32
                 ),
                 _ if yards < -0.5 => format!(
                     "{} drops {} {} yards behind the line.",
@@ -2554,31 +2612,142 @@ impl<'a> PlaySim<'a> {
         self.ball.z = 0.55;
     }
 
+    /// The ball comes out. Nothing is decided here: it goes on the ground, both
+    /// teams go and get it, and whoever comes up with it runs with it until he is
+    /// tackled. A strip is the start of a play, not the end of one.
     fn fumble(&mut self, carrier: usize, defender: usize) {
         let spot = self.players[carrier].pos;
-        // Recoveries favour the pile nearest the ball.
-        let offense_closer = (0..7)
-            .filter(|&i| i != carrier)
-            .map(|i| self.players[i].pos.dist(spot))
-            .fold(99.0f32, f32::min)
-            < self.players[defender].pos.dist(spot);
-        let offense_recovers = self.rng.chance(if offense_closer { 0.62 } else { 0.38 });
-        let was_own_endzone = field::is_in_own_endzone(spot.x, self.dir);
-        if was_own_endzone {
-            let desc = format!("{} recovers the fumble in the end zone for a safety!", self.name_of(defender));
+        let desc = format!(
+            "{} knocks it out of {}'s hands -- the ball is loose!",
+            self.name_of(defender),
+            self.name_of(carrier)
+        );
+        self.start_loose(spot, desc);
+    }
+
+    /// Put the ball on the turf and let the play run.
+    fn start_loose(&mut self, at: Vec2, description: String) {
+        if self.result.is_some() {
+            return;
+        }
+        self.carrier = None;
+        self.intended = None;
+        self.ball.holder = None;
+        self.ball.flight = None;
+        self.ball.pos = at;
+        self.ball.z = 0.22;
+        self.phase = Phase::Loose;
+        // It does not stop where it came out: it squirts backwards and to one
+        // side, which is what turns a fumble into a scramble.
+        let vel = Vec2::new(
+            -self.dirf() * self.rng.range(1.2, 4.5),
+            self.rng.range(-4.5, 4.5),
+        );
+        self.loose = Some(LooseBall { at, vel, t: 0.0 });
+        self.events.push(SimEvent { t: self.t, text: description });
+    }
+
+    fn update_loose(&mut self, dt: f32) {
+        let Some(mut loose) = self.loose.clone() else {
+            return;
+        };
+        loose.t += dt;
+        loose.at += loose.vel * dt;
+        loose.vel *= 0.90f32.powf(dt * 60.0);
+        let edge = FIELD_HALF_WIDTH - 0.35;
+        if loose.at.y.abs() > edge {
+            loose.at.y = loose.at.y.clamp(-edge, edge);
+            loose.vel.y = -loose.vel.y * 0.35;
+        }
+        self.ball.pos = loose.at;
+        self.ball.z = 0.22;
+        // Both teams go and get it. There is nothing else on the field to do.
+        for i in 0..14 {
+            if self.players[i].down {
+                continue;
+            }
+            let speed = self.speed_cap(i) * 0.95;
+            self.steer(i, loose.at, speed, dt);
+        }
+        self.integrate(dt);
+        if loose.t >= LOOSE_GRACE {
+            let mut closest: Option<(usize, f32)> = None;
+            for i in 0..14 {
+                if self.players[i].down {
+                    continue;
+                }
+                let dist = self.players[i].pos.dist(loose.at);
+                if dist <= RECOVER_RADIUS && closest.map(|(_, b)| dist < b).unwrap_or(true) {
+                    closest = Some((i, dist));
+                }
+            }
+            if let Some((i, _)) = closest {
+                self.loose = None;
+                self.recover_loose(i, loose.at);
+                return;
+            }
+        }
+        self.loose = Some(loose);
+    }
+
+    /// Somebody came up with it.
+    ///
+    /// A ball recovered in the end zone a side is defending is two points the
+    /// other way, whoever falls on it. Otherwise the offense keeps it and runs,
+    /// and a defender starts a return of his own.
+    fn recover_loose(&mut self, i: usize, at: Vec2) {
+        let spot = self.players[i].pos;
+        if field::is_in_own_endzone(spot.x, self.dir) {
+            let desc = format!(
+                "{} falls on it in his own end zone -- that is a safety!",
+                self.name_of(i)
+            );
             self.finish(PlayOutcome::Safety, spot.x, desc);
             return;
         }
-        if offense_recovers {
-            let desc = format!("The ball squirts loose and {} falls on it.", self.name_of(carrier));
-            self.finish(PlayOutcome::FumbleRecovered, spot.x, desc);
-        } else {
-            let desc = format!("{} punches it out and recovers!", self.name_of(defender));
-            self.finish(PlayOutcome::FumbleLost, spot.x, desc);
-            if let Some(r) = self.result.as_mut() {
-                r.turnover = true;
-            }
+        if self.players[i].side == Side::Defense {
+            self.start_fumble_return(i, at.x);
+            return;
         }
+        self.loose_recovery = Some(Side::Offense);
+        self.carrier = Some(i);
+        self.ball.holder = Some(i);
+        self.ball.pos = self.players[i].pos;
+        self.ball.z = 1.0;
+        self.phase = Phase::Run;
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("{} comes up with it and runs!", self.name_of(i)),
+        });
+    }
+
+    /// A defender recovered a fumble. The play is not over: he can take it back
+    /// for six, and the men who lost it are the ones chasing now.
+    fn start_fumble_return(&mut self, d: usize, spot: f32) {
+        self.ball.flight = None;
+        self.ball.z = 1.0;
+        self.ball.pos = self.players[d].pos;
+        self.ball.holder = Some(d);
+        self.carrier = Some(d);
+        self.returner = Some(d);
+        self.return_spot = spot;
+        self.return_t = 0.0;
+        self.return_throw = None;
+        self.return_is_fumble = true;
+        self.phase = Phase::Return;
+        self.intended = None;
+        self.pass_caught = true;
+        // The pad goes to the man who came up with it.
+        if self.human_defender.is_some() {
+            self.human_defender = Some(d);
+        }
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!(
+                "{} recovers the fumble and is running the other way!",
+                self.name_of(d)
+            ),
+        });
     }
 
     // -----------------------------------------------------------------
@@ -2780,6 +2949,19 @@ impl<'a> PlaySim<'a> {
                 });
                 return;
             }
+        }
+
+        // A pass that goes backwards is a lateral, and a lateral on the turf is
+        // not an incompletion: it is a live ball, exactly as if the ball had been
+        // fumbled. Whoever gets there first has it.
+        let forward = (flight.to.x - flight.from.x) * self.dirf() >= 0.0;
+        if !forward && !self.throw_away {
+            let desc = format!(
+                "{}'s backward pass hits the turf -- still live!",
+                self.name_of(flight.thrower)
+            );
+            self.start_loose(landing, desc);
+            return;
         }
 
         // Incomplete.
@@ -3221,6 +3403,7 @@ impl<'a> PlaySim<'a> {
         self.return_spot = spot;
         self.return_t = 0.0;
         self.return_throw = Some((thrower, air_yards));
+        self.return_is_fumble = false;
         self.phase = Phase::Return;
         self.intended = None;
         self.pass_caught = true;
@@ -3320,12 +3503,20 @@ impl<'a> PlaySim<'a> {
         let Some(r) = self.returner else { return };
         let ret = ((spot - self.return_spot) * -self.dirf()).max(0.0);
         let name = self.name_of(r);
-        let desc = if touchdown {
-            format!("{name} takes the interception all the way back!")
-        } else {
-            format!("{name} returns the interception {} yards.", ret.round() as i32)
+        let fumble = self.return_is_fumble;
+        let desc = match (touchdown, fumble) {
+            (true, true) => format!("{name} scoops up the fumble and takes it all the way back!"),
+            (true, false) => format!("{name} takes the interception all the way back!"),
+            (false, true) => format!("{name} returns the fumble {} yards.", ret.round() as i32),
+            (false, false) => format!("{name} returns the interception {} yards.", ret.round() as i32),
         };
-        let outcome = if touchdown { PlayOutcome::Touchdown } else { PlayOutcome::Interception };
+        let outcome = if touchdown {
+            PlayOutcome::Touchdown
+        } else if fumble {
+            PlayOutcome::FumbleLost
+        } else {
+            PlayOutcome::Interception
+        };
         let mut res = self.finish(outcome, spot, desc);
         res.turnover = true;
         res.return_yards = ret;
@@ -4433,4 +4624,99 @@ mod tests {
         r.batted_down = true;
         assert_eq!(r.headline(), Some("PASS BATTED DOWN"));
     }
+    /// A lateral that hits the turf is not an incompletion: the ball is live.
+    #[test]
+    fn a_backward_pass_that_hits_the_turf_is_still_live() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_pass()).expect("a pass play");
+        let mut sim = PlaySim::new(&off, &def_, play, &d[0], &setup(45.0, 1, 10.0, 3));
+        let from = sim.players[sim.qb].pos;
+        let flight = Flight {
+            from,
+            to: Vec2::new(from.x - 4.0 * sim.dirf(), from.y + 2.0),
+            t: 1.0,
+            duration: 1.0,
+            peak: 0.4,
+            target: None,
+            thrower: sim.qb,
+            air_yards: 0.0,
+            speed: 12.0,
+        };
+        sim.phase = Phase::BallInAir;
+        sim.ball.holder = None;
+        sim.resolve_catch(&flight);
+        assert!(sim.result.is_none(), "a backward pass was whistled dead");
+        assert_eq!(sim.phase, Phase::Loose, "the ball did not come loose");
+        assert!(sim.ball.holder.is_none(), "somebody had it already");
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 2400 {
+            sim.step(FIXED_DT);
+            guard += 1;
+        }
+        let r = sim.result.clone().expect("the loose ball never resolved");
+        assert!(
+            matches!(
+                r.outcome,
+                PlayOutcome::FumbleRecovered
+                    | PlayOutcome::FumbleLost
+                    | PlayOutcome::Touchdown
+                    | PlayOutcome::Safety
+            ),
+            "a live ball was booked as {:?}: {}",
+            r.outcome,
+            r.description
+        );
+    }
+
+    /// A strip does not end the play: the ball is on the ground, both teams go
+    /// after it, and whoever comes up with it runs until he is tackled.
+    #[test]
+    fn a_fumble_is_a_live_ball_until_somebody_is_tackled() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let mut strips = 0;
+        for seed in 0..24u64 {
+            let play = &book[seed as usize % book.len()];
+            let mut sim = PlaySim::new(
+                &off,
+                &def_,
+                play,
+                &d[seed as usize % d.len()],
+                &setup(38.0, 1, 10.0, seed),
+            );
+            let mut guard = 0;
+            while sim.carrier.is_none() && sim.result.is_none() && guard < 600 {
+                sim.step(FIXED_DT);
+                guard += 1;
+            }
+            let Some(carrier) = sim.carrier else { continue };
+            sim.fumble(carrier, 7);
+            assert!(sim.result.is_none(), "the strip killed the play on the spot");
+            assert_eq!(sim.phase, Phase::Loose, "the ball was not on the ground");
+            strips += 1;
+            let mut guard = 0;
+            while sim.result.is_none() && guard < 3600 {
+                sim.step(FIXED_DT);
+                guard += 1;
+            }
+            let r = sim.result.clone().expect("nobody came up with the loose ball");
+            assert!(
+                matches!(
+                    r.outcome,
+                    PlayOutcome::FumbleRecovered
+                        | PlayOutcome::FumbleLost
+                        | PlayOutcome::Touchdown
+                        | PlayOutcome::Safety
+                ),
+                "a recovered fumble was booked as {:?}: {}",
+                r.outcome,
+                r.description
+            );
+        }
+        assert!(strips > 0, "no snap produced a runner to strip");
+    }
 }
+
