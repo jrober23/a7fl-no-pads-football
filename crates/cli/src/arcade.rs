@@ -574,17 +574,78 @@ impl Arcade {
             self.game.teams[0].abbr.to_uppercase(),
             self.game.teams[1].abbr.to_uppercase()
         );
-        let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
-        nopads_render::hud::draw_card(&mut frame, "MATCHUP", &title, &left, &right, accent);
-        let lines = vec![self.header(), String::new(), "  [A] KICK OFF".to_string()];
-        if !self.view.show(&mut frame, &lines) {
-            return false;
-        }
+
+        // The card sits over the field, not over a black page. A throw-off is run
+        // behind it as a warm-up — the two clubs out on the field, the ball going
+        // and the coverage running down — and the lens cuts between the angles
+        // while the introduction is up. It is not a page: nothing about it stops
+        // the picture.
+        let setup = self.throw_off_to_play(false);
+        let (tside, rside) = match &setup {
+            Some(s) => (s.throwing_team, s.receiving_team),
+            None => (0, 1),
+        };
+        let throwing = self.game.teams[tside].clone();
+        let receiving = self.game.teams[rside].clone();
+        let mut warmup = setup
+            .as_ref()
+            .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
+        let mut mode = 0usize;
+        let mut last = Instant::now();
+        let mut cut = Instant::now();
+        let mut acc = 0.0f64;
+        self.view.reset();
         loop {
-            let input = self.wait(Duration::from_millis(24));
+            let now = Instant::now();
+            let dt = now.duration_since(last).as_secs_f32().min(0.1);
+            last = now;
+            if now.duration_since(cut) >= Duration::from_millis(4200) {
+                cut = now;
+                mode = (mode + 1) % CAMS.len();
+            }
+            acc += dt as f64;
+            while acc >= 1.0 / 60.0 {
+                let ended = match warmup.as_mut() {
+                    Some(sim) => {
+                        sim.step(1.0 / 60.0);
+                        sim.result.is_some()
+                    }
+                    None => true,
+                };
+                acc -= 1.0 / 60.0;
+                if ended {
+                    // The warm-up play finished: run another from the top, the
+                    // way a ground crew keeps the drill going behind a set.
+                    warmup = setup
+                        .as_ref()
+                        .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
+                    acc = 0.0;
+                    break;
+                }
+            }
+            let ui = PassUi {
+                flag: None,
+                focus: None,
+                badges: Vec::new(),
+                guide: None,
+                power: None,
+                short: false,
+                needed: None,
+            };
+            let mut frame = match &warmup {
+                Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui),
+                None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
+            };
+            nopads_render::hud::draw_card(&mut frame, "MATCHUP", &title, &left, &right, accent);
+            let lines = vec![self.header(), String::new(), "  [A] KICK OFF".to_string()];
+            if !self.view.show(&mut frame, &lines) {
+                return false;
+            }
+            let input = self.input();
             if input.pressed.a || input.pressed.start {
                 return true;
             }
+            std::thread::sleep(Duration::from_millis(16));
         }
     }
 
@@ -1094,7 +1155,10 @@ impl Arcade {
             last = now;
 
             let input = pad::mix(self.pad.as_mut(), self.view.poll());
-            if input.pressed.start {
+            if input.pressed.select {
+            self.call_timeout();
+        }
+        if input.pressed.start {
                 // START pauses: the camera setting and quitting both live behind it.
                 if !pause_menu(
                     &mut self.view,
@@ -1330,6 +1394,7 @@ impl Arcade {
         let cam = &mut self.cam;
         let flip_y = self.flip_y;
 
+        let mut ask_timeout = false;
         let record = game.snap_with(play, def, |sim| {
             // No automatic snap on offense: the ball goes when the player says so.
             sim.await_snap(true);
@@ -1346,10 +1411,14 @@ impl Arcade {
                 my_team,
                 &board,
             );
+            ask_timeout = sim.timeout_asked;
             if !finished {
                 *quit = true;
             }
         });
+        if ask_timeout {
+            self.call_timeout();
+        }
 
         if let Some(record) = record {
             self.report(record);
@@ -1370,6 +1439,7 @@ impl Arcade {
         let cam = &mut self.cam;
         let flip_y = self.flip_y;
 
+        let mut ask_timeout = false;
         let record = game.snap_with(play, def, |sim| {
             sim.set_human_defender(sim.nearest_defender());
             let finished = drive_defense(
@@ -1383,10 +1453,14 @@ impl Arcade {
                 defbook,
                 &board,
             );
+            ask_timeout = sim.timeout_asked;
             if !finished {
                 *quit = true;
             }
         });
+        if ask_timeout {
+            self.call_timeout();
+        }
 
         if let Some(record) = record {
             self.report(record);
@@ -1488,6 +1562,10 @@ impl Arcade {
                 return None;
             }
             let input = self.input();
+            if input.pressed.select {
+                self.call_timeout();
+                continue;
+            }
             if input.pressed.start {
                 if !pause_menu(
                     &mut self.view,
@@ -2202,6 +2280,9 @@ fn drive(
         last = now;
 
         let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.select {
+            sim.timeout_asked = true;
+        }
         if input.pressed.start {
             if !pause_menu(view, pad.as_deref_mut(), cam, broadcast, PausedShot::Play(&*sim)) {
                 return false;
@@ -2847,6 +2928,9 @@ fn drive_defense(
         last = now;
 
         let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.select {
+            sim.timeout_asked = true;
+        }
         if input.pressed.start {
             if !pause_menu(view, pad.as_deref_mut(), cam, broadcast, PausedShot::Play(&*sim)) {
                 return false;

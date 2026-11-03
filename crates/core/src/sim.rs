@@ -488,6 +488,10 @@ pub struct PlaySim<'a> {
     pub flag: Option<PenaltyCall>,
     /// Sim time the flag came in, so the picture can pulse it.
     pub flag_at: f32,
+    /// A timeout asked for during the play. The sim cannot take one — the clock
+    /// and the allowance are the game's — so the press rides out with the result
+    /// and is spent at the whistle, which is when a timeout is actually called.
+    pub timeout_asked: bool,
     /// Seconds left on the fumble plate, and what it says. Set the frame the ball
     /// comes out, on any kind of play, so every client raises the same alert.
     pub fumble_alert: f32,
@@ -656,6 +660,7 @@ impl<'a> PlaySim<'a> {
             possession_start: None,
             flag: None,
             flag_at: 0.0,
+            timeout_asked: false,
             fumble_alert: 0.0,
             fumble_note: String::new(),
             play_clock: crate::rules::PLAY_CLOCK_SECONDS,
@@ -2638,6 +2643,18 @@ impl<'a> PlaySim<'a> {
         self.players[carrier].vel = Vec2::ZERO;
         self.players[carrier].tackled = 0.0;
         self.players[tackler].wrap = 0.0;
+        // The tackler is on him the moment the wrap starts. The radius the roll
+        // is made inside is contact range, but the wrap used to begin wherever he
+        // happened to be and then slide him in, which read as the runner being
+        // held in place by nothing. Close the gap on the frame of the hit instead:
+        // the reach is the arm's, and it is spent arriving, not drifting.
+        let gap = self.players[tackler].pos.dist(self.players[carrier].pos);
+        if gap > ARM_REACH {
+            let toward = (self.players[tackler].pos - self.players[carrier].pos)
+                .normalize_or_zero();
+            self.players[tackler].pos =
+                self.players[carrier].pos + toward * ARM_REACH;
+        }
         // He goes down away from the hit, not through it. A man hit square in the
         // chest turns off the contact; the figure falls along its own facing, so
         // the facing is what has to be turned. Hit from behind or the side, he
@@ -4734,6 +4751,38 @@ mod tests {
             }
         }
         assert!(reached, "a dive from {gap} yards got nowhere");
+    }
+
+
+    #[test]
+    fn a_wrap_starts_with_the_tackler_on_him() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 3));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+        let mut guard = 0;
+        while sim.wrap.is_none() && sim.result.is_none() && guard < 400 {
+            // Just inside the tackle radius, and well outside an arm's length.
+            sim.players[7].pos = sim.players[carrier].pos + Vec2::new(TACKLE_RADIUS - 0.02, 0.0);
+            sim.players[7].stun = 0.0;
+            sim.players[7].down = false;
+            sim.players[7].tackle_cooldown = 0.0;
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert!(sim.wrap.is_some(), "no tackle was attempted from the radius");
+        let gap = sim.players[carrier].pos.dist(sim.players[7].pos);
+        assert!(
+            gap <= ARM_REACH + 0.05,
+            "the wrap started with the tackler {gap:.2} yards away, so he glides in"
+        );
     }
 
     #[test]

@@ -568,7 +568,8 @@ pub fn draw_card(
 ) {
     let w = frame.w as i32;
     let h = frame.h as i32;
-    frame.fill_rect_alpha(0, 0, w, h, INK, 0.82);
+    // Light enough to keep the picture behind it: the card is over a live shot.
+    frame.fill_rect_alpha(0, 0, w, h, INK, 0.45);
     let panel_w = 900;
     let panel_h = 480;
     let x = (w - panel_w) / 2;
