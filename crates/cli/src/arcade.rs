@@ -32,8 +32,8 @@ use nopads_render::playsheet::Dir;
 use nopads_render::terminal;
 
 use crate::menu;
-use crate::pad::{self, Input, Pad};
-use crate::settings::Settings;
+use nopads_platform::pad::{self, Input, Pad};
+use nopads_platform::settings::Settings;
 use crate::view::{View, CANVAS_H, CANVAS_W};
 
 /// Picture refresh for live play. The field is drawn at the full canvas size, so

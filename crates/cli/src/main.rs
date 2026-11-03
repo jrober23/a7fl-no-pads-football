@@ -24,12 +24,74 @@ use nopads_render::raster::Frame;
 
 mod arcade;
 mod menu;
-mod pad;
-mod settings;
 mod view;
+
+#[cfg(feature = "bevy_view")]
+mod bevy_host;
+#[cfg(feature = "bevy_view")]
+mod view_bevy;
+
+use nopads_platform::{pad, settings};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // `--bevy` puts a Bevy window around the arcade client. A window system wants
+    // the main thread, so the game moves to a worker and the two meet over
+    // `nopads_platform::link`. Only the live game needs a window: simulating a game
+    // or rendering a film takes no window either way.
+    #[cfg(feature = "bevy_view")]
+    if args.iter().any(|a| a == "--bevy") {
+        let live = args.first().map(|s| s.as_str()).unwrap_or("arcade") == "arcade";
+        if live && have_display() {
+            run_with_bevy(args);
+            return;
+        }
+        if live {
+            // Bevy panics inside winit when there is no display to open a window
+            // in, so check first and use the window that needs no display at all.
+            eprintln!("7on7: no display, so the Bevy window cannot open; carrying on without it");
+        }
+        let rest: Vec<String> = args.into_iter().filter(|a| a != "--bevy").collect();
+        run(rest);
+        return;
+    }
+    run(args);
+}
+
+/// `--bevy`: a Bevy window on this thread, the game on another.
+#[cfg(feature = "bevy_view")]
+fn run_with_bevy(args: Vec<String>) {
+    let settings = settings::Settings::load();
+    let (game, host) = nopads_platform::link::pair();
+    // The view the game opens picks this up, so `arcade.rs` never learns that its
+    // window changed hands.
+    let arm = view_bevy::install(game);
+    let rest: Vec<String> = args.into_iter().filter(|a| a != "--bevy").collect();
+    let worker = std::thread::spawn(move || run(rest));
+    bevy_host::run(host, settings.width, settings.height);
+    // The window is gone: tell the game, in case the player closed it rather than
+    // the game finishing, then wait for it to wind down.
+    arm.close();
+    worker.join().ok();
+}
+
+/// True when there is a display for a window to open on.
+///
+/// Only Linux needs asking: winit there refuses to start the event loop with
+/// neither `DISPLAY` nor `WAYLAND_DISPLAY` set, and a headless container is a
+/// normal way to run this game.
+#[cfg(all(feature = "bevy_view", target_os = "linux"))]
+fn have_display() -> bool {
+    std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
+}
+
+#[cfg(all(feature = "bevy_view", not(target_os = "linux")))]
+fn have_display() -> bool {
+    true
+}
+
+/// The game itself, on whichever backend `View::open` picks.
+fn run(args: Vec<String>) {
     // Bare `7on7` starts the game; anything else is a named command.
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("arcade");
     let rest = if args.len() > 1 { &args[1..] } else { &args[0..0] };
@@ -76,6 +138,7 @@ fn print_help() {
     println!("  play   call plays yourself from the terminal");
     println!("  film   render broadcast stills and a highlight GIF");
     println!("  arcade play a full game live on a gamepad (this is the default command)");
+    println!("         with --bevy (a build with that feature) it runs in a Bevy window");
     println!("  teams  list the league and its rosters");
     println!("  rules  print the no-pads rules this game enforces");
 }

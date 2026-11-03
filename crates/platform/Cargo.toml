@@ -1,0 +1,16 @@
+[package]
+name = "nopads_platform"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Input, settings and window plumbing shared by every 7 on 7 client"
+
+[dependencies]
+nopads_core = { path = "../core" }
+gilrs = { version = "0.11", optional = true }
+
+[features]
+# Gamepad support, on by default. The client forwards its own `gamepad` feature
+# here so `--no-default-features` still builds on a machine with no libudev.
+default = ["gamepad"]
+gamepad = ["dep:gilrs"]

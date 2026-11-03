@@ -11,8 +11,10 @@ use nopads_core::math::{Rgb, Vec2};
 use nopads_render::raster::Frame;
 use nopads_render::terminal::{self, Screen};
 
-use crate::pad::{Buttons, Input};
-use crate::settings::Settings;
+#[cfg(feature = "bevy_view")]
+use crate::view_bevy::BevyView;
+use nopads_platform::pad::{Buttons, Input};
+use nopads_platform::settings::Settings;
 
 pub const CANVAS_W: usize = 640;
 pub const CANVAS_H: usize = 360;
@@ -31,6 +33,10 @@ fn backdrop() -> Rgb {
 
 pub enum View {
     Window(WindowView),
+    /// The same game through Bevy's window. Built only with `--features bevy`,
+    /// and only chosen when `--bevy` asked for it.
+    #[cfg(feature = "bevy_view")]
+    Bevy(BevyView),
     Term(Screen),
 }
 
@@ -38,6 +44,10 @@ impl View {
     /// Try a window first; fall back to the terminal when there is no display.
     pub fn open(force_terminal: bool, settings: &Settings) -> View {
         if !force_terminal {
+            #[cfg(feature = "bevy_view")]
+            if let Some(bevy) = BevyView::attach(settings) {
+                return View::Bevy(bevy);
+            }
             if let Some(window) = WindowView::open(settings) {
                 return View::Window(window);
             }
@@ -46,7 +56,12 @@ impl View {
     }
 
     pub fn is_window(&self) -> bool {
-        matches!(self, View::Window(_))
+        match self {
+            View::Window(_) => true,
+            #[cfg(feature = "bevy_view")]
+            View::Bevy(_) => true,
+            View::Term(_) => false,
+        }
     }
 
     /// Rebuild the window at the size and mode the settings ask for. minifb has
@@ -56,6 +71,11 @@ impl View {
     /// that does not touch the window made the picture vanish and the window come
     /// back somewhere else on the desktop every time difficulty was changed.
     pub fn apply(&mut self, settings: &Settings) {
+        #[cfg(feature = "bevy_view")]
+        if let View::Bevy(view) = self {
+            view.apply(settings);
+            return;
+        }
         let View::Window(window) = self else { return };
         if window.matches(settings) {
             return;
@@ -68,6 +88,8 @@ impl View {
     pub fn describe(&self) -> String {
         match self {
             View::Window(w) => w.describe(),
+            #[cfg(feature = "bevy_view")]
+            View::Bevy(view) => view.describe(),
             View::Term(screen) => format!("terminal {}x{}", screen.cols, screen.rows),
         }
     }
@@ -81,6 +103,13 @@ impl View {
                     draw_hud(frame, lines);
                 }
                 window.blit(frame)
+            }
+            #[cfg(feature = "bevy_view")]
+            View::Bevy(view) => {
+                if frame.w == CANVAS_W && frame.h == CANVAS_H {
+                    draw_hud(frame, lines);
+                }
+                view.blit(frame)
             }
             View::Term(screen) => {
                 print!("{}", terminal::picture_and_text(frame, *screen, lines));
@@ -98,6 +127,12 @@ impl View {
                 draw_page(&mut frame, lines);
                 window.blit(&frame)
             }
+            #[cfg(feature = "bevy_view")]
+            View::Bevy(view) => {
+                let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+                draw_page(&mut frame, lines);
+                view.blit(&frame)
+            }
             View::Term(screen) => {
                 print!("{}", terminal::text_page(*screen, lines));
                 io::stdout().flush().ok();
@@ -110,6 +145,8 @@ impl View {
     pub fn poll(&mut self) -> Input {
         match self {
             View::Window(window) => window.poll(),
+            #[cfg(feature = "bevy_view")]
+            View::Bevy(view) => view.poll(),
             View::Term(_) => Input::default(),
         }
     }
@@ -117,6 +154,10 @@ impl View {
     pub fn reset(&mut self) {
         if let View::Window(window) = self {
             window.prev = Buttons::default();
+        }
+        #[cfg(feature = "bevy_view")]
+        if let View::Bevy(view) = self {
+            view.reset();
         }
     }
 }

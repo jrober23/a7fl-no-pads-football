@@ -18,8 +18,8 @@ use nopads_render::venues::{self, Venue};
 use nopads_render::{Broadcast, CameraMode};
 
 use crate::arcade::CAMERA_LABELS;
-use crate::pad::{self, Pad};
-use crate::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
+use nopads_platform::pad::{self, Pad};
+use nopads_platform::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
 use crate::view::{View, CANVAS_H, CANVAS_W};
 
 fn paper() -> Rgb {

@@ -5,14 +5,15 @@ a simulated season-length game, and a software-rendered broadcast package in the
 spirit of the ESPN NFL 2K5 presentation. Players wear no-pads kit — sleeveless
 jersey, shorts, bare arms and legs, no helmets, no pads.
 
-Everything is pure Rust with no GPU and no audio backend, so
+Everything is pure Rust with no GPU and no audio backend (the default build; there
+is an optional Bevy window, described below), so
 it builds and runs headless (a cloud VM, a container, a Raspberry Pi) as well as on
 a desktop. The only external crates are `image` and `gif`, both for writing the
 rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.17-windows-x86_64.zip` from the
+Grab `7on7-v0.25.18-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -67,7 +68,21 @@ XInput, DirectInput or Switch mode) and run `cargo run --release`. It opens a
 window (1280x720 by default, resizable) and draws the field with the same
 software renderer as the broadcast package — no GPU, no game engine. Run it with
 `--terminal` (or on a machine with no display) and the same game is drawn in ANSI
-colour blocks straight into the terminal instead. Add `--flip-y` if your pad
+colour blocks straight into the terminal instead.
+
+Windows are pluggable. Built with `--features bevy_view`, the client can put that
+same canvas in a Bevy window rather than the minifb one:
+
+```sh
+cargo run --release --features bevy_view -- arcade --bevy
+```
+
+The game keeps its own renderer and its own blocking loop; Bevy takes the window,
+the event loop and the swap chain, and the two meet over a channel that carries one
+frame one way and the pad the other. Nothing about the picture changes, so a
+controller still works and every keyboard binding is the same. This is off by
+default and needs a GPU, which is exactly the property the default build is built
+around not needing. With no display it says so and falls back to the terminal. Add `--flip-y` if your pad
 reports its stick's vertical axis the other way round. With no controller attached the
 keyboard drives it, so the game is always playable.
 

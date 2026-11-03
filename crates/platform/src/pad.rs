@@ -27,6 +27,29 @@ pub struct Buttons {
     pub start: bool,
 }
 
+impl Buttons {
+    /// The buttons that went down between `prev` and `self`.
+    ///
+    /// A window backend should hand over the buttons that are *held* and let this
+    /// work out the edges at the moment the game polls, because the two do not
+    /// poll at the same rate: an edge computed per window frame is an edge the
+    /// game can miss entirely.
+    pub fn edges(self, prev: Buttons) -> Buttons {
+        Buttons {
+            a: self.a && !prev.a,
+            b: self.b && !prev.b,
+            x: self.x && !prev.x,
+            y: self.y && !prev.y,
+            throw: self.throw && !prev.throw,
+            select: self.select && !prev.select,
+            preview: self.preview && !prev.preview,
+            dummy: self.dummy && !prev.dummy,
+            shoulder: self.shoulder && !prev.shoulder,
+            start: self.start && !prev.start,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Input {
     /// Left stick, dead zoned, `x` across the screen and `y` up the screen.
@@ -212,3 +235,38 @@ mod backend {
 }
 
 pub use backend::Pad;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_edge_is_the_frame_the_button_went_down() {
+        let mut held = Buttons::default();
+        held.a = true;
+        assert!(held.edges(Buttons::default()).a, "a fresh press is an edge");
+        assert!(!held.edges(held).a, "a held button is not a second press");
+        held.a = false;
+        assert!(!held.edges(held).a, "letting go is not a press");
+    }
+
+    #[test]
+    fn every_button_reports_its_own_edge() {
+        let all = Buttons {
+            a: true, b: true, x: true, y: true, throw: true,
+            select: true, preview: true, dummy: true, shoulder: true, start: true,
+        };
+        let edges = all.edges(Buttons::default());
+        assert_eq!(
+            [edges.a, edges.b, edges.x, edges.y, edges.throw, edges.select,
+             edges.preview, edges.dummy, edges.shoulder, edges.start],
+            [true; 10]
+        );
+        // Holding everything for one more poll is no further edges at all.
+        let again = all.edges(all);
+        assert!(![again.a, again.b, again.x, again.y, again.throw, again.select,
+                  again.preview, again.dummy, again.shoulder, again.start]
+            .iter()
+            .any(|e| *e));
+    }
+}
