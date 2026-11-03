@@ -2850,6 +2850,13 @@ impl<'a> PlaySim<'a> {
     /// A defender recovered a fumble. The play is not over: he can take it back
     /// for six, and the men who lost it are the ones chasing now.
     fn start_fumble_return(&mut self, d: usize, spot: f32) {
+        // Same on a recovery: a fumbled try is a dead try, not a scoop and score.
+        if self.setup.is_try {
+            let dead = clamp(spot, 0.0, FIELD_LENGTH);
+            let text = format!("{} falls on it and the try is dead there.", self.name_of(d));
+            self.finish(PlayOutcome::FumbleLost, dead, text);
+            return;
+        }
         self.ball.flight = None;
         self.ball.z = 1.0;
         self.ball.pos = self.players[d].pos;
@@ -3328,6 +3335,26 @@ impl<'a> PlaySim<'a> {
         self.defender_order().first().copied()
     }
 
+    /// The defender closest to the man with the ball.
+    ///
+    /// The pad was set once, at the snap, on the man nearest the line, and stayed
+    /// on him while the carrier ran away from him. The one man on the field the
+    /// player could not steer was the one who could make the tackle.
+    pub fn nearest_defender_to_carrier(&self) -> Option<usize> {
+        let carrier = self.carrier?;
+        // Only the offence carrying the ball: after a turnover the ball is the
+        // defence's, and the pad belongs to the man running it back.
+        if self.players[carrier].side != Side::Offense {
+            return None;
+        }
+        let there = self.players[carrier].pos;
+        self.defender_order().into_iter().min_by(|&a, &b| {
+            let da = self.players[a].pos.dist(there);
+            let db = self.players[b].pos.dist(there);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+    }
+
     /// Move the pad to the next defender, wrapping at the end of the list.
     pub fn cycle_defender(&mut self) -> Option<usize> {
         let order = self.defender_order();
@@ -3520,6 +3547,15 @@ impl<'a> PlaySim<'a> {
     /// A defender took the ball away. He has it, and the play is not over: the
     /// offense becomes the chase, and the defense can run it back for six.
     fn start_return(&mut self, d: usize, spot: f32, thrower: usize, air_yards: f32) {
+        // A try is over the moment the defence has it. There is no return to run:
+        // the ball changed hands, the try failed, and the play is dead where he
+        // took it rather than run back for points the try never counts.
+        if self.setup.is_try {
+            let dead = clamp(spot, 0.0, FIELD_LENGTH);
+            let text = format!("{} picks it off and the try is dead there.", self.name_of(d));
+            self.finish(PlayOutcome::Interception, dead, text);
+            return;
+        }
         self.ball.flight = None;
         self.ball.z = 1.0;
         self.ball.pos = self.players[d].pos;
@@ -4808,6 +4844,68 @@ mod tests {
             r.outcome,
             r.description
         );
+    }
+
+    /// A try is over the moment a defender has the ball: no return, no six.
+    #[test]
+    fn a_try_dies_the_moment_the_defence_has_it() {
+        let (off, def_) = teams();
+        let play = &playbook()[0];
+        let d = defensive_playbook();
+        let mut setup_try = setup(45.0, 1, 10.0, 1);
+        setup_try.is_try = true;
+
+        let mut picked = PlaySim::new(&off, &def_, play, &d[0], &setup_try);
+        picked.await_snap(false);
+        let qb = picked.qb;
+        picked.start_return(7, 45.0, qb, 8.0);
+        let r = picked.result.clone().expect("the pick did not end the try");
+        assert_eq!(r.outcome, PlayOutcome::Interception);
+        assert_eq!(picked.phase, Phase::Dead);
+        assert!(!r.touchdown, "a pick on a try was run back for six");
+        assert_eq!(r.return_yards, 0.0, "a pick on a try was run back at all");
+
+        let mut fumbled = PlaySim::new(&off, &def_, play, &d[0], &setup_try);
+        fumbled.await_snap(false);
+        fumbled.start_fumble_return(8, 44.0);
+        let r = fumbled.result.clone().expect("the recovery did not end the try");
+        assert_eq!(r.outcome, PlayOutcome::FumbleLost);
+        assert_eq!(fumbled.phase, Phase::Dead);
+        assert!(!r.touchdown, "a recovered fumble on a try was run back for six");
+        assert_eq!(r.return_yards, 0.0);
+    }
+
+    /// The pad follows the man with the ball, not the man nearest the line.
+    #[test]
+    fn the_nearest_defender_is_the_one_on_the_carrier() {
+        let (off, def_) = teams();
+        let play = &playbook()[0];
+        let d = defensive_playbook();
+        let mut sim = PlaySim::new(&off, &def_, play, &d[0], &setup(45.0, 1, 10.0, 1));
+        sim.await_snap(false);
+        for _ in 0..30 {
+            sim.step(FIXED_DT);
+        }
+        // Put the ball in the quarterback's hands wherever the play has left him:
+        // who ends up with it is not what this is testing.
+        let qb = sim.qb;
+        sim.carrier = Some(qb);
+        let nearest = sim
+            .nearest_defender_to_carrier()
+            .expect("no defender was offered for the carrier");
+        assert_eq!(sim.players[nearest].side, Side::Defense);
+        let there = sim.players[qb].pos;
+        let best = sim.players[nearest].pos.dist(there);
+        for i in 7..14 {
+            if sim.players[i].down || sim.players[i].stun > 0.0 {
+                continue;
+            }
+            let away = sim.players[i].pos.dist(there);
+            assert!(
+                away + 1e-3 >= best,
+                "a defender {away:.2} yards away was passed over for one {best:.2} away"
+            );
+        }
     }
 
     /// Standing over the ball until the count runs out is a five-yard foul, and

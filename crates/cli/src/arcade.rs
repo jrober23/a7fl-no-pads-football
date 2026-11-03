@@ -926,6 +926,9 @@ impl Arcade {
         let mut armed = false;
         // Which of your men the switch button has walked to.
         let mut cover_pick = 0usize;
+        // The men you can cover with, nearest the ball first, taken once the ball is
+        // caught so the pad starts on a man who can actually make the tackle.
+        let mut cover_order: Option<Vec<usize>> = None;
         // When the ball died, so the picture can hold on the tackle before the card.
         let mut dead_at: Option<Instant> = None;
         // The throw-off frame by frame, for the replay a score gets.
@@ -1004,7 +1007,17 @@ impl Arcade {
             if input.pressed.b && sim.setup.throwing_team == my_team {
                 cover_pick = cover_pick.wrapping_add(1);
             }
-            let mine = human_man(sim, my_team, cover_pick);
+            // Covering an AI return used to start on the first gunner in the list,
+            // however far downfield he was. The pad now starts on the man closest to
+            // the ball, and the order is taken when it is caught rather than every
+            // frame, so the man under the pad does not change mid-stride.
+            if cover_order.is_none() && sim.catch_time().is_some() {
+                cover_order = Some(men_by_distance(sim, my_team));
+            }
+            let mine = cover_order
+                .as_ref()
+                .and_then(|order| live_man(sim, order, cover_pick))
+                .or_else(|| human_man(sim, my_team, cover_pick));
             sim.set_human(mine, stick);
             // On the cover: A wraps him up, X dives at him from further out.
             if sim.phase == ThrowPhase::Return && sim.setup.throwing_team == my_team {
@@ -1028,7 +1041,10 @@ impl Arcade {
             while acc >= STEP as f64 && sim.result.is_none() {
                 sim.step(STEP);
                 acc -= STEP as f64;
-                if tape.len() < 2400 {
+                // The tape starts when he catches it. The throw and the flight are
+                // not the return, and a replay that began with them was still showing
+                // the kick when the play it was showing was already over.
+                if sim.catch_time().is_some() && tape.len() < 3600 {
                     tape.push(sim.clone());
                 }
             }
@@ -1095,13 +1111,10 @@ impl Arcade {
                 let since = *dead_at.get_or_insert(now);
                 let waited = since.elapsed();
                 if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
-                    // A return that scores is a big play like any other, and it used
-                    // to be the one with no second look.
-                    let big = sim
-                        .result
-                        .as_ref()
-                        .map(|r| r.touchdown || r.highlight || r.return_yards >= 25.0)
-                        .unwrap_or(false);
+                    // Only a score. A twenty-five yard return is a good return, not a
+                    // big play, and a replay on every one of them came round far too
+                    // often to be worth watching.
+                    let big = sim.result.as_ref().map(|r| r.touchdown).unwrap_or(false);
                     if big
                         && self.view.is_window()
                         && !play_back_throw_off(
@@ -1860,7 +1873,7 @@ fn play_back_tape(
         needed: None,
     };
     let screen = broadcast;
-    play_back_frames(tape, view, pad, label, |snap| {
+    play_back_frames(tape, view, pad, label, false, |snap| {
         screen.live_frame_ui(snap, mode, &ui)
     })
 }
@@ -1868,6 +1881,9 @@ fn play_back_tape(
 /// A return that goes the distance gets the same second look a snap gets. It was
 /// the one score in the game with no replay on it: a throw-off had no tape at all,
 /// so a hundred-yard return went straight to the card.
+///
+/// It is the only throw-off that gets one, and the tape starts at the catch, so the
+/// replay is the return itself, run all the way through rather than sampled.
 fn play_back_throw_off(
     tape: &[ThrowOffSim<'_>],
     broadcast: &mut Broadcast,
@@ -1883,26 +1899,33 @@ fn play_back_throw_off(
         needed: None,
     };
     let screen = broadcast;
-    play_back_frames(tape, view, pad, "REPLAY", |snap| {
+    play_back_frames(tape, view, pad, "REPLAY", true, |snap| {
         screen.throw_off_frame_live(snap, CameraMode::Broadcast, &ui)
     })
 }
 
 /// The tape itself: the frames that were played, run back at the rate they were
 /// played at, with the label plate in the corner.
+///
+/// A `whole` replay plays every frame in order. A return that scores is shown that
+/// way, from the catch to the whistle: sampling it down to keep the second look
+/// short was what made the picture appear to start and then jump to the end of the
+/// play. A long snap is still sampled, so a replay cannot outlast the game.
 fn play_back_frames<T>(
     tape: &[T],
     view: &mut View,
     mut pad: Option<&mut Pad>,
     label: &str,
+    whole: bool,
     mut draw: impl FnMut(&T) -> nopads_render::raster::Frame,
 ) -> bool {
     let started = Instant::now();
     let mut next = Instant::now();
-    // A play that ran long is sampled rather than run back for as long as it
-    // took: six seconds of tape is a replay, forty is the whole game again.
-    let step = (tape.len() / 360).max(1);
-    for snapshot in tape.iter().step_by(step).take(360) {
+    // Six seconds of tape is a replay, forty is the whole game again: a snap that
+    // ran long is sampled rather than run back for as long as it took.
+    let step = if whole { 1 } else { (tape.len() / 360).max(1) };
+    let take = if whole { tape.len() } else { 360 };
+    for snapshot in tape.iter().step_by(step).take(take) {
         if started.elapsed() > Duration::from_millis(400) {
             let input = pad::mix(pad.as_deref_mut(), view.poll());
             if input.pressed.a || input.pressed.start {
@@ -2606,6 +2629,8 @@ fn drive_defense(
     let mut dead_at: Option<Instant> = None;
     let mut turn: Option<Instant> = None;
     let mut switched = Instant::now() - Duration::from_millis(400);
+    // The player has taken the pad somewhere himself; the follow leaves it there.
+    let mut took_control = false;
     // The snap frame by frame, for the replay.
     let mut tape: Vec<PlaySim> = Vec::new();
 
@@ -2666,6 +2691,15 @@ fn drive_defense(
         if input.pressed.b && now.duration_since(switched) >= Duration::from_millis(120) {
             sim.cycle_defender();
             switched = now;
+            took_control = true;
+        }
+        // Their ball: the pad goes to the man closest to the carrier, so the player
+        // is always steering somebody who can get to the play. B still overrides it,
+        // and after a turnover the ball is the defence's, so the follow stands down.
+        if !took_control {
+            if let Some(nearest) = sim.nearest_defender_to_carrier() {
+                sim.set_human_defender(Some(nearest));
+            }
         }
         sim.set_def_control(Some(DefControl {
             move_dir: stick,
@@ -2857,6 +2891,30 @@ fn human_man(sim: &ThrowOffSim, my_team: usize, pick: usize) -> Option<usize> {
         return None;
     }
     Some(men[pick % men.len()])
+}
+
+/// The men you can cover with, nearest the ball first.
+fn men_by_distance(sim: &ThrowOffSim, my_team: usize) -> Vec<usize> {
+    let mut men = human_men(sim, my_team);
+    men.sort_by(|&a, &b| {
+        let da = sim.players[a].pos.dist(sim.ball);
+        let db = sim.players[b].pos.dist(sim.ball);
+        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    men
+}
+
+/// The pick'th of a remembered order who is still on his feet.
+fn live_man(sim: &ThrowOffSim, order: &[usize], pick: usize) -> Option<usize> {
+    let live: Vec<usize> = order
+        .iter()
+        .copied()
+        .filter(|&i| !sim.players[i].down)
+        .collect();
+    if live.is_empty() {
+        return None;
+    }
+    Some(live[pick % live.len()])
 }
 
 fn throw_off_line(
