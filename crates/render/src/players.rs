@@ -1292,8 +1292,9 @@ pub fn build_mesh_at(
     let fore_len = h * 0.135;
     for (i, side) in [-1.0f32, 1.0].iter().enumerate() {
         let shoulder = shoulder_zone + Vec3::new(0.0, side * (shoulder_w * 0.420), -0.020);
-        // Trapezius, sloping from the neck out to the shoulder. Blends bare
-        // skin into the jersey and squares off the shoulders.
+        // Trapezius, sloping from the neck out to the shoulder. Cloth, not
+        // skin: it is the yoke between collar and cap, and in skin it shows as a
+        // brown sliver over each shoulder even when the cap itself is covered.
         if detail.fine() {
             taper3(
                 &mut mesh,
@@ -1302,7 +1303,7 @@ pub fn build_mesh_at(
                 Vec3::new(0.048, 0.086, 0.021),
                 0.0,
                 chest_yaw,
-                skin,
+                jersey,
                 0.98,
             );
         }
@@ -1321,9 +1322,12 @@ pub fn build_mesh_at(
         // cloth and the arm is bare below it. Stop the shirt at the collarbone and
         // the figure looks like it is wearing a vest that has slipped off both
         // shoulders.
+        // Cut wider and deeper than the deltoid it covers. A cap that is a size
+        // down leaves the top of the ball of the shoulder bare, and the tips come
+        // out as two brown studs above a green shirt.
         mesh.sphere(
-            shoulder + Vec3::new(-0.004, 0.0, 0.026 * bulk),
-            Vec3::new(0.088 * bulk, 0.084 * bulk, 0.046 * bulk),
+            shoulder + Vec3::new(-0.004, 0.0, 0.010 * bulk),
+            Vec3::new(0.103 * bulk, 0.098 * bulk, 0.088 * bulk),
             if detail.fine() { 5 } else { 2 },
             if detail.fine() { 14 } else { 6 },
             jersey,
