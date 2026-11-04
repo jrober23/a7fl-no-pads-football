@@ -276,7 +276,7 @@ impl WindowView {
 
     fn poll(&mut self) -> Input {
         let key = |k| self.window.is_key_down(k);
-        let mut held = Buttons {
+        let held = Buttons {
             a: key(minifb::Key::Space) || key(minifb::Key::Enter),
             b: key(minifb::Key::X),
             x: key(minifb::Key::Z),
@@ -306,22 +306,10 @@ impl WindowView {
         );
         let stick = Vec2::new(stick.x.clamp(-1.0, 1.0), stick.y.clamp(-1.0, 1.0));
 
-        let pressed = Buttons {
-            preview: held.preview && !self.prev.preview,
-            a: held.a && !self.prev.a,
-            b: held.b && !self.prev.b,
-            x: held.x && !self.prev.x,
-            y: held.y && !self.prev.y,
-            throw: held.throw && !self.prev.throw,
-            select: held.select && !self.prev.select,
-            dummy: held.dummy && !self.prev.dummy,
-            shoulder: held.shoulder && !self.prev.shoulder,
-            truck: held.truck && !self.prev.truck,
-            stop: held.stop && !self.prev.stop,
-            juke_l: held.juke_l && !self.prev.juke_l,
-            juke_r: held.juke_r && !self.prev.juke_r,
-            start: held.start && !self.prev.start,
-        };
+        // The press edges are the platform's, not this window's. The Bevy window
+        // already asks the pad for them, and a second hand-written copy here was
+        // one new button away from disagreeing with it.
+        let pressed = held.edges(self.prev);
         self.prev = held;
         Input { stick, held, pressed }
     }

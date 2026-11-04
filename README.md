@@ -82,7 +82,11 @@ the event loop and the swap chain, and the two meet over a channel that carries 
 frame one way and the pad the other. Nothing about the picture changes, so a
 controller still works and every keyboard binding is the same. This is off by
 default and needs a GPU, which is exactly the property the default build is built
-around not needing. With no display it says so and falls back to the terminal.
+around not needing, and the release download is built the default way, so `--bevy`
+there is not compiled in: it is a build-from-source option. With no display it says
+so and falls back to the terminal. From the game's end the two windows are the same
+machine -- the same canvas, the same key bindings, the same press edges out of
+`Buttons::edges` -- so nothing above the window knows which one it has.
 
 ### The look
 
