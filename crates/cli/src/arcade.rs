@@ -17,7 +17,7 @@ use nopads_core::math::{Rgb, Rng, Vec2, Vec3};
 use nopads_core::moves::Kind;
 use nopads_core::playbook::{
     def_calls_in, defensive_playbook, formations_in, fronts_in, playbook, plays_in, DefCall,
-    DefFront, DefRole, Formation, Play,
+    DefFront, DefRole, Formation, OffRole, Play,
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use nopads_core::sim::{Hit, DefControl, Phase, PlaySim, QbControl};
@@ -1499,17 +1499,28 @@ impl Arcade {
         let record = game.snap_with(play, def, |sim| {
             // No automatic snap on offense: the ball goes when the player says so.
             sim.await_snap(true);
-            let finished = drive(
-                sim,
-                broadcast,
-                view,
-                pad.as_mut(),
-                flip_y,
-                cam,
-                &header,
-                &off_abbr,
+            let mut caller = OffenseSnap {
+                header: &header,
+                off_abbr: &off_abbr,
                 book,
                 my_team,
+                charge: None,
+                claimed: false,
+                running: false,
+                run_call: false,
+                targets: Vec::new(),
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim,
+                    broadcast,
+                    view,
+                    pad: pad.as_mut(),
+                    cam,
+                    flip_y,
+                },
+                &mut caller,
+                &header,
                 &board,
             );
             ask_timeout = sim.timeout_asked;
@@ -1543,15 +1554,22 @@ impl Arcade {
         let mut ask_timeout = false;
         let record = game.snap_with(play, def, |sim| {
             sim.set_human_defender(sim.nearest_defender());
-            let finished = drive_defense(
-                sim,
-                broadcast,
-                view,
-                pad.as_mut(),
-                flip_y,
-                cam,
-                &header,
+            let mut caller = DefenseSnap {
+                header: &header,
                 defbook,
+                switched: Instant::now() - Duration::from_millis(400),
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim,
+                    broadcast,
+                    view,
+                    pad: pad.as_mut(),
+                    cam,
+                    flip_y,
+                },
+                &mut caller,
+                &header,
                 &board,
             );
             ask_timeout = sim.timeout_asked;
@@ -2537,25 +2555,74 @@ fn play_back_frames<T>(
     true
 }
 
-fn drive(
-    sim: &mut PlaySim,
-    broadcast: &mut Broadcast,
-    view: &mut View,
-    mut pad: Option<&mut Pad>,
+/// One frame of a snap as the side playing it sees it: the sim, the picture, the
+/// pad and the camera, bundled because a card over the field mid-play writes to
+/// all four.
+struct SnapScreen<'p, 'a> {
+    sim: &'a mut PlaySim<'p>,
+    broadcast: &'a mut Broadcast,
+    view: &'a mut View,
+    pad: Option<&'a mut Pad>,
+    cam: &'a mut usize,
     flip_y: bool,
-    cam: &mut usize,
+}
+
+impl SnapScreen<'_, '_> {
+    fn mode(&self) -> CameraMode {
+        CAMS[*self.cam % CAMS.len()]
+    }
+}
+
+/// What a side wants done with the frame it was just handed.
+enum Flow {
+    /// Carry on into this frame's controls and picture.
+    Run,
+    /// The frame was spent in a card over the field: restart the clock so the
+    /// pause does not run the play forward by it.
+    Restart,
+    /// The player wants out of the game.
+    Quit,
+}
+
+/// The half of a snap that depends on which side the player is on.
+///
+/// The clock, the pause, the replay tape, the dead-ball hold, the announce and
+/// the scoreboard are the same on both sides of the ball and live in `snap_loop`.
+/// This is the rest of it: what the pad means, and what the bar under the picture
+/// says. Two loops used to hold two copies of the shared half, and they had
+/// already drifted -- the replay was wired into both by hand, twice.
+trait SnapCaller {
+    /// True when the side spends the left bumper at the line on itself, so the
+    /// camera stays where it is until the ball is hiked.
+    fn takes_dummy_at_line(&self) -> bool {
+        false
+    }
+
+    /// Anything the side does before the frame's controls: previews, cards,
+    /// the snap itself.
+    fn before_frame(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> Flow;
+
+    /// This frame's pad, as the sim wants it.
+    fn controls(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input, stick: Vec2, dt: f32);
+
+    /// The badges and guide over the field, and the side's own rows of the bar.
+    /// The header, the play clock and the flag are the loop's to add.
+    fn picture(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> (PassUi, Vec<String>);
+}
+
+/// Play one snap from the snap to the card, whichever side the player is on.
+///
+/// Returns false when the player wants out of the game rather than out of the
+/// play, which is the one thing the caller has to act on.
+fn snap_loop(
+    screen: &mut SnapScreen<'_, '_>,
+    caller: &mut impl SnapCaller,
     header: &str,
-    off_abbr: &str,
-    book: &[Play],
-    my_team: usize,
     board: &hud::Scoreboard,
 ) -> bool {
     let mut acc = 0.0f64;
     let mut last = Instant::now();
     let mut drew = Instant::now() - FRAME;
-    // The button being held for a pass: which receiver, and for how long. The
-    // meter fills while it is down and the ball leaves when it comes up.
-    let mut charge: Option<(usize, f32)> = None;
     // When the ball died, so the picture can hold on the tackle before the card.
     let mut dead_at: Option<Instant> = None;
     // When the play turned round on an interception, so the screen can swing.
@@ -2569,29 +2636,29 @@ fn drive(
         acc += frame_dt;
         last = now;
 
-        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        let input = pad::mix(screen.pad.as_deref_mut(), screen.view.poll());
         if input.pressed.select {
-            sim.timeout_asked = true;
+            screen.sim.timeout_asked = true;
         }
         if input.pressed.start {
             match pause_menu(
-                view,
-                pad.as_deref_mut(),
-                cam,
-                broadcast,
-                PausedShot::Play(&*sim),
+                screen.view,
+                screen.pad.as_deref_mut(),
+                screen.cam,
+                screen.broadcast,
+                PausedShot::Play(&*screen.sim),
                 true,
             ) {
                 PauseAction::Quit => return false,
                 PauseAction::Replay => {
                     let keep = replay_theatre(
                         &tape,
-                        broadcast,
-                        view,
-                        pad.as_deref_mut(),
-                        flip_y,
-                        sim.facing(),
-                        sim.ball_position().0,
+                        screen.broadcast,
+                        screen.view,
+                        screen.pad.as_deref_mut(),
+                        screen.flip_y,
+                        screen.sim.facing(),
+                        screen.sim.ball_position().0,
                         |b, snap| b.live_frame_ui(snap, CameraMode::Replay, &ui_none()),
                     );
                     if !keep {
@@ -2606,13 +2673,150 @@ fn drive(
             acc = 0.0;
             continue;
         }
-        // The camera is on the left bumper, except at the line, where the bumper
-        // is the hard count. SELECT is the timeout, and it is called at the sheet.
-        if input.pressed.dummy && sim.phase != Phase::PreSnap {
-            *cam = (*cam + 1) % CAMS.len();
+        // The camera is on the left bumper, except at the line on offense, where
+        // the bumper is the hard count. SELECT is the timeout, and it is called at
+        // the sheet.
+        if input.pressed.dummy
+            && !(screen.sim.phase == Phase::PreSnap && caller.takes_dummy_at_line())
+        {
+            *screen.cam = (*screen.cam + 1) % CAMS.len();
         }
-        let view_mode = CAMS[*cam % CAMS.len()];
+        let view_mode = screen.mode();
 
+        match caller.before_frame(screen, &input) {
+            Flow::Quit => return false,
+            Flow::Restart => {
+                last = Instant::now();
+                acc = 0.0;
+                continue;
+            }
+            Flow::Run => {}
+        }
+
+        // Which way the stick points in the world depends on the shot on screen:
+        // the sideline camera and the two behind-the-ball ones disagree about
+        // which axis runs up it.
+        let stick = stick_to_world(input.stick, screen.flip_y, view_mode, screen.sim.facing());
+        caller.controls(screen, &input, stick, frame_dt as f32);
+
+        // A pick turns the play round: hold the shot while the camera swings.
+        if screen.sim.phase == Phase::Return && turn.is_none() {
+            turn = Some(now);
+        }
+        let turning = turn
+            .map(|since| now.duration_since(since) < TURNAROUND)
+            .unwrap_or(false);
+        if !turning {
+            while acc >= STEP as f64 && screen.sim.result.is_none() {
+                screen.sim.step(STEP);
+                acc -= STEP as f64;
+                // The tape starts with the snap: the shuffle at the line is not
+                // the part of the play anybody rewinds for.
+                if screen.sim.phase != Phase::PreSnap && tape.len() < 2400 {
+                    tape.push(screen.sim.clone());
+                }
+            }
+        } else {
+            acc = 0.0;
+        }
+
+        // The word over a dead ball arrives over half a second rather than cutting
+        // onto the frame the play ended.
+        screen.broadcast.set_announce(
+            dead_at
+                .map(|since| (since.elapsed().as_secs_f32() / ANNOUNCE_EASE).clamp(0.0, 1.0))
+                .unwrap_or(1.0),
+        );
+
+        if now.duration_since(drew) >= FRAME || screen.sim.result.is_some() {
+            drew = now;
+            let (ui, rows) = caller.picture(screen, &input);
+            let mut frame = screen.broadcast.live_frame_ui(screen.sim, view_mode, &ui);
+            // The scoreboard is a broadcast bug: it gets out of the way when the
+            // ball is hiked, and while the route tree is up for the preview, and
+            // comes back when the play is dead and reset.
+            if screen.sim.phase == Phase::PreSnap && !screen.sim.previewing() {
+                hud::draw_scoreboard(&mut frame, board);
+            }
+            let mut lines = Vec::with_capacity(rows.len() + 3);
+            lines.push(header.to_string());
+            lines.extend(rows);
+            // The clock at the line, where the player can see it while the ball is
+            // still his to snap: the scoreboard bar is the game's clock, not this.
+            if screen.sim.phase == Phase::PreSnap {
+                lines.push(format!("  PLAY CLOCK  {:.0}", screen.sim.play_clock.ceil()));
+            }
+            if let Some(flag) = &screen.sim.flag {
+                lines.push(format!(
+                    "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
+                    flag.kind.label().to_uppercase(),
+                    match flag.against {
+                        FoulTeam::Offense => "OFFENSE",
+                        FoulTeam::Defense => "DEFENSE",
+                    }
+                ));
+            }
+            if !screen.view.show(&mut frame, &lines) {
+                return false;
+            }
+        }
+
+        if screen.sim.result.is_some() {
+            // The ball is dead; the picture is not. Hold the shot while the hit
+            // finishes and the players get up, then let the card come up.
+            let since = *dead_at.get_or_insert(now);
+            // Let the play come to rest: the bodies coast, the ball settles. The
+            // card comes up after that, not on top of a frozen picture.
+            screen.sim.settle(frame_dt as f32);
+            let waited = since.elapsed();
+            if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
+                // A big play gets a second look before the card comes up. The
+                // tape is the play as it was played, not a re-run of it.
+                if worth_a_replay(screen.sim)
+                    && screen.view.is_window()
+                    && !play_back(
+                        &tape,
+                        screen.broadcast,
+                        screen.view,
+                        screen.pad.as_deref_mut(),
+                    )
+                {
+                    return false;
+                }
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
+/// Your ball: the quarterback's pad, the pass meter and the audible.
+struct OffenseSnap<'a> {
+    header: &'a str,
+    off_abbr: &'a str,
+    book: &'a [Play],
+    my_team: usize,
+    // The button being held for a pass: which receiver, and for how long. The
+    // meter fills while it is down and the ball leaves when it comes up.
+    charge: Option<(usize, f32)>,
+    // The interception has already been given to the player driving the play.
+    claimed: bool,
+    running: bool,
+    run_call: bool,
+    targets: Vec<(OffRole, usize)>,
+}
+
+impl SnapCaller for OffenseSnap<'_> {
+    /// At the line the bumper is the hard count, not the camera.
+    fn takes_dummy_at_line(&self) -> bool {
+        true
+    }
+
+    fn before_frame(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> Flow {
+        let mode = screen.mode();
+        let sim = &mut *screen.sim;
         // Before the snap the pad belongs to the line, not to the quarterback: A
         // goes, X opens the audible, Y flips the call, LB barks a hard count and
         // holding LT shows the whole route tree until it is let go.
@@ -2629,25 +2833,23 @@ fn drive(
                 // An audible changes the play, not the formation: the men are
                 // already lined up, and re-shaping the huddle at the line is a
                 // different thing from checking to another call out of it.
-                let list = plays_in(book, current.formation);
+                let list = plays_in(self.book, current.formation);
                 match audible_popup(
                     sim,
-                    broadcast,
-                    view,
-                    pad.as_deref_mut(),
-                    view_mode,
-                    header,
-                    book,
+                    screen.broadcast,
+                    screen.view,
+                    screen.pad.as_deref_mut(),
+                    mode,
+                    self.header,
+                    self.book,
                     &list,
                     &current,
                 ) {
                     Audible::Picked(play) => sim.call_play(play),
                     Audible::Back => {}
-                    Audible::Quit => return false,
+                    Audible::Quit => return Flow::Quit,
                 }
-                last = Instant::now();
-                acc = 0.0;
-                continue;
+                return Flow::Restart;
             }
             if input.pressed.a {
                 sim.request_snap();
@@ -2655,30 +2857,31 @@ fn drive(
         } else {
             sim.set_preview(false);
         }
+        Flow::Run
+    }
+
+    fn controls(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input, stick: Vec2, dt: f32) {
+        let sim = &mut *screen.sim;
         let presnap = sim.phase == Phase::PreSnap;
         // A running play has no throw to weigh, so it has no meter, no badges and
         // no guide. The face buttons are the ball carrier's moves from the snap.
-        let run_call = sim.play.family.is_run();
+        self.run_call = sim.play.family.is_run();
 
         // Once the ball is in a runner's hands and there is no pass to throw, the
         // face buttons are his move set rather than the receivers'.
         let returning = sim.phase == Phase::Return;
-        let running = !presnap && !returning && sim.face_buttons_are_moves();
-        let targets = if running || presnap || returning || run_call {
+        self.running = !presnap && !returning && sim.face_buttons_are_moves();
+        self.targets = if self.running || presnap || returning || self.run_call {
             Vec::new()
         } else {
             sim.eligible_targets()
         };
-        // Which way the stick points in the world depends on the shot on screen:
-        // the sideline camera and the two behind-the-ball ones disagree about
-        // which axis runs up it.
-        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.facing());
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
         let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
-        if running {
+        if self.running {
             // A pass wound up before he crossed the line is not a throw any more.
-            charge = None;
-            runner_moves(&input, |kind, side| {
+            self.charge = None;
+            runner_moves(input, |kind, side| {
                 if side == 0.0 {
                     sim.request_move(kind);
                 } else {
@@ -2690,22 +2893,22 @@ fn drive(
         // Holding a receiver's button winds the pass up. The ball goes to the man
         // the button names, led by the sim rather than by the stick, so the only
         // thing being decided here is how hard it gets there.
-        if let Some((slot, held_for)) = charge {
-            if slot >= targets.len() {
-                charge = None;
+        if let Some((slot, held_for)) = self.charge {
+            if slot >= self.targets.len() {
+                self.charge = None;
             } else {
-                charge = Some((slot, held_for + frame_dt as f32));
+                self.charge = Some((slot, held_for + dt));
             }
         }
-        if charge.is_none() && !running && !run_call {
-            if let Some(slot) = (0..targets.len().min(PASS_LABELS.len())).find(|&s| down[s]) {
-                charge = Some((slot, 0.0));
+        if self.charge.is_none() && !self.running && !self.run_call {
+            if let Some(slot) = (0..self.targets.len().min(PASS_LABELS.len())).find(|&s| down[s]) {
+                self.charge = Some((slot, 0.0));
             }
         }
 
         // Letting go throws it at whatever weight the meter got to.
         let mut release: Option<(usize, f32)> = None;
-        if let Some((slot, held_for)) = charge {
+        if let Some((slot, held_for)) = self.charge {
             if !held[slot] {
                 if held_for < PUMP_TAP {
                     // A tap is not a throw: the arm comes forward and the ball
@@ -2713,17 +2916,18 @@ fn drive(
                     sim.pump_fake();
                 } else {
                     let power = (held_for / CHARGE_TIME).clamp(MIN_POWER, 1.0);
-                    release = Some((targets[slot].1, power));
+                    release = Some((self.targets[slot].1, power));
                 }
-                charge = None;
+                self.charge = None;
             }
         }
 
-        let aimed = charge
-            .map(|(slot, _)| targets[slot].1)
+        let aimed = self
+            .charge
+            .map(|(slot, _)| self.targets[slot].1)
             .or_else(|| release.map(|(index, _)| index));
         let power = release.map(|(_, p)| p).unwrap_or_else(|| {
-            charge
+            self.charge
                 .map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
                 .unwrap_or(0.0)
         });
@@ -2734,12 +2938,12 @@ fn drive(
             power,
         }));
 
-        // An interception turns the play round: the picture swings, the pad goes
-        // to the man who took it if he is ours, and then he runs.
+        // An interception turns the play round: the pad goes to the man who took
+        // it if he is ours, and then he runs.
         if returning {
-            if turn.is_none() {
-                turn = Some(now);
-                if my_team == sim.setup.defense_team {
+            if !self.claimed {
+                self.claimed = true;
+                if self.my_team == sim.setup.defense_team {
                     sim.set_human_defender(sim.returner_index());
                 }
             }
@@ -2755,7 +2959,7 @@ fn drive(
             // four moves: a pick return used to be the one carry in the game where
             // the buttons did nothing.
             if sim.returner_index().is_some() && sim.returner_index() == sim.human_defender {
-                runner_moves(&input, |kind, side| {
+                runner_moves(input, |kind, side| {
                     if side == 0.0 {
                         sim.request_move(kind);
                     } else {
@@ -2764,213 +2968,148 @@ fn drive(
                 });
             }
         }
-        let turning = turn
-            .map(|since| now.duration_since(since) < TURNAROUND)
-            .unwrap_or(false);
-        if !turning {
-            while acc >= STEP as f64 && sim.result.is_none() {
-                sim.step(STEP);
-                acc -= STEP as f64;
-                // The tape starts with the snap: the shuffle at the line is not
-                // the part of the play anybody rewinds for.
-                if sim.phase != Phase::PreSnap && tape.len() < 2400 {
-                    tape.push(sim.clone());
-                }
-            }
-        } else {
-            acc = 0.0;
+    }
+
+    fn picture(&mut self, screen: &mut SnapScreen<'_, '_>, _input: &Input) -> (PassUi, Vec<String>) {
+        let mode = screen.mode();
+        let sim = &*screen.sim;
+        let presnap = sim.phase == Phase::PreSnap;
+        let returning = sim.phase == Phase::Return;
+        let power = self
+            .charge
+            .map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+
+        // A button over every eligible man, and while a pass is wound up, the
+        // guide showing where it will come down and the meter showing whether the
+        // arm can get it there.
+        let mut badges = Vec::new();
+        for (slot, (_, index)) in self.targets.iter().enumerate().take(PASS_LABELS.len()) {
+            let separation = sim.separation(*index);
+            let tone = if separation > 3.0 {
+                Tone::Open
+            } else if separation > 1.6 {
+                Tone::Tight
+            } else {
+                Tone::Covered
+            };
+            let man = sim.players[*index].pos;
+            badges.push(Badge {
+                at: Vec3::new(man.x, man.y, 2.15),
+                label: PASS_LABELS[slot],
+                tone,
+                aimed: self.charge.map(|(s, _)| s) == Some(slot),
+            });
         }
 
-        // The word over a dead ball arrives over half a second rather than cutting
-        // onto the frame the play ended.
-        broadcast.set_announce(
-            dead_at
-                .map(|since| (since.elapsed().as_secs_f32() / ANNOUNCE_EASE).clamp(0.0, 1.0))
-                .unwrap_or(1.0),
-        );
-
-        if now.duration_since(drew) >= FRAME || sim.result.is_some() {
-            drew = now;
-            // A button over every eligible man, and while a pass is wound up,
-            // the guide showing where it will come down and the meter showing
-            // whether the arm can get it there.
-            let mut badges = Vec::new();
-            for (slot, (_, index)) in targets.iter().enumerate().take(PASS_LABELS.len()) {
-                let separation = sim.separation(*index);
-                let tone = if separation > 3.0 {
-                    Tone::Open
-                } else if separation > 1.6 {
-                    Tone::Tight
-                } else {
-                    Tone::Covered
-                };
+        let mut guide = None;
+        let mut short = false;
+        let mut needed = None;
+        if let Some((slot, _)) = self.charge {
+            if let Some((_, index)) = self.targets.get(slot) {
+                let plan = sim.throw_plan(sim.qb, *index, power);
+                short = plan.distance > plan.reach + 0.4;
+                needed = Some(plan.power_needed);
+                let hand = sim.qb_pos();
                 let man = sim.players[*index].pos;
-                badges.push(Badge {
-                    at: Vec3::new(man.x, man.y, 2.15),
-                    label: PASS_LABELS[slot],
-                    tone,
-                    aimed: charge.map(|(s, _)| s) == Some(slot),
+                guide = Some(Guide {
+                    from: Vec3::new(hand.x, hand.y, 1.8),
+                    receiver: Vec3::new(man.x, man.y, 1.0),
+                    landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
                 });
             }
-
-            let mut guide = None;
-            let mut short = false;
-            let mut needed = None;
-            if let Some((slot, _)) = charge {
-                if let Some((_, index)) = targets.get(slot) {
-                    let plan = sim.throw_plan(sim.qb, *index, power);
-                    short = plan.distance > plan.reach + 0.4;
-                    needed = Some(plan.power_needed);
-                    let hand = sim.qb_pos();
-                    let man = sim.players[*index].pos;
-                    guide = Some(Guide {
-                        from: Vec3::new(hand.x, hand.y, 1.8),
-                        receiver: Vec3::new(man.x, man.y, 1.0),
-                        landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
-                    });
-                }
-            }
-            // Who the pad is on: the man with the ball, or the quarterback before
-            // there is one.
-            let focus = if returning && my_team != sim.setup.defense_team {
+        }
+        // Who the pad is on: the man with the ball, or the quarterback before
+        // there is one.
+        let focus = if returning && self.my_team != sim.setup.defense_team {
+            None
+        } else {
+            sim.carrier.or(Some(sim.qb)).map(|i| Focus {
+                at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+                label: "YOU".to_string(),
+            })
+        };
+        let ui = PassUi {
+            flag: None,
+            focus,
+            badges,
+            guide,
+            power: if self.run_call {
                 None
             } else {
-                sim.carrier.or(Some(sim.qb)).map(|i| Focus {
-                    at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
-                    label: "YOU".to_string(),
-                })
-            };
-            let ui = PassUi {
-                flag: None,
-                focus,
-                badges,
-                guide,
-                power: if run_call {
-                    None
-                } else {
-                    charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
-                },
-                short,
-                needed,
-            };
+                self.charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
+            },
+            short,
+            needed,
+        };
 
-            let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
-            // The scoreboard is a broadcast bug: it gets out of the way when the
-            // ball is hiked, and while the route tree is up for the preview, and
-            // comes back when the play is dead and reset.
-            if sim.phase == Phase::PreSnap && !sim.previewing() {
-                hud::draw_scoreboard(&mut frame, board);
-            }
-            // The call is read off the sim, not off the sheet that was chosen a
-            // minute ago: an audible changes the play, and the overlay has to say so.
-            let call = format!(
-                "{} - {}{} - {} shows {}",
-                sim.play.name,
-                sim.play.formation.label(),
-                if sim.play.flip { " (FLIPPED)" } else { "" },
-                broadcast.teams[sim.setup.defense_team].abbr,
-                sim.def.name
-            );
-            let mut lines = vec![header.to_string(), call];
+        // The call is read off the sim, not off the sheet that was chosen a minute
+        // ago: an audible changes the play, and the overlay has to say so.
+        let call = format!(
+            "{} - {}{} - {} shows {}",
+            sim.play.name,
+            sim.play.formation.label(),
+            if sim.play.flip { " (FLIPPED)" } else { "" },
+            screen.broadcast.teams[sim.setup.defense_team].abbr,
+            sim.def.name
+        );
+        let mut lines = vec![call];
 
-            if returning {
-                if sim.returner_index().is_some() && sim.returner_index() == sim.human_defender {
-                    // He is a runner now, so he gets the runner's row.
-                    let mut row = format!("  RETURN IT{RUNNER_ROW}");
-                    if let Some(kind) = sim.carrier_move().kind() {
-                        row.push_str(&format!("      {}", kind.label()));
-                    }
-                    lines.push(row);
-                } else if my_team == sim.setup.defense_team {
-                    lines.push(
-                        "  INTERCEPTION - THE BALL IS YOURS   MOVE TO RUN IT BACK   [START] PAUSE"
-                            .to_string(),
-                    );
-                } else {
-                    lines.push(
-                        "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string(),
-                    );
-                }
-            } else if running {
-                // The moves, and which one is in flight right now.
-                let mut row = RUNNER_ROW.trim_start().to_string();
+        if returning {
+            if sim.returner_index().is_some() && sim.returner_index() == sim.human_defender {
+                // He is a runner now, so he gets the runner's row.
+                let mut row = format!("  RETURN IT{RUNNER_ROW}");
                 if let Some(kind) = sim.carrier_move().kind() {
                     row.push_str(&format!("      {}", kind.label()));
                 }
                 lines.push(row);
+            } else if self.my_team == sim.setup.defense_team {
+                lines.push(
+                    "  INTERCEPTION - THE BALL IS YOURS   MOVE TO RUN IT BACK   [START] PAUSE"
+                        .to_string(),
+                );
             } else {
-                // Who is open, on the buttons the badges are showing.
-                let mut row = String::new();
-                for (slot, (_, index)) in targets.iter().enumerate().take(PASS_LABELS.len()) {
-                    let name = broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
-                    if !row.is_empty() {
-                        row.push_str("   ");
-                    }
-                    row.push_str(&format!(
-                        "{} {:<9} {:>4.1}",
-                        PASS_LABELS[slot],
-                        name,
-                        sim.separation(*index)
-                    ));
+                lines.push(
+                    "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string(),
+                );
+            }
+        } else if self.running {
+            // The moves, and which one is in flight right now.
+            let mut row = RUNNER_ROW.trim_start().to_string();
+            if let Some(kind) = sim.carrier_move().kind() {
+                row.push_str(&format!("      {}", kind.label()));
+            }
+            lines.push(row);
+        } else {
+            // Who is open, on the buttons the badges are showing.
+            let mut row = String::new();
+            for (slot, (_, index)) in self.targets.iter().enumerate().take(PASS_LABELS.len()) {
+                let name = screen.broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
+                if !row.is_empty() {
+                    row.push_str("   ");
                 }
-                lines.push(row);
-            }
-            if presnap {
-                lines.push(format!(
-                    "  [A] SNAP   [X] AUDIBLE   [Y] FLIP   HOLD [LT] PREVIEW   [LB] DUMMY COUNT   [SELECT] {}",
-                    cam_name(view_mode)
-                ));
-            } else {
-                lines.push(format!(
-                    "{off_abbr} ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] {}   [START] PAUSE",
-                    cam_name(view_mode)
+                row.push_str(&format!(
+                    "{} {:<9} {:>4.1}",
+                    PASS_LABELS[slot],
+                    name,
+                    sim.separation(*index)
                 ));
             }
-            // A live-ball foul does not stop anything: the flag is on the ground and
-            // the ball moves when the play is over.
-            // The clock at the line, where the player can see it while the ball is
-            // still his to snap: the scoreboard bar is the game's clock, not this.
-            if matches!(sim.phase, Phase::PreSnap) {
-                lines.push(format!("  PLAY CLOCK  {:.0}", sim.play_clock.ceil()));
-            }
-            if let Some(flag) = &sim.flag {
-                lines.push(format!(
-                    "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
-                    flag.kind.label().to_uppercase(),
-                    match flag.against {
-                        FoulTeam::Offense => "OFFENSE",
-                        FoulTeam::Defense => "DEFENSE",
-                    }
-                ));
-            }
-
-            if !view.show(&mut frame, &lines) {
-                return false;
-            }
+            lines.push(row);
         }
-
-        if sim.result.is_some() {
-            // The ball is dead; the picture is not. Hold the shot while the hit
-            // finishes and the players get up, then let the card come up.
-            let since = *dead_at.get_or_insert(now);
-            // Let the play come to rest: the bodies coast, the ball settles. The
-            // card comes up after that, not on top of a frozen picture.
-            sim.settle(frame_dt as f32);
-            let waited = since.elapsed();
-            if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
-                // A big play gets a second look before the card comes up. The
-                // tape is the play as it was played, not a re-run of it.
-                if worth_a_replay(sim) && view.is_window()
-                    && !play_back(&tape, broadcast, view, pad.as_deref_mut())
-                {
-                    return false;
-                }
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-            continue;
+        if presnap {
+            lines.push(format!(
+                "  [A] SNAP   [X] AUDIBLE   [Y] FLIP   HOLD [LT] PREVIEW   [LB] DUMMY COUNT   [SELECT] {}",
+                cam_name(mode)
+            ));
+        } else {
+            lines.push(format!(
+                "{} ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] {}   [START] PAUSE",
+                self.off_abbr,
+                cam_name(mode)
+            ));
         }
-        std::thread::sleep(Duration::from_millis(2));
+        (ui, lines)
     }
 }
 
@@ -3202,111 +3341,60 @@ fn defense_popup(
 
 /// Run one snap with the pad on a defender. The offense is the computer's, and
 /// when the snap starts nobody is steering it.
-fn drive_defense(
-    sim: &mut PlaySim,
-    broadcast: &mut Broadcast,
-    view: &mut View,
-    mut pad: Option<&mut Pad>,
-    flip_y: bool,
-    cam: &mut usize,
-    header: &str,
-    defbook: &[DefCall],
-    board: &hud::Scoreboard,
-) -> bool {
-    let mut acc = 0.0f64;
-    let mut last = Instant::now();
-    let mut drew = Instant::now() - FRAME;
-    let mut dead_at: Option<Instant> = None;
-    let mut turn: Option<Instant> = None;
-    let mut switched = Instant::now() - Duration::from_millis(400);
-    // The player has taken the pad somewhere himself; the follow leaves it there.
-    // The snap frame by frame, for the replay.
-    let mut tape: Vec<PlaySim> = Vec::new();
+/// Their ball: call a defence, then put the pad on one of the seven.
+struct DefenseSnap<'a> {
+    header: &'a str,
+    defbook: &'a [DefCall],
+    // When the pad was last walked round the seven, so one press is one man.
+    switched: Instant,
+}
 
-    loop {
-        let now = Instant::now();
-        let frame_dt = now.duration_since(last).as_secs_f64();
-        acc += frame_dt;
-        last = now;
-
-        let input = pad::mix(pad.as_deref_mut(), view.poll());
-        if input.pressed.select {
-            sim.timeout_asked = true;
+impl SnapCaller for DefenseSnap<'_> {
+    fn before_frame(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> Flow {
+        let mode = screen.mode();
+        {
+            let sim = &mut *screen.sim;
+            // The preview button is the same one the offense holds: it lifts the
+            // shot over the whole field, and while it is down the defence's
+            // assignments are on the grass instead of the offense's routes.
+            sim.set_preview(sim.phase == Phase::PreSnap && input.held.preview);
         }
-        if input.pressed.start {
-            match pause_menu(
-                view,
-                pad.as_deref_mut(),
-                cam,
-                broadcast,
-                PausedShot::Play(&*sim),
-                true,
-            ) {
-                PauseAction::Quit => return false,
-                PauseAction::Replay => {
-                    let keep = replay_theatre(
-                        &tape,
-                        broadcast,
-                        view,
-                        pad.as_deref_mut(),
-                        flip_y,
-                        sim.facing(),
-                        sim.ball_position().0,
-                        |b, snap| b.live_frame_ui(snap, CameraMode::Replay, &ui_none()),
-                    );
-                    if !keep {
-                        return false;
-                    }
-                }
-                PauseAction::Resume => {}
-            }
-            last = Instant::now();
-            acc = 0.0;
-            continue;
-        }
-        if input.pressed.dummy {
-            *cam = (*cam + 1) % CAMS.len();
-        }
-        let view_mode = CAMS[*cam % CAMS.len()];
-        let stick = stick_to_world(input.stick, flip_y, view_mode, sim.facing());
-
-        // The preview button is the same one the offense holds: it lifts the shot
-        // over the whole field, and while it is down the defence's assignments are
-        // on the grass instead of the offense's routes.
-        sim.set_preview(sim.phase == Phase::PreSnap && input.held.preview);
 
         // RB checks the defence at the line: three calls at a time over the
         // picture, so the look being checked out of stays on the field.
-        if sim.phase == Phase::PreSnap && input.pressed.shoulder {
+        if screen.sim.phase == Phase::PreSnap && input.pressed.shoulder {
             // A check stays in the front that is on the field: it is a call, not
             // a new alignment with seven men walking around before the snap.
-            let calls: Vec<DefCall> = def_calls_in(defbook, sim.def.front)
+            let front = screen.sim.def.front;
+            let calls: Vec<DefCall> = def_calls_in(self.defbook, front)
                 .iter()
-                .map(|&i| defbook[i].clone())
+                .map(|&i| self.defbook[i].clone())
                 .collect();
             match defense_popup(
-                sim,
-                broadcast,
-                view,
-                pad.as_deref_mut(),
-                view_mode,
-                header,
+                screen.sim,
+                screen.broadcast,
+                screen.view,
+                screen.pad.as_deref_mut(),
+                mode,
+                self.header,
                 &calls,
             ) {
-                DefenseAudible::Picked(call) => sim.call_defense(call),
+                DefenseAudible::Picked(call) => screen.sim.call_defense(call),
                 DefenseAudible::Back => {}
-                DefenseAudible::Quit => return false,
+                DefenseAudible::Quit => return Flow::Quit,
             }
-            last = Instant::now();
-            acc = 0.0;
-            continue;
+            return Flow::Restart;
         }
+        Flow::Run
+    }
 
+    fn controls(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input, stick: Vec2, _dt: f32) {
+        let sim = &mut *screen.sim;
         // The ball in your hands makes you the runner, and the four buttons are the
         // four moves. B is a move then, so it does not walk the pad around.
         let my_ball = sim.returner_index().is_some() && sim.returner_index() == sim.human_defender;
         if my_ball {
-            runner_moves(&input, |kind, side| {
+            runner_moves(input, |kind, side| {
                 if side == 0.0 {
                     sim.request_move(kind);
                 } else {
@@ -3315,9 +3403,13 @@ fn drive_defense(
             });
         }
         // B walks the pad round the seven. A wraps up, X dives at him, Y picks.
-        if input.pressed.b && !my_ball && now.duration_since(switched) >= Duration::from_millis(120) {
+        let now = Instant::now();
+        if input.pressed.b
+            && !my_ball
+            && now.duration_since(self.switched) >= Duration::from_millis(120)
+        {
             sim.cycle_defender();
-            switched = now;
+            self.switched = now;
         }
         // The pad stays on the man it was put on. It used to follow the nearest
         // defender to the carrier every frame, which took the pad off the man the
@@ -3329,160 +3421,81 @@ fn drive_defense(
             dive: input.pressed.x,
             swat: false,
             intercept: input.pressed.y,
-            hit: hit_stick(&input),
+            hit: hit_stick(input),
         }));
+    }
 
-        // A pick turns the play round: hold the shot while the camera swings.
-        if sim.phase == Phase::Return && turn.is_none() {
-            turn = Some(now);
-        }
-        let turning = turn
-            .map(|since| now.duration_since(since) < TURNAROUND)
-            .unwrap_or(false);
-        if !turning {
-            while acc >= STEP as f64 && sim.result.is_none() {
-                sim.step(STEP);
-                acc -= STEP as f64;
-                // The tape starts with the snap: the shuffle at the line is not
-                // the part of the play anybody rewinds for.
-                if sim.phase != Phase::PreSnap && tape.len() < 2400 {
-                    tape.push(sim.clone());
+    fn picture(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> (PassUi, Vec<String>) {
+        let sim = &*screen.sim;
+        let my_ball =
+            sim.returner_index().is_some() && sim.returner_index() == sim.human_defender;
+        let focus = sim.human_defender.map(|i| Focus {
+            at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+            label: "YOU".to_string(),
+        });
+        let ui = PassUi {
+            flag: None,
+            focus,
+            badges: Vec::new(),
+            guide: None,
+            power: None,
+            short: false,
+            needed: None,
+        };
+        let role = sim.human_defender_role().map(|r| r.label()).unwrap_or("DEF");
+        let who = sim
+            .human_defender
+            .map(|i| {
+                screen.broadcast.teams[sim.setup.defense_team].roster[sim.players[i].player]
+                    .last_name()
+                    .to_string()
+            })
+            .unwrap_or_default();
+        let mut lines = vec![
+            format!(
+                "  {} - {}{} - {} BALL",
+                sim.play.name,
+                sim.play.formation.label(),
+                if sim.play.flip { " (FLIPPED)" } else { "" },
+                screen.broadcast.teams[sim.setup.offense_team].abbr
+            ),
+            format!(
+                "  YOU: {role} {who}{}",
+                match hit_stick(input) {
+                    Some(h) => format!(" - {}", h.label()),
+                    None => String::new(),
                 }
+            ),
+        ];
+        if sim.phase == Phase::Return && my_ball {
+            // A pick is not a dead ball: the man who took it is a runner now, and
+            // a runner gets the runner's row of moves.
+            let mut row = format!("  RETURN IT{RUNNER_ROW}");
+            if let Some(kind) = sim.carrier_move().kind() {
+                row.push_str(&format!("      {}", kind.label()));
             }
+            lines.push(row);
+        } else if sim.phase == Phase::Return {
+            lines.push("  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string());
+        } else if sim.previewing() {
+            lines.push(format!(
+                "  YOUR CALL: {} - {} - {} RUSH - LET GO OF [LT] TO GET BACK TO THE LINE",
+                sim.def.name,
+                sim.def.coverage.label(),
+                sim.def.rushers(),
+            ));
+        } else if sim.phase == Phase::PreSnap {
+            lines.push(
+                "  WALK UP TO THE LINE   HOLD [LT] PREVIEW YOUR CALL   [RB] CHECK   [B] SWITCH   [SELECT] CAMERA"
+                    .to_string(),
+            );
         } else {
-            acc = 0.0;
+            lines.push(
+                "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RS] HIGH/LOW HIT   [SELECT] CAMERA   [START] PAUSE"
+                    .to_string(),
+            );
         }
-
-        // The word over a dead ball arrives over half a second rather than cutting
-        // onto the frame the play ended.
-        broadcast.set_announce(
-            dead_at
-                .map(|since| (since.elapsed().as_secs_f32() / ANNOUNCE_EASE).clamp(0.0, 1.0))
-                .unwrap_or(1.0),
-        );
-
-        if now.duration_since(drew) >= FRAME || sim.result.is_some() {
-            drew = now;
-            let focus = sim.human_defender.map(|i| Focus {
-                at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
-                label: "YOU".to_string(),
-            });
-            let ui = PassUi {
-                flag: None,
-                focus,
-                badges: Vec::new(),
-                guide: None,
-                power: None,
-                short: false,
-                needed: None,
-            };
-            let mut frame = broadcast.live_frame_ui(sim, view_mode, &ui);
-            // The scoreboard is a broadcast bug: it gets out of the way when the
-            // ball is hiked, and while the route tree is up for the preview, and
-            // comes back when the play is dead and reset.
-            if sim.phase == Phase::PreSnap && !sim.previewing() {
-                hud::draw_scoreboard(&mut frame, board);
-            }
-            let role = sim.human_defender_role().map(|r| r.label()).unwrap_or("DEF");
-            let who = sim
-                .human_defender
-                .map(|i| {
-                    broadcast.teams[sim.setup.defense_team].roster[sim.players[i].player]
-                        .last_name()
-                        .to_string()
-                })
-                .unwrap_or_default();
-            let mut lines = vec![
-                header.to_string(),
-                format!(
-                    "  {} - {}{} - {} BALL",
-                    sim.play.name,
-                    sim.play.formation.label(),
-                    if sim.play.flip { " (FLIPPED)" } else { "" },
-                    broadcast.teams[sim.setup.offense_team].abbr
-                ),
-                format!(
-                    "  YOU: {role} {who}{}",
-                    match hit_stick(&input) {
-                        Some(h) => format!(" - {}", h.label()),
-                        None => String::new(),
-                    }
-                ),
-            ];
-            if sim.phase == Phase::Return && my_ball {
-                // A pick is not a dead ball: the man who took it is a runner now, and
-                // a runner gets the runner's row of moves.
-                let mut row = format!("  RETURN IT{RUNNER_ROW}");
-                if let Some(kind) = sim.carrier_move().kind() {
-                    row.push_str(&format!("      {}", kind.label()));
-                }
-                lines.push(row);
-            } else if sim.phase == Phase::Return {
-                lines.push(
-                    "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string(),
-                );
-            } else {
-                if sim.previewing() {
-                    lines.push(format!(
-                        "  YOUR CALL: {} - {} - {} RUSH - LET GO OF [LT] TO GET BACK TO THE LINE",
-                        sim.def.name,
-                        sim.def.coverage.label(),
-                        sim.def.rushers(),
-                    ));
-                } else if sim.phase == Phase::PreSnap {
-                    lines.push(
-                        "  WALK UP TO THE LINE   HOLD [LT] PREVIEW YOUR CALL   [RB] CHECK   [B] SWITCH   [SELECT] CAMERA"
-                            .to_string(),
-                    );
-                } else {
-                    lines.push(
-                        "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RS] HIGH/LOW HIT   [SELECT] CAMERA   [START] PAUSE"
-                            .to_string(),
-                    );
-                }
-            }
-            // The clock at the line, where the player can see it while the ball is
-            // still his to snap: the scoreboard bar is the game's clock, not this.
-            if matches!(sim.phase, Phase::PreSnap) {
-                lines.push(format!("  PLAY CLOCK  {:.0}", sim.play_clock.ceil()));
-            }
-            if let Some(flag) = &sim.flag {
-                lines.push(format!(
-                    "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
-                    flag.kind.label().to_uppercase(),
-                    match flag.against {
-                        FoulTeam::Offense => "OFFENSE",
-                        FoulTeam::Defense => "DEFENSE",
-                    }
-                ));
-            }
-            if !view.show(&mut frame, &lines) {
-                return false;
-            }
-        }
-
-        if sim.result.is_some() {
-            // The ball is dead; the picture is not. Hold the shot while the hit
-            // finishes, then let the card come up.
-            let since = *dead_at.get_or_insert(now);
-            // Let the play come to rest: the bodies coast, the ball settles. The
-            // card comes up after that, not on top of a frozen picture.
-            sim.settle(frame_dt as f32);
-            let waited = since.elapsed();
-            if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
-                // A big play gets a second look before the card comes up. The
-                // tape is the play as it was played, not a re-run of it.
-                if worth_a_replay(sim) && view.is_window()
-                    && !play_back(&tape, broadcast, view, pad.as_deref_mut())
-                {
-                    return false;
-                }
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-            continue;
-        }
-        std::thread::sleep(Duration::from_millis(2));
+        (ui, lines)
     }
 }
 
