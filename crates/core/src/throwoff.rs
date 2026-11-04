@@ -100,6 +100,26 @@ pub struct ThrowOffResult {
     pub highlight: bool,
 }
 
+impl ThrowOffResult {
+    /// The word the picture says while the men who just made the play are still
+    /// getting up. A plain return has none: the bar under the picture already
+    /// says whose ball it is, and a word on every kick would be wallpaper.
+    pub fn headline(&self) -> Option<&'static str> {
+        if self.touchdown {
+            return Some("TOUCHDOWN");
+        }
+        if self.safety {
+            return Some("SAFETY");
+        }
+        match self.outcome {
+            ThrowOffOutcome::Touchback => Some("TOUCHBACK"),
+            ThrowOffOutcome::FairCatch => Some("FAIR CATCH"),
+            ThrowOffOutcome::RecoveredByK => Some("RECOVERED"),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ThrowPhase {
     Presnap,

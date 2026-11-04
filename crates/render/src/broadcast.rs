@@ -712,6 +712,13 @@ impl Broadcast {
             None => throw_off_camera(sim, focus, mode, (self.lens_zoom, self.lens_tilt)),
         };
         let mut frame = self.paint_throw_off(&players, ball, camera.clone());
+        // The word over a dead ball is the same beat here as on a snap: the
+        // picture says what happened while the men who made it are still down,
+        // and the card explains it a beat later. A hundred-yard return used to go
+        // straight from the tackle to the card with nothing said over the field.
+        if let Some(result) = &sim.result {
+            self.paint_throw_off_word(&mut frame, result);
+        }
         ui.draw(&mut frame, &camera, &self.scene.projector);
         Self::fumble_alert(&mut frame, sim.fumble_alert, &sim.fumble_note);
         frame
@@ -907,10 +914,38 @@ impl Broadcast {
     /// The word over a dead ball: SACK, TACKLE FOR LOSS, INTERCEPTION, PASS BATTED
     /// DOWN. The card explains it a beat later; this is what the picture says while
     /// the two men who just hit each other are still on the ground.
+    /// The word over a dead ball: SACK, TACKLE FOR LOSS, INTERCEPTION, PASS BATTED
+    /// DOWN. The card explains it a beat later; this is what the picture says while
+    /// the two men who just hit each other are still on the ground.
     fn paint_result_word(&self, frame: &mut Frame, result: &nopads_core::sim::PlayResult) {
+        if let Some(word) = result.headline() {
+            self.paint_word(frame, word, result.turnover, &result.description);
+        }
+    }
+
+    /// The same word over a dead throw-off, so a kick that ended in a score gets
+    /// the beat on the field rather than only on the card.
+    fn paint_throw_off_word(
+        &self,
+        frame: &mut Frame,
+        result: &nopads_core::throwoff::ThrowOffResult,
+    ) {
         let Some(word) = result.headline() else {
             return;
         };
+        // A safety and a recovery are the two kicks that go against the side that
+        // was meant to have the ball, so they come up in the turnover colour.
+        let loud = result.safety
+            || matches!(
+                result.outcome,
+                nopads_core::throwoff::ThrowOffOutcome::RecoveredByK
+            );
+        self.paint_word(frame, word, loud, &result.description);
+    }
+
+    /// Lay a word over the picture, easing up out of its panel with the sentence
+    /// that explains it landing after it.
+    fn paint_word(&self, frame: &mut Frame, word: &str, loud: bool, description: &str) {
         let ease = self.announce.clamp(0.0, 1.0);
         if ease <= 0.001 {
             return;
@@ -922,11 +957,7 @@ impl Broadcast {
         // It settles onto its line rather than being stamped there, and the
         // colour comes up out of the panel before it reads as white type.
         let y = 20 + ((1.0 - ease) * 12.0) as i32;
-        let color = if result.turnover {
-            hud::YELLOW
-        } else {
-            hud::WHITE
-        };
+        let color = if loud { hud::YELLOW } else { hud::WHITE };
         let color = hud::INK.lerp(color, ease);
         frame.fill_rect_alpha(x - 14, y - 8, tw + 28, th + 16, hud::INK, 0.74 * ease);
         frame.text_shadowed(x, y, word, scale, color, 1);
@@ -934,7 +965,7 @@ impl Broadcast {
         // The sentence lands after the word, not with it.
         let sub_ease = ((ease - 0.55) / 0.45).clamp(0.0, 1.0);
         if sub_ease > 0.05 {
-            let lower = result.description.to_uppercase();
+            let lower = description.to_uppercase();
             let sub: String = lower.chars().take(58).collect();
             let sw = crate::font::text_width(&sub, 1) as i32;
             let sx = (frame.w as i32 - sw) / 2;
@@ -1936,6 +1967,84 @@ mod tests {
         assert_eq!(players.len(), 4, "three gunners and one returner");
         let in_throwing_kit = players.iter().filter(|p| p.team == setup.throwing_team).count();
         assert_eq!(in_throwing_kit, 3, "the thrower has left the picture");
+    }
+
+    /// The word over a dead ball lands on a throw-off too. A hundred-yard return
+    /// used to go from the tackle straight to the card with nothing said over the
+    /// field, while a scrimmage snap got TOUCHDOWN over the grass.
+    #[test]
+    fn a_dead_throw_off_gets_its_word_over_the_picture() {
+        use nopads_core::throwoff::{ThrowOffOutcome, ThrowOffResult};
+
+        let teams = league_teams();
+        let receiving = nopads_core::throwoff::ThrowOffSetup::normal().receiving_team;
+        let setup = nopads_core::throwoff::ThrowOffSetup::normal();
+        let mut sim = ThrowOffSim::new(&setup, &teams[0], &teams[1]);
+        while sim.phase == ThrowPhase::Presnap {
+            sim.step(1.0 / 60.0);
+        }
+        sim.phase = ThrowPhase::Dead;
+        let ui = crate::passing::PassUi {
+            flag: None,
+            focus: None,
+            badges: Vec::new(),
+            guide: None,
+            power: None,
+            short: false,
+            needed: None,
+        };
+        // How much white type is on the top of the picture, where the word goes.
+        let white_at_the_top = |sim: &ThrowOffSim| -> usize {
+            let mut broadcast = Broadcast::new(320, 180, [teams[0].clone(), teams[1].clone()]);
+            broadcast.set_announce(1.0);
+            let frame = broadcast.throw_off_frame_live(sim, CameraMode::Broadcast, &ui);
+            (0..48)
+                .flat_map(|y| (0..frame.w).map(move |x| (x, y)))
+                .filter(|&(x, y)| {
+                    let c = frame.color[y * frame.w + x];
+                    c.r >= 200 && c.g >= 200 && c.b >= 200
+                })
+                .count()
+        };
+        let result = |outcome: ThrowOffOutcome, touchdown: bool, description: &str| {
+            ThrowOffResult {
+                outcome,
+                next_offense: receiving,
+                start_spot: 35.0,
+                points: if touchdown { 6 } else { 0 },
+                scoring_team: touchdown.then_some(receiving),
+                return_yards: 96.0,
+                fair_catch: false,
+                play_clock: 0.0,
+                touchback: false,
+                safety: false,
+                touchdown,
+                elapsed: 12.0,
+                description: description.to_string(),
+                highlight: touchdown,
+            }
+        };
+
+        let quiet = white_at_the_top(&sim);
+        sim.result = Some(result(
+            ThrowOffOutcome::Touchdown,
+            true,
+            "Returned 96 yards for a touchdown.",
+        ));
+        let loud = white_at_the_top(&sim);
+        assert!(
+            loud > quiet + 200,
+            "no word over the dead throw-off: {quiet} px of type quiet, {loud} loud"
+        );
+
+        // A plain return gets no word: the bar under the picture already says whose
+        // ball it is, and a banner on every kick would be wallpaper.
+        sim.result = Some(result(ThrowOffOutcome::Returned, false, "Returned 18 yards."));
+        let plain = white_at_the_top(&sim);
+        assert!(
+            plain <= quiet + 40,
+            "an ordinary return got a banner: {quiet} px quiet, {plain} with the return"
+        );
     }
 
     #[test]
