@@ -1,6 +1,6 @@
 //! The film treatment: what turns a clean wireframe-crisp render into a picture.
 //!
-//! Three passes, all of them cheap enough to run on a 640x360 canvas:
+//! Three passes over the world picture, before the overlay goes on:
 //!
 //! * **Soft edges.** A hard polygon edge stepped a whole pixel at a time is the
 //!   single strongest "early 3D" tell. This finds luma edges and blends across
@@ -21,6 +21,15 @@ const BLOOM_THRESHOLD: f32 = 238.0;
 const BLOOM_STRENGTH: f32 = 0.06;
 const EDGE_SOFTNESS: f32 = 0.20;
 const VIGNETTE: f32 = 0.12;
+
+/// How many bands of the picture to work on at once.
+fn bands() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(8)
+}
+
 
 /// Run the whole treatment over a finished world picture.
 pub fn finish(frame: &mut Frame) {
@@ -48,38 +57,53 @@ fn mix(a: Rgb, b: Rgb, t: f32) -> Rgb {
 /// One pass over the picture, blending across luma edges.
 fn soften_edges(frame: &mut Frame) {
     let (w, h) = (frame.w, frame.h);
-    let src = frame.color.clone();
-    let at = |x: usize, y: usize| src[y * w + x];
-    let l = |x: usize, y: usize| luma(at(x, y));
-
-    for y in 1..h - 1 {
-        for x in 1..w - 1 {
-            let n = l(x, y - 1);
-            let s = l(x, y + 1);
-            let e = l(x + 1, y);
-            let west = l(x - 1, y);
-            let vertical = (n - s).abs();
-            let horizontal = (e - west).abs();
-            let edge = vertical.max(horizontal);
-            if edge < 12.0 {
-                continue;
-            }
-            // Across the edge, or along it? The stronger difference says which
-            // way the edge runs, and the neighbour pair across it is the pair
-            // that should be averaged.
-            let (a, b) = if horizontal >= vertical {
-                (at(x - 1, y), at(x + 1, y))
-            } else {
-                (at(x, y - 1), at(x, y + 1))
-            };
-            let t = (edge / 90.0).min(1.0) * EDGE_SOFTNESS;
-            if t <= 0.02 {
-                continue;
-            }
-            let average = mix(a, b, 0.5);
-            frame.color[y * w + x] = mix(at(x, y), average, t);
-        }
+    if w < 3 || h < 3 {
+        return;
     }
+    // The picture is read from a snapshot and written back band by band, so
+    // every thread reads the same unmodified frame: nothing depends on the file
+    // order the work is handed out in.
+    let src = frame.color.clone();
+    let src = &src;
+    let rows = h.div_ceil(bands()).max(1);
+    std::thread::scope(|scope| {
+        for (i, band) in frame.color.chunks_mut(rows * w).enumerate() {
+            scope.spawn(move || {
+                let y0 = i * rows;
+                let at = |x: usize, y: usize| src[y * w + x];
+                let l = |x: usize, y: usize| luma(at(x, y));
+                for local in 0..band.len() / w {
+                    let y = y0 + local;
+                    if y == 0 || y >= h - 1 {
+                        continue;
+                    }
+                    for x in 1..w - 1 {
+                        let n = l(x, y - 1);
+                        let s = l(x, y + 1);
+                        let e = l(x + 1, y);
+                        let west = l(x - 1, y);
+                        let vertical = (n - s).abs();
+                        let horizontal = (e - west).abs();
+                        let edge = vertical.max(horizontal);
+                        if edge < 12.0 {
+                            continue;
+                        }
+                        let (a, b) = if horizontal >= vertical {
+                            (at(x - 1, y), at(x + 1, y))
+                        } else {
+                            (at(x, y - 1), at(x, y + 1))
+                        };
+                        let t = (edge / 90.0).min(1.0) * EDGE_SOFTNESS;
+                        if t <= 0.02 {
+                            continue;
+                        }
+                        let average = mix(a, b, 0.5);
+                        band[local * w + x] = mix(at(x, y), average, t);
+                    }
+                }
+            });
+        }
+    });
 }
 
 /// Soft glow on the brightest parts of the picture.
@@ -164,20 +188,29 @@ fn grade(frame: &mut Frame) {
     let cx = w as f32 / 2.0;
     let cy = h as f32 / 2.0;
     let far = (cx * cx + cy * cy).sqrt().max(1.0);
-    for y in 0..h {
-        for x in 0..w {
-            let dx = x as f32 - cx;
-            let dy = (y as f32 - cy) * 0.9;
-            let d = ((dx * dx + dy * dy).sqrt() / far).min(1.0);
-            let v = 1.0 - VIGNETTE * d * d;
-            let c = frame.color[y * w + x];
-            frame.color[y * w + x] = Rgb::new(
-                (c.r as f32 * v).min(255.0) as u8,
-                (c.g as f32 * v).min(255.0) as u8,
-                (c.b as f32 * v).min(255.0) as u8,
-            );
+    let rows = h.div_ceil(bands()).max(1);
+    std::thread::scope(|scope| {
+        for (i, band) in frame.color.chunks_mut(rows * w).enumerate() {
+            scope.spawn(move || {
+                let y0 = i * rows;
+                for local in 0..band.len() / w {
+                    let y = y0 + local;
+                    let dy = (y as f32 - cy) * 0.9;
+                    for x in 0..w {
+                        let dx = x as f32 - cx;
+                        let d = ((dx * dx + dy * dy).sqrt() / far).min(1.0);
+                        let v = 1.0 - VIGNETTE * d * d;
+                        let c = band[local * w + x];
+                        band[local * w + x] = Rgb::new(
+                            (c.r as f32 * v).min(255.0) as u8,
+                            (c.g as f32 * v).min(255.0) as u8,
+                            (c.b as f32 * v).min(255.0) as u8,
+                        );
+                    }
+                }
+            });
         }
-    }
+    });
 }
 
 #[cfg(test)]

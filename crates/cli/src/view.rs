@@ -1,9 +1,14 @@
 //! Where the game is drawn: a real window when the machine has a display, and
 //! ANSI colour blocks in the terminal when it does not.
 //!
-//! Everything is drawn on a fixed 640x360 canvas. The window scales that canvas
-//! up to whatever the desktop gives us (2x by default, resizable), the terminal
-//! averages it down into character cells. Neither path needs a GPU.
+//! Everything is drawn on a fixed 1280x720 canvas and the window scales that to
+//! whatever the desktop gives us, the terminal averages it down into character
+//! cells. Neither path needs a GPU.
+//!
+//! The canvas was 640x360, which was a quarter of the pixels the overlay was laid
+//! out for: the score bug filled a third of the picture and every edge stepped a
+//! whole pixel. The men were drawn at twice the canvas and boxed back down to
+//! hide it, which bought them nothing the canvas could not give them directly.
 
 use std::io::{self, Write};
 
@@ -16,8 +21,10 @@ use crate::view_bevy::BevyView;
 use nopads_platform::pad::{Buttons, Input};
 use nopads_platform::settings::Settings;
 
-pub const CANVAS_W: usize = 640;
-pub const CANVAS_H: usize = 360;
+/// The picture is drawn at 720p: the size the broadcast overlay was always laid
+/// out for.
+pub const CANVAS_W: usize = 1280;
+pub const CANVAS_H: usize = 720;
 
 fn paper() -> Rgb {
     Rgb::new(232, 238, 246)

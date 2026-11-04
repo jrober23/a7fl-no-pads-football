@@ -698,13 +698,24 @@ impl Broadcast {
         mode: CameraMode,
         ui: &crate::passing::PassUi,
     ) -> Frame {
+        let started = std::time::Instant::now();
         let (mut frame, camera) = self.live_scene(sim, mode);
+        let world = started.elapsed();
         ui.draw(&mut frame, &camera, &self.scene.projector);
         Self::fumble_alert(&mut frame, sim.fumble_alert, &sim.fumble_note);
+        if std::env::var_os("NOPADS_TIMING").is_some() {
+            eprintln!(
+                "world+post {:>6.1} ms   overlay {:>6.1} ms   threads {}",
+                world.as_secs_f64() * 1000.0,
+                started.elapsed().as_secs_f64() * 1000.0 - world.as_secs_f64() * 1000.0,
+                crate::scene::threads()
+            );
+        }
         frame
     }
 
     fn live_scene(&mut self, sim: &PlaySim, mode: CameraMode) -> (Frame, Camera) {
+        let scene_start = std::time::Instant::now();
         let off = sim.setup.offense_team;
         let def = sim.setup.defense_team;
         let carrier = sim.carrier;
@@ -773,8 +784,13 @@ impl Broadcast {
         };
         self.sync_lens(&camera);
         let mut frame = Frame::new(self.w, self.h);
+        let t_pre = scene_start.elapsed();
+        let t0 = std::time::Instant::now();
         self.paint_environment(&mut frame, &camera);
+        let t_env = t0.elapsed();
+        let t1 = std::time::Instant::now();
         self.paint_lines(&mut frame, &camera, sim.los, dir, sim.setup.to_go);
+        let t_lines = t1.elapsed();
         // The call is only on the grass while the preview is held. Drawn all the
         // time it was a call sheet lying open for whoever is on the other side.
         if sim.previewing() {
@@ -786,11 +802,15 @@ impl Broadcast {
                 self.paint_routes(&mut frame, &camera, sim, true);
             }
         }
+        let t2 = std::time::Instant::now();
         self.draw_bodies(&mut frame, &camera, &players);
+        let t_bodies = t2.elapsed();
         // The treatment goes on the world here, before the overlays: the flag, the
         // ball marker and the result word are drawn over it, so their colours stay
         // exact and their edges stay sharp.
+        let t3 = std::time::Instant::now();
         crate::post::finish(&mut frame);
+        let t_post = t3.elapsed();
         if let Some(flag) = &sim.flag {
             self.paint_flag(&mut frame, &camera, flag, sim.t - sim.flag_at);
         }
@@ -801,6 +821,17 @@ impl Broadcast {
         }
         if let Some(result) = &sim.result {
             self.paint_result_word(&mut frame, result);
+        }
+        if std::env::var_os("NOPADS_TIMING").is_some() {
+            eprintln!(
+                "  pre {:>5.1}  env {:>5.1}  lines {:>5.1}  bodies {:>5.1}  post {:>5.1}  all {:>5.1}",
+                t_pre.as_secs_f64() * 1000.0,
+                t_env.as_secs_f64() * 1000.0,
+                t_lines.as_secs_f64() * 1000.0,
+                t_bodies.as_secs_f64() * 1000.0,
+                t_post.as_secs_f64() * 1000.0,
+                scene_start.elapsed().as_secs_f64() * 1000.0
+            );
         }
         (frame, camera)
     }
@@ -884,101 +915,107 @@ impl Broadcast {
 
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
         // Shadows first so every player casts one.
+        let t = std::time::Instant::now();
         self.draw_shadows(frame, camera, bodies);
+        let shadow = t.elapsed();
+        let t = std::time::Instant::now();
         self.paint_men(frame, camera, bodies);
+        if std::env::var_os("NOPADS_TIMING").is_some() {
+            eprintln!(
+                "    shadows {:>5.1}  men {:>5.1}",
+                shadow.as_secs_f64() * 1000.0,
+                t.elapsed().as_secs_f64() * 1000.0
+            );
+        }
     }
 
-    /// The men themselves, drawn at twice the canvas and boxed back down.
+    /// The men themselves, drawn straight onto the canvas.
     ///
-    /// The picture is a 640x360 canvas stretched over the window, so the worst of
-    /// what read as "low resolution" was never the polygon count: it was a
-    /// silhouette that could only step a whole pixel at a time. At four samples a
-    /// pixel an edge that fell between two pixels comes out as one half-covered
-    /// pixel, which is what a sharper picture actually looks like. Only the men are
-    /// drawn this way, because they are where the stair-step shows and they are a
-    /// small enough part of the frame to afford four samples each: the sky, the
-    /// turf, the stands and the crowd stay at canvas size, and nothing else in the
-    /// picture is four times the pixel count.
+    /// They used to be rendered at twice the canvas and averaged back down,
+    /// because at 640x360 a silhouette could only step a whole pixel at a time
+    /// and the men are where that showed. The canvas is 1280x720 now, so the
+    /// second pass was a quarter of the frame's work for a picture the frame can
+    /// already resolve: same pixels per man, a quarter of the cost.
     fn paint_men(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
-        const K: usize = 2;
-        let saved = self.scene.projector;
-        let mut fine = Frame::new(frame.w * K, frame.h * K);
-        // The same field of view at twice the size is exactly twice the focal
-        // length: no lens changes, only the resolution it is resolved at.
-        self.scene.projector = crate::scene::Projector {
-            w: saved.w * K as f32,
-            h: saved.h * K as f32,
-            focal: saved.focal * K as f32,
-        };
-        self.paint_men_at(&mut fine, camera, bodies);
-        self.scene.projector = saved;
+        self.paint_men_at(frame, camera, bodies);
+    }
 
-        let samples = (K * K) as f32;
-        for y in 0..frame.h {
-            for x in 0..frame.w {
-                let mut acc = [0u32; 3];
-                let mut hit = 0u32;
-                for oy in 0..K {
-                    for ox in 0..K {
-                        let i = (y * K + oy) * fine.w + (x * K + ox);
-                        // Nothing was drawn at this sample, so the turf shows.
-                        if fine.depth[i] <= 0.0 {
-                            continue;
-                        }
-                        let c = fine.color[i];
-                        acc[0] += c.r as u32;
-                        acc[1] += c.g as u32;
-                        acc[2] += c.b as u32;
-                        hit += 1;
-                    }
-                }
-                if hit == 0 {
-                    continue;
-                }
-                let n = hit as f32;
-                let men = Rgb::new(
-                    (acc[0] as f32 / n) as u8,
-                    (acc[1] as f32 / n) as u8,
-                    (acc[2] as f32 / n) as u8,
-                );
-                let i = y * frame.w + x;
-                frame.color[i] = frame.color[i].lerp(men, n / samples);
-            }
+    /// A man's pose, shared by his body and by his shadow, so the two can never
+    /// disagree about what he is doing.
+    fn pose_of(p: &RenderPlayer) -> Pose {
+        Pose {
+            run_phase: p.run_phase,
+            speed: p.speed,
+            carrying: p.carrying,
+            blocking: p.blocking,
+            hands: p.hands,
+            arms_up: p.arms_up,
+            down: p.down,
+            wrapping: p.wrap,
+            tackled: p.tackled,
+            celebrating: p.celebrate,
+            strafe: 0.0,
+            motion: p.motion,
+            motion_progress: p.motion_progress,
         }
     }
 
-    /// The shadows, at canvas size: a soft ellipse on the grass has nothing to gain
-    /// from being resolved four times, and it is drawn before the men so nothing
-    /// can land on top of them.
+    /// The shadows, drawn before the men so nothing lands on top of them.
+    ///
+    /// A man used to cast an ellipse under his feet, which is part of why he
+    /// looked pasted onto the grass: the eye reads a body as standing on the
+    /// ground by the shape of the hole it makes in the light. This lays his
+    /// actual silhouette down instead -- every triangle of him flattened along
+    /// the sun -- so a run shows a stride, a dive throws the whole body forward,
+    /// and a blocker's arms are part of the shape on the turf.
+    ///
+    /// It is built at half the canvas: a shadow is a blurred silhouette and
+    /// carries no detail a smaller mask would lose, so the mask, its blur and
+    /// its composite cost a quarter of what they did at full size. The far level
+    /// of detail is all the shape it needs, and a second close build per man
+    /// would cost more than the shadow is worth.
     fn draw_shadows(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
-        for p in bodies {
-            let radius = if p.down { 0.72 } else { 0.5 };
-            self.scene
-                .draw_shadow(frame, camera, Vec3::new(p.pos.x, p.pos.y, 0.0), radius, 0.42);
+        const DARKNESS: f32 = 0.42;
+        const TINT: Rgb = Rgb::hex(0x0B1A10);
+        /// How much smaller the shadow mask is than the picture.
+        const SHRINK: usize = 2;
+        if frame.w < SHRINK || frame.h < SHRINK {
+            return;
         }
+        let mut mask = crate::raster::Mask::new(frame.w / SHRINK, frame.h / SHRINK);
+        let full = self.scene.projector;
+        self.scene.projector = crate::scene::Projector {
+            w: full.w / SHRINK as f32,
+            h: full.h / SHRINK as f32,
+            focal: full.focal / SHRINK as f32,
+        };
+        let sun = self.scene.lighting.sun;
+        for p in bodies {
+            let roster = &self.teams[p.team].roster[p.roster];
+            let uniform = &self.uniforms[p.team];
+            let mut mesh = players::build_mesh_at(
+                roster,
+                uniform,
+                &Self::pose_of(p),
+                p.roster as u32,
+                players::Detail::Far,
+            );
+            mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
+            self.scene.cast_silhouette(&mut mask, camera, &mesh, sun);
+        }
+        self.scene.projector = full;
+        mask.blur(2);
+        mask.cast_scaled(frame, SHRINK, DARKNESS, TINT);
     }
 
     /// One build and one draw per man, into whichever frame the caller gave it.
     fn paint_men_at(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
         let mut close_builds = 0;
+        let mut built: Vec<Mesh> = Vec::with_capacity(bodies.len());
         for p in bodies {
             let roster = &self.teams[p.team].roster[p.roster];
             let uniform = &self.uniforms[p.team];
-            let pose = Pose {
-                run_phase: p.run_phase,
-                speed: p.speed,
-                carrying: p.carrying,
-                blocking: p.blocking,
-                hands: p.hands,
-                arms_up: p.arms_up,
-                down: p.down,
-                wrapping: p.wrap,
-                tackled: p.tackled,
-                celebrating: p.celebrate,
-                strafe: 0.0,
-                motion: p.motion,
-                motion_progress: p.motion_progress,
-            };
+            let pose = Self::pose_of(p);
             // A man a long way from the lens is built cheaply: at that size the
             // eyes and the quadriceps are less than a pixel each.
             let dist = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
@@ -994,8 +1031,12 @@ impl Broadcast {
             }
             let mut mesh = players::build_mesh_at(roster, uniform, &pose, p.roster as u32, detail);
             mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
-            self.scene.draw_mesh(frame, &mesh, camera);
+            built.push(mesh);
         }
+        // One pass for the whole field: the men are prepared together and the
+        // frame is split across the machine once.
+        let meshes: Vec<&Mesh> = built.iter().collect();
+        self.scene.draw_meshes(frame, &meshes, camera);
     }
 
     /// The crowd for this frame: everybody bobbing on his own phase, with a few
@@ -1132,29 +1173,58 @@ impl Broadcast {
     fn paint_environment(&mut self, frame: &mut Frame, camera: &Camera) {
         // Sky gradient: night game under the lights, with the sodium glow of the
         // city sitting on the horizon behind the far stand.
+        let ts = std::time::Instant::now();
         let [top, mid, horizon] = self.venue.sky();
         let h = frame.h.max(1) as f32;
-        for row in 0..frame.h as i32 {
-            let t = row as f32 / h;
-            let c = if t < 0.55 {
-                top.lerp(mid, t / 0.55)
-            } else {
-                mid.lerp(horizon, (t - 0.55) / 0.45)
-            };
-            frame.fill_rect(0, row, frame.w as i32, 1, c);
-        }
+        let w = frame.w;
+        // A gradient is one colour per row, so it is written a band at a time:
+        // on a wide shot the sky is a large share of the frame's pixels and a
+        // row-by-row fill is the whole picture written one line at a time.
+        std::thread::scope(|scope| {
+            for mut tile in frame.tiles(crate::scene::threads()) {
+                scope.spawn(move || {
+                    for local in 0..tile.rows {
+                        let t = (tile.y0 + local) as f32 / h;
+                        let c = if t < 0.55 {
+                            top.lerp(mid, t / 0.55)
+                        } else {
+                            mid.lerp(horizon, (t - 0.55) / 0.45)
+                        };
+                        tile.color[local * w..(local + 1) * w].fill(c);
+                    }
+                });
+            }
+        });
 
+        let t_sky = ts.elapsed();
+        let tg = std::time::Instant::now();
         let (x0, x1, y0, y1) = fieldtex::coverage();
         self.scene.draw_ground(frame, &self.field, camera, x0, x1, y0, y1, 2.2);
         self.scene.draw_mesh(frame, &self.stands, camera);
         // The crowd moves: bodies bob on their own phases and a few put their
         // arms up. It is rebuilt every frame because placing a mesh bakes it.
+        let t_ground = tg.elapsed();
+        let tsc = std::time::Instant::now();
         let crowd = self.crowd_frame();
-        self.scene.draw_mesh(frame, &crowd, camera);
-        // Outside the glass, the school keeps swimming.
-        if !self.fish.is_empty() {
-            let school = crate::venues::school_frame(&self.fish, self.crowd_t);
-            self.scene.draw_mesh(frame, &school, camera);
+        let school = (!self.fish.is_empty())
+            .then(|| crate::venues::school_frame(&self.fish, self.crowd_t));
+        // One pass for all the scenery rather than one per mesh: each pass costs
+        // a hand-out to the machine, and the stands, the crowd and the school are
+        // the same picture.
+        let mut scenery: Vec<&Mesh> = Vec::with_capacity(3);
+        scenery.push(&self.stands);
+        scenery.push(&crowd);
+        if let Some(school) = &school {
+            scenery.push(school);
+        }
+        self.scene.draw_meshes(frame, &scenery, camera);
+        if std::env::var_os("NOPADS_TIMING").is_some() {
+            eprintln!(
+                "    sky {:>5.1}  ground {:>5.1}  scenery {:>5.1}",
+                t_sky.as_secs_f64() * 1000.0,
+                t_ground.as_secs_f64() * 1000.0,
+                tsc.elapsed().as_secs_f64() * 1000.0
+            );
         }
     }
 

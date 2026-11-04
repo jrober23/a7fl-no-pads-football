@@ -22,8 +22,9 @@
 
 use nopads_core::math::{Rgb, Vec3};
 use nopads_core::moves::Kind;
-use nopads_core::team::{JerseyPattern, Player, Uniform};
+use nopads_core::team::{Player, Uniform};
 
+use crate::cloth;
 use crate::head::Head;
 use crate::scene::Mesh;
 
@@ -322,9 +323,11 @@ fn loft(
         .iter()
         .map(|r| angles.iter().map(|a| ring_normal(r, *a, round)).collect())
         .collect();
+    let bands = (rings.len() - 1) as f32;
     for i in 0..rings.len() - 1 {
         for k in 0..sides {
             let k1 = (k + 1) % sides;
+            let before = mesh.tris.len();
             mesh.quad_curved(
                 grid[i][k],
                 normals[i][k],
@@ -337,6 +340,14 @@ fn loft(
                 color_at(i, k),
                 1.0,
             );
+            // Round the body once for `u`, down it once for `v`, so a texture on
+            // a loft is cloth wrapped around a man. `k + 1` rather than `k1`,
+            // because the last panel has to end at 1.0 instead of snapping back
+            // to 0 and screwing the pattern once round the whole shirt.
+            let u0 = k as f32 / sides as f32;
+            let u1 = (k + 1) as f32 / sides as f32;
+            let (v0, v1) = (i as f32 / bands, (i + 1) as f32 / bands);
+            mesh.set_quad_uv(before, [(u0, v0), (u1, v0), (u1, v1), (u0, v1)]);
         }
     }
     // Caps keep a hard edge: the rim of a shoulder is a rim, not a smooth bend.
@@ -346,7 +357,10 @@ fn loft(
         let c = rings[0].center;
         for k in 0..sides {
             let k1 = (k + 1) % sides;
+            let before = mesh.tris.len();
             mesh.tri_curved(c, down, grid[0][k1], down, grid[0][k], down, color_at(0, k), 0.82);
+            let (u0, u1) = (k as f32 / sides as f32, (k + 1) as f32 / sides as f32);
+            mesh.set_tri_uv(before, [(0.5, 0.0), (u1, 0.0), (u0, 0.0)]);
         }
     }
     if cap_top {
@@ -354,7 +368,10 @@ fn loft(
         let c = rings[last].center;
         for k in 0..sides {
             let k1 = (k + 1) % sides;
+            let before = mesh.tris.len();
             mesh.tri_curved(c, up, grid[last][k], up, grid[last][k1], up, color_at(last, k), 0.92);
+            let (u0, u1) = (k as f32 / sides as f32, (k + 1) as f32 / sides as f32);
+            mesh.set_tri_uv(before, [(0.5, 1.0), (u0, 1.0), (u1, 1.0)]);
         }
     }
 }
@@ -1123,39 +1140,10 @@ pub fn build_mesh_at(
     let cloth = |i: usize, k: usize| -> Rgb {
         let a = (k as f32 + 0.5) / body_sides as f32 * std::f32::consts::TAU;
         let lateral = a.sin().abs();
-        let base = match uniform.pattern {
-            JerseyPattern::Solid => jersey,
-            // A yoke across the top of the shoulders and the sleeves.
-            JerseyPattern::ShoulderStripe => {
-                if i == torso_bands - 1 && lateral > 0.45 {
-                    accent
-                } else {
-                    jersey
-                }
-            }
-            JerseyPattern::SidePanel => {
-                if lateral > 0.84 {
-                    accent
-                } else {
-                    jersey
-                }
-            }
-            // A band across the chest, which is the sash reading at this distance.
-            JerseyPattern::Sash => {
-                if i == 2 {
-                    accent
-                } else {
-                    jersey
-                }
-            }
-            JerseyPattern::Hoops => {
-                if i % 2 == 1 {
-                    accent
-                } else {
-                    jersey
-                }
-            }
-        };
+        // One table paints the faces of a distant man and the cloth of a near
+        // one, so a hoop cannot land on a different band of the shirt depending
+        // on how far away he is standing.
+        let base = cloth::pattern_color(uniform, i, torso_bands, lateral);
         // Cloth is not moulded plastic. A fold catches the light and the seam
         // between two panels sits in shadow, so the shirt is broken into soft
         // vertical bands instead of reading as one smooth painted tube.
@@ -1168,7 +1156,17 @@ pub fn build_mesh_at(
         };
         base.scale(fold)
     };
+    let torso_first = mesh.tris.len();
     loft(&mut mesh, &torso, body_sides, TORSO_ROUND, true, true, cloth);
+    let torso_end = mesh.tris.len();
+    // The shirt is cloth, and cloth is a texture: a weave two pixels wide, the
+    // seams where the panels join, the stitch along the hem. A man far enough
+    // away to skip the numbers is far enough away to skip the weave too, and
+    // stays on flat colour.
+    if detail.paint() {
+        let slot = mesh.add_texture(cloth::jersey_texture(uniform, torso_bands));
+        mesh.texture_range(torso_first..torso_end, slot);
+    }
 
     // Hem of the jersey, on top of the shorts.
     let hem_lo = Ring::new(spine(0.0), 0.090 * bulk, shoulder_w * 0.276, hip_yaw * 0.9);
@@ -2165,6 +2163,17 @@ mod tests {
             "a slide is lower than standing: {:.2} vs {:.2}",
             slide.5,
             standing.5
+        );
+    }
+    #[test]
+    fn the_shirt_is_cut_from_a_texture_and_the_skin_is_not() {
+        let mesh = figure(None, 0.0);
+        assert_eq!(mesh.textures.len(), 1, "the shirt carries no texture");
+        let cut = mesh.tris.iter().filter(|t| t.tex.is_some()).count();
+        assert!(cut > 0, "not one triangle of the shirt is cut from it");
+        assert!(
+            cut < mesh.tris.len(),
+            "the skin and the shorts went with the shirt"
         );
     }
 }

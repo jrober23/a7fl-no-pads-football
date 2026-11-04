@@ -2,7 +2,7 @@
 
 use nopads_core::math::{clamp, Rgb, Vec3};
 
-use crate::raster::{Frame, Texture};
+use crate::raster::{Frame, Mask, Texture};
 
 #[derive(Clone, Debug)]
 pub struct Camera {
@@ -97,6 +97,11 @@ pub struct Tri {
     pub color: Rgb,
     /// Multiplier applied on top of the computed lighting (fake ambient occlusion).
     pub shade: f32,
+    /// Texture coordinates at each corner, used only by a textured mesh.
+    pub uv: [(f32, f32); 3],
+    /// Which of the mesh's textures this triangle is cut from. `None` is vertex
+    /// colour, which is still everything that is not cloth.
+    pub tex: Option<u8>,
 }
 
 #[inline]
@@ -107,11 +112,14 @@ fn face_normal(a: Vec3, b: Vec3, c: Vec3) -> Vec3 {
 #[derive(Clone, Default, Debug)]
 pub struct Mesh {
     pub tris: Vec<Tri>,
+    /// Textures this mesh is cut from, referenced by `Tri::tex`. Almost every
+    /// mesh has none; a player's shirt has one.
+    pub textures: Vec<std::sync::Arc<Texture>>,
 }
 
 impl Mesh {
     pub fn new() -> Self {
-        Mesh { tris: Vec::new() }
+        Mesh { tris: Vec::new(), textures: Vec::new() }
     }
 
     pub fn is_empty(&self) -> bool {
@@ -120,12 +128,12 @@ impl Mesh {
 
     pub fn tri(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Rgb) {
         let n = face_normal(a, b, c);
-        self.tris.push(Tri { a, b, c, na: n, nb: n, nc: n, color, shade: 1.0 });
+        self.tris.push(Tri { a, b, c, na: n, nb: n, nc: n, color, shade: 1.0, uv: [(0.0, 0.0); 3], tex: None });
     }
 
     pub fn tri_shaded(&mut self, a: Vec3, b: Vec3, c: Vec3, color: Rgb, shade: f32) {
         let n = face_normal(a, b, c);
-        self.tris.push(Tri { a, b, c, na: n, nb: n, nc: n, color, shade });
+        self.tris.push(Tri { a, b, c, na: n, nb: n, nc: n, color, shade, uv: [(0.0, 0.0); 3], tex: None });
     }
 
     /// A triangle whose corners carry their own normals, so the shading runs
@@ -142,7 +150,7 @@ impl Mesh {
         color: Rgb,
         shade: f32,
     ) {
-        self.tris.push(Tri { a, b, c, na, nb, nc, color, shade });
+        self.tris.push(Tri { a, b, c, na, nb, nc, color, shade, uv: [(0.0, 0.0); 3], tex: None });
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -397,6 +405,37 @@ impl Mesh {
 
     /// Rotate about Z, scale, then translate every triangle. Normals rotate with
     /// the vertices; a uniform scale leaves their lengths alone.
+    /// Add a texture to this mesh and get the slot a triangle points at.
+    pub fn add_texture(&mut self, tex: std::sync::Arc<Texture>) -> u8 {
+        self.textures.push(tex);
+        (self.textures.len() - 1) as u8
+    }
+
+    /// Point a run of triangles at a texture slot.
+    pub fn texture_range(&mut self, range: std::ops::Range<usize>, slot: u8) {
+        let from = range.start.min(self.tris.len());
+        let to = range.end.min(self.tris.len());
+        for tri in &mut self.tris[from..to] {
+            tri.tex = Some(slot);
+        }
+    }
+
+    /// Give the two triangles of one quad their corners' texture coordinates.
+    pub fn set_quad_uv(&mut self, at: usize, uv: [(f32, f32); 4]) {
+        if let Some(t) = self.tris.get_mut(at) {
+            t.uv = [uv[0], uv[1], uv[2]];
+        }
+        if let Some(t) = self.tris.get_mut(at + 1) {
+            t.uv = [uv[0], uv[2], uv[3]];
+        }
+    }
+
+    pub fn set_tri_uv(&mut self, at: usize, uv: [(f32, f32); 3]) {
+        if let Some(t) = self.tris.get_mut(at) {
+            t.uv = uv;
+        }
+    }
+
     pub fn place(&mut self, offset: Vec3, yaw: f32, scale: f32) {
         let (s, c) = yaw.sin_cos();
         for t in self.tris.iter_mut() {
@@ -481,6 +520,31 @@ fn clip_near(poly: &[Vec3], near: f32) -> Vec<Vec3> {
     out
 }
 
+/// Where a point drops its shadow: straight down the sun's rays to the turf.
+pub fn shadow_on_ground(p: Vec3, sun: Vec3) -> Vec3 {
+    // A sun lying on the horizon would throw a shadow to the end of the earth;
+    // holding it at a low angle gives a long shadow instead of an endless one.
+    let elevation = sun.z.max(0.22);
+    Vec3::new(p.x - sun.x * p.z / elevation, p.y - sun.y * p.z / elevation, 0.02)
+}
+
+fn clip_near_vs(poly: &[Vec3]) -> Vec<Vec3> {
+    let mut out = Vec::with_capacity(poly.len() + 2);
+    for i in 0..poly.len() {
+        let a = poly[i];
+        let b = poly[(i + 1) % poly.len()];
+        let a_in = a.z >= 0.15;
+        let b_in = b.z >= 0.15;
+        if a_in {
+            out.push(a);
+        }
+        if a_in != b_in {
+            out.push(a.lerp(b, (0.15 - a.z) / (b.z - a.z)));
+        }
+    }
+    out
+}
+
 fn fog_amount(depth: f32, density: f32) -> f32 {
     clamp(1.0 - (-depth * density).exp(), 0.0, 0.92)
 }
@@ -495,7 +559,26 @@ impl SceneRenderer {
         SceneRenderer { projector: Projector::new(w, h, fov), lighting: Lighting::default() }
     }
 
+    /// Draw a mesh: project and light its triangles, then fill the frame a band
+    /// at a time.
     pub fn draw_mesh(&self, frame: &mut Frame, mesh: &Mesh, cam: &Camera) {
+        let mut work = Vec::with_capacity(mesh.tris.len());
+        self.prepare(mesh, cam, &mut work);
+        fill_tiles(frame, &work);
+    }
+
+    /// Draw several meshes in one pass, so a frame of fourteen men is split
+    /// across the machine once rather than fourteen times.
+    pub fn draw_meshes(&self, frame: &mut Frame, meshes: &[&Mesh], cam: &Camera) {
+        let mut work = Vec::new();
+        for mesh in meshes {
+            self.prepare(mesh, cam, &mut work);
+        }
+        fill_tiles(frame, &work);
+    }
+
+    /// Project and light every triangle of a mesh into something a band can fill.
+    fn prepare<'a>(&self, mesh: &'a Mesh, cam: &Camera, out: &mut Vec<Ready<'a>>) {
         // The stadium is a few thousand small triangles and most frames see a
         // fraction of them, so anything sitting wholly outside one side of the
         // lens is dropped before it is lit or projected.
@@ -569,6 +652,8 @@ impl SceneRenderer {
             let mut projected = [(0.0f32, 0.0f32, 0.0f32); 5];
             let mut n = 0;
             let mut lost = false;
+            let uv = tri.uv;
+            let textured = tri.tex.and_then(|slot| mesh.textures.get(slot as usize)).map(|t| t.as_ref());
             for v in clipped {
                 match self.projector.project(*v) {
                     Some(p) => {
@@ -601,19 +686,38 @@ impl SceneRenderer {
                 } else {
                     [flat_shade; 3]
                 };
-                frame.shade_tri(
-                    [projected[0], projected[i], projected[i + 1]],
-                    tri.color,
+                // A clipped triangle has more than three corners, so its uvs
+                // cannot be taken from the mesh's three: it is untextured and
+                // carries zeros.
+                let uvs = if whole {
+                    [uv[0], uv[i], uv[i + 1]]
+                } else {
+                    [(0.0f32, 0.0f32); 3]
+                };
+                out.push(Ready {
+                    p: [projected[0], projected[i], projected[i + 1]],
+                    uv: uvs,
                     shades,
-                    self.lighting.fog,
-                    fog,
-                );
+                    color: tri.color,
+                    // A clipped triangle has corners the mesh knows nothing
+                    // about, and its uvs would have to be rebuilt through the
+                    // clip: it keeps the flat colour its shading already falls
+                    // back to.
+                    tex: if whole { textured } else { None },
+                    fog: self.lighting.fog,
+                    fog_t: fog,
+                });
             }
         }
     }
 
     /// Draw the turf as a textured grid. `world` is `(x0, x1, y0, y1)` in yards and
     /// the texture maps onto exactly that rectangle.
+    ///
+    /// The grid is projected once into a list of screen triangles and then filled
+    /// a band at a time. Each band used to walk the whole grid itself, which meant
+    /// the projection of a couple of thousand cells was repeated on every core and
+    /// the list was rebuilt from scratch every frame.
     #[allow(clippy::too_many_arguments)]
     pub fn draw_ground(
         &self,
@@ -630,6 +734,7 @@ impl SceneRenderer {
         let ny = (((y1 - y0) / step).ceil() as usize).max(1);
         let sun_z = self.lighting.sun.z.abs();
         let shade = self.lighting.ambient + sun_z * (1.0 - self.lighting.ambient);
+        let mut work: Vec<GroundTri<'_>> = Vec::with_capacity(nx * ny * 2);
 
         for i in 0..nx {
             for j in 0..ny {
@@ -648,9 +753,6 @@ impl SceneRenderer {
                 let p11 = Vec3::new(xb, yb, 0.0);
                 let p01 = Vec3::new(xa, yb, 0.0);
 
-                // Two triangles; clip each against the near plane. This loop runs
-                // a couple of thousand times a frame, so it takes the allocation
-                // free path for tiles that are wholly in front of the lens.
                 for tri in [
                     [(p00, u0, v0), (p10, u1, v0), (p11, u1, v1)],
                     [(p00, u0, v0), (p11, u1, v1), (p01, u0, v1)],
@@ -690,41 +792,22 @@ impl SceneRenderer {
                     if lost || n < 3 {
                         continue;
                     }
-                    let depth = clipped.iter().map(|(v, _, _)| v.z).sum::<f32>() / clipped.len() as f32;
+                    let depth =
+                        clipped.iter().map(|(v, _, _)| v.z).sum::<f32>() / clipped.len() as f32;
                     let fog = fog_amount(depth, self.lighting.fog_density);
                     for k in 1..n - 1 {
-                        frame.textured_tri(
-                            [projected[0], projected[k], projected[k + 1]],
+                        work.push(GroundTri {
+                            v: [projected[0], projected[k], projected[k + 1]],
                             tex,
                             shade,
-                            self.lighting.fog,
-                            fog,
-                        );
+                            fog: self.lighting.fog,
+                            fog_t: fog,
+                        });
                     }
                 }
             }
         }
-    }
-
-    /// Soft elliptical shadow on the turf, drawn before the players.
-    pub fn draw_shadow(&self, frame: &mut Frame, cam: &Camera, center: Vec3, radius: f32, alpha: f32) {
-        let ring = 10;
-        let mut pts: Vec<(f32, f32, f32)> = Vec::new();
-        for i in 0..ring {
-            let a = i as f32 / ring as f32 * std::f32::consts::TAU;
-            let p = Vec3::new(center.x + a.cos() * radius, center.y + a.sin() * radius * 0.75, 0.02);
-            match self.projector.project(cam.view(p)) {
-                Some(v) => pts.push(v),
-                None => return,
-            }
-        }
-        for i in 1..pts.len() - 1 {
-            frame.flat_tri_alpha(
-                [pts[0], pts[i], pts[i + 1]],
-                Rgb::hex(0x0B1A10),
-                alpha,
-            );
-        }
+        fill_ground(frame, &work);
     }
 
     /// A ring on the turf under the ball. Nothing on this field casts a shadow
@@ -783,6 +866,43 @@ impl SceneRenderer {
         }
         frame.fill_rect(cx as i32 - 2, cy as i32 - 2, 4, 4, color);
     }
+    /// Lay a body's silhouette on the ground.
+    ///
+    /// Every triangle of the mesh is flattened along the sun and filled into a
+    /// coverage mask, so what lands on the turf is the shape of the man -- a
+    /// stride, a dive, an arm up for a tackle -- rather than a disc under him.
+    pub fn cast_silhouette(&self, mask: &mut Mask, cam: &Camera, mesh: &Mesh, sun: Vec3) {
+        for tri in &mesh.tris {
+            let view = [
+                cam.view(shadow_on_ground(tri.a, sun)),
+                cam.view(shadow_on_ground(tri.b, sun)),
+                cam.view(shadow_on_ground(tri.c, sun)),
+            ];
+            if view.iter().all(|v| v.z >= cam.near) {
+                self.mask_poly(mask, &view);
+            } else if view.iter().any(|v| v.z >= cam.near) {
+                let clipped = clip_near_vs(&view);
+                self.mask_poly(mask, &clipped);
+            }
+        }
+    }
+
+    fn mask_poly(&self, mask: &mut Mask, poly: &[Vec3]) {
+        let mut pts = [(0.0f32, 0.0f32); 5];
+        let mut n = 0;
+        for v in poly {
+            if let Some((x, y, _)) = self.projector.project(*v) {
+                if n < pts.len() {
+                    pts[n] = (x, y);
+                    n += 1;
+                }
+            }
+        }
+        for k in 1..n.saturating_sub(1) {
+            mask.tri([pts[0], pts[k], pts[k + 1]]);
+        }
+    }
+
 }
 
 fn clip_poly_near(poly: &[(Vec3, f32, f32)], near: f32) -> Vec<(Vec3, f32, f32)> {
@@ -805,4 +925,125 @@ fn clip_poly_near(poly: &[(Vec3, f32, f32)], near: f32) -> Vec<(Vec3, f32, f32)>
         }
     }
     out
+}
+
+#[cfg(test)]
+mod shadow_tests {
+    use super::*;
+
+    #[test]
+    fn a_point_drops_its_shadow_away_from_the_sun() {
+        let sun = Lighting::default().sun;
+        let high = Vec3::new(3.0, -2.0, 1.8);
+        let ground = shadow_on_ground(high, sun);
+        assert!(ground.z < 0.1, "the shadow did not land on the ground");
+        let want = Vec3::new(
+            high.x - sun.x * high.z / sun.z,
+            high.y - sun.y * high.z / sun.z,
+            0.02,
+        );
+        assert!((ground.x - want.x).abs() < 1e-4, "wrong reach down the sun");
+        assert!((ground.y - want.y).abs() < 1e-4, "wrong way across the sun");
+        let away = Vec3::new(-sun.x, -sun.y, 0.0);
+        assert!(
+            (ground - Vec3::new(high.x, high.y, 0.0)).dot(away) > 0.0,
+            "the shadow fell towards the light"
+        );
+    }
+
+    #[test]
+    fn a_low_sun_does_not_throw_a_shadow_off_the_earth() {
+        let sun = Vec3::new(1.0, 0.0, 0.05).normalize_or_zero();
+        let ground = shadow_on_ground(Vec3::new(0.0, 0.0, 1.8), sun);
+        assert!(ground.x.abs() < 40.0, "a low sun threw a {:.0} yard shadow", ground.x);
+    }
+}
+
+/// One triangle, projected and lit, waiting for a band to fill it.
+struct Ready<'a> {
+    p: [(f32, f32, f32); 3],
+    uv: [(f32, f32); 3],
+    shades: [f32; 3],
+    color: Rgb,
+    tex: Option<&'a Texture>,
+    fog: Rgb,
+    fog_t: f32,
+}
+
+impl Ready<'_> {
+    fn fill(&self, tile: &mut crate::raster::Tile) {
+        match self.tex {
+            Some(tex) => tile.textured_shade_tri(self.p, self.uv, self.shades, tex, self.fog, self.fog_t),
+            None => tile.shade_tri(self.p, self.color, self.shades, self.fog, self.fog_t),
+        }
+    }
+}
+
+/// How many bands to fill at once. The rasteriser is fill bound, so this is the
+/// whole machine, capped so a big box does not spend the frame handing out work
+/// thinner than the bands themselves.
+pub fn threads() -> usize {
+    std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1)
+        .min(8)
+}
+
+/// Fill a frame's worth of prepared triangles, split across the machine.
+fn fill_tiles(frame: &mut Frame, work: &[Ready]) {
+    let bands = threads();
+    if bands <= 1 || work.len() < 64 {
+        let mut tile = frame.whole();
+        for ready in work {
+            ready.fill(&mut tile);
+        }
+        return;
+    }
+    let tiles = frame.tiles(bands);
+    std::thread::scope(|scope| {
+        for mut tile in tiles {
+            scope.spawn(move || {
+                for ready in work {
+                    ready.fill(&mut tile);
+                }
+            });
+        }
+    });
+}
+
+/// One turf triangle, projected and ready for a band to fill.
+struct GroundTri<'a> {
+    v: [(f32, f32, f32, f32, f32); 3],
+    tex: &'a Texture,
+    shade: f32,
+    fog: Rgb,
+    fog_t: f32,
+}
+
+impl GroundTri<'_> {
+    fn fill(&self, tile: &mut crate::raster::Tile) {
+        tile.textured_tri(self.v, self.tex, self.shade, self.fog, self.fog_t);
+    }
+}
+
+/// Fill the turf, split across the machine.
+fn fill_ground(frame: &mut Frame, work: &[GroundTri]) {
+    let bands = threads();
+    if bands <= 1 || work.len() < 64 {
+        let mut tile = frame.whole();
+        for g in work {
+            g.fill(&mut tile);
+        }
+        return;
+    }
+    let tiles = frame.tiles(bands);
+    std::thread::scope(|scope| {
+        for mut tile in tiles {
+            scope.spawn(move || {
+                for g in work {
+                    g.fill(&mut tile);
+                }
+            });
+        }
+    });
 }
