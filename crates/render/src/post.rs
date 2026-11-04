@@ -1,6 +1,6 @@
 //! The film treatment: what turns a clean wireframe-crisp render into a picture.
 //!
-//! Three passes over the world picture, before the overlay goes on:
+//! Three effects over the world picture, before the overlay goes on:
 //!
 //! * **Soft edges.** A hard polygon edge stepped a whole pixel at a time is the
 //!   single strongest "early 3D" tell. This finds luma edges and blends across
@@ -13,6 +13,14 @@
 //!
 //! It is deliberately applied to the *world* and never to the overlay: type and
 //! panels are drawn afterwards, so they stay crisp while the picture goes soft.
+//!
+//! At 720p each of these is a walk over a million pixels, so the picture is
+//! walked as few times as the effects allow: the snapshot the edge pass reads
+//! back from is taken in the same sweep that builds the luma table, and the glow
+//! and the grade share one sweep instead of a read and a write each. What
+//! remains is memory traffic, which is why the arithmetic here was cut to the
+//! bone -- the vignette works from the distance squared, so the half million
+//! square roots a frame that arrived where they started are gone.
 
 use crate::raster::Frame;
 use nopads_core::math::Rgb;
@@ -22,6 +30,26 @@ const BLOOM_STRENGTH: f32 = 0.06;
 const EDGE_SOFTNESS: f32 = 0.20;
 const VIGNETTE: f32 = 0.12;
 
+/// The buffers the treatment needs, kept between frames.
+///
+/// Each of these is megabytes at 720p and every one of them was being allocated
+/// and freed sixty times a second. Post cost the same whether the arithmetic in
+/// it was cheap or expensive, which is what a pass limited by getting the pixels
+/// in and out of memory looks like; a reused buffer is one less thing to do to
+/// them.
+#[derive(Default)]
+struct Scratch {
+    src: Vec<Rgb>,
+    luma: Vec<f32>,
+    bright: Vec<[f32; 3]>,
+    blurred: Vec<[f32; 3]>,
+}
+
+thread_local! {
+    static SCRATCH: std::cell::RefCell<Scratch> =
+        std::cell::RefCell::new(Scratch::default());
+}
+
 /// How many bands of the picture to work on at once.
 fn bands() -> usize {
     std::thread::available_parallelism()
@@ -30,15 +58,13 @@ fn bands() -> usize {
         .min(8)
 }
 
-
 /// Run the whole treatment over a finished world picture.
 pub fn finish(frame: &mut Frame) {
     if frame.w < 4 || frame.h < 4 {
         return;
     }
     soften_edges(frame);
-    glow(frame);
-    grade(frame);
+    glow_and_grade(frame);
 }
 
 fn luma(c: Rgb) -> f32 {
@@ -60,85 +86,130 @@ fn soften_edges(frame: &mut Frame) {
     if w < 3 || h < 3 {
         return;
     }
-    // The picture is read from a snapshot and written back band by band, so
-    // every thread reads the same unmodified frame: nothing depends on the file
-    // order the work is handed out in.
-    let src = frame.color.clone();
-    let src = &src;
     let rows = h.div_ceil(bands()).max(1);
+    // The snapshot and the luma table come out of one walk. The edge pass asks
+    // for four neighbouring lumas at every pixel it considers -- twenty-odd flops
+    // a pixel to answer a question the picture can be asked once -- and it needs
+    // the picture as it was before it wrote anything. Both are the same read.
+    SCRATCH.with(|pad| {
+    let mut pad = pad.borrow_mut();
+    let Scratch { src, luma: luma_plane, .. } = &mut *pad;
+    src.resize(w * h, Rgb::BLACK);
+    luma_plane.resize(w * h, 0.0);
+    {
+        let color = &frame.color;
+        std::thread::scope(|scope| {
+            for (i, (band, lband)) in src
+                .chunks_mut(rows * w)
+                .zip(luma_plane.chunks_mut(rows * w))
+                .enumerate()
+            {
+                scope.spawn(move || {
+                    let y0 = i * rows;
+                    for local in 0..band.len() / w {
+                        let row = (y0 + local) * w;
+                        for x in 0..w {
+                            let c = color[row + x];
+                            band[local * w + x] = c;
+                            lband[local * w + x] = luma(c);
+                        }
+                    }
+                });
+            }
+        });
+    }
+    let src = &src;
+    let luma_plane = &luma_plane;
     std::thread::scope(|scope| {
         for (i, band) in frame.color.chunks_mut(rows * w).enumerate() {
             scope.spawn(move || {
                 let y0 = i * rows;
-                let at = |x: usize, y: usize| src[y * w + x];
-                let l = |x: usize, y: usize| luma(at(x, y));
                 for local in 0..band.len() / w {
                     let y = y0 + local;
                     if y == 0 || y >= h - 1 {
                         continue;
                     }
                     for x in 1..w - 1 {
-                        let n = l(x, y - 1);
-                        let s = l(x, y + 1);
-                        let e = l(x + 1, y);
-                        let west = l(x - 1, y);
-                        let vertical = (n - s).abs();
-                        let horizontal = (e - west).abs();
+                        let here = y * w + x;
+                        let vertical = (luma_plane[here - w] - luma_plane[here + w]).abs();
+                        let horizontal = (luma_plane[here + 1] - luma_plane[here - 1]).abs();
                         let edge = vertical.max(horizontal);
                         if edge < 12.0 {
                             continue;
                         }
                         let (a, b) = if horizontal >= vertical {
-                            (at(x - 1, y), at(x + 1, y))
+                            (src[here - 1], src[here + 1])
                         } else {
-                            (at(x, y - 1), at(x, y + 1))
+                            (src[here - w], src[here + w])
                         };
                         let t = (edge / 90.0).min(1.0) * EDGE_SOFTNESS;
                         if t <= 0.02 {
                             continue;
                         }
                         let average = mix(a, b, 0.5);
-                        band[local * w + x] = mix(at(x, y), average, t);
+                        band[local * w + x] = mix(src[here], average, t);
                     }
                 }
             });
         }
     });
+    });
 }
 
-/// Soft glow on the brightest parts of the picture.
-fn glow(frame: &mut Frame) {
+/// The glow on the brightest parts of the picture, then the grade over it.
+///
+/// These are two effects with one sweep between them: the glow used to write
+/// every pixel back to memory and the grade immediately read every pixel and
+/// write it again, which at 720p is a dozen megabytes of traffic to do two
+/// multiplications.
+fn glow_and_grade(frame: &mut Frame) {
     let (w, h) = (frame.w, frame.h);
     const STEP: usize = 4;
     let bw = (w / STEP).max(1);
     let bh = (h / STEP).max(1);
-    let mut bright = vec![[0f32; 3]; bw * bh];
-
-    for by in 0..bh {
-        for bx in 0..bw {
-            let mut acc = [0f32; 3];
-            let mut n = 0f32;
-            for oy in 0..STEP {
-                for ox in 0..STEP {
-                    let x = (bx * STEP + ox).min(w - 1);
-                    let y = (by * STEP + oy).min(h - 1);
-                    let c = frame.color[y * w + x];
-                    acc[0] += c.r as f32;
-                    acc[1] += c.g as f32;
-                    acc[2] += c.b as f32;
-                    n += 1.0;
-                }
+    SCRATCH.with(|pad| {
+    let mut pad = pad.borrow_mut();
+    let Scratch { bright, blurred, .. } = &mut *pad;
+    bright.resize(bw * bh, [0f32; 3]);
+    let rows = bh.div_ceil(bands()).max(1);
+    {
+        let color = &frame.color;
+        std::thread::scope(|scope| {
+            for (i, band) in bright.chunks_mut(rows * bw).enumerate() {
+                scope.spawn(move || {
+                    let y0 = i * rows;
+                    for local in 0..band.len() / bw {
+                        let by = y0 + local;
+                        for bx in 0..bw {
+                            let mut acc = [0f32; 3];
+                            let mut n = 0f32;
+                            for oy in 0..STEP {
+                                for ox in 0..STEP {
+                                    let x = (bx * STEP + ox).min(w - 1);
+                                    let y = (by * STEP + oy).min(h - 1);
+                                    let c = color[y * w + x];
+                                    acc[0] += c.r as f32;
+                                    acc[1] += c.g as f32;
+                                    acc[2] += c.b as f32;
+                                    n += 1.0;
+                                }
+                            }
+                            let c = [acc[0] / n, acc[1] / n, acc[2] / n];
+                            let l = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
+                            let keep = ((l - BLOOM_THRESHOLD) / (255.0 - BLOOM_THRESHOLD))
+                                .clamp(0.0, 1.0);
+                            band[local * bw + bx] = [c[0] * keep, c[1] * keep, c[2] * keep];
+                        }
+                    }
+                });
             }
-            let c = [acc[0] / n, acc[1] / n, acc[2] / n];
-            let l = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
-            let keep = ((l - BLOOM_THRESHOLD) / (255.0 - BLOOM_THRESHOLD)).clamp(0.0, 1.0);
-            bright[by * bw + bx] = [c[0] * keep, c[1] * keep, c[2] * keep];
-        }
+        });
     }
 
     // Two box blurs on the small buffer: a wide soft falloff for a few thousand
     // samples instead of the half million a full-size blur would touch.
-    let mut blurred = bright.clone();
+    blurred.resize(bw * bh, [0f32; 3]);
+    blurred.copy_from_slice(bright);
     for _ in 0..2 {
         for by in 0..bh {
             for bx in 0..bw {
@@ -164,30 +235,23 @@ fn glow(frame: &mut Frame) {
         blurred.clone_from_slice(&bright);
     }
 
-    for y in 0..h {
-        let by = (y / STEP).min(bh - 1);
-        for x in 0..w {
-            let bx = (x / STEP).min(bw - 1);
-            let s = blurred[by * bw + bx];
-            if s[0] <= 0.0 && s[1] <= 0.0 && s[2] <= 0.0 {
-                continue;
-            }
-            let c = frame.color[y * w + x];
-            frame.color[y * w + x] = Rgb::new(
-                (c.r as f32 + s[0] * BLOOM_STRENGTH).min(255.0) as u8,
-                (c.g as f32 + s[1] * BLOOM_STRENGTH).min(255.0) as u8,
-                (c.b as f32 + s[2] * BLOOM_STRENGTH).min(255.0) as u8,
-            );
-        }
-    }
-}
-
-/// Contrast and a vignette: the last thing before the overlay goes on.
-fn grade(frame: &mut Frame) {
-    let (w, h) = (frame.w, frame.h);
+    // The vignette is a function of distance *squared*: the pass used to take a
+    // square root and square the result straight back, half a million square
+    // roots a frame to arrive where it started. The only place the root matters
+    // is the clamp at the corners, which is a floor on the factor.
     let cx = w as f32 / 2.0;
     let cy = h as f32 / 2.0;
     let far = (cx * cx + cy * cy).sqrt().max(1.0);
+    let far2 = far * far;
+    let floor = (((1.0 - VIGNETTE) * 65536.0).round() as u32).min(65536);
+    let mut across = vec![0f32; w];
+    for (x, s) in across.iter_mut().enumerate() {
+        let dx = x as f32 - cx;
+        *s = dx * dx;
+    }
+
+    let blurred = &blurred;
+    let across = &across;
     let rows = h.div_ceil(bands()).max(1);
     std::thread::scope(|scope| {
         for (i, band) in frame.color.chunks_mut(rows * w).enumerate() {
@@ -195,21 +259,37 @@ fn grade(frame: &mut Frame) {
                 let y0 = i * rows;
                 for local in 0..band.len() / w {
                     let y = y0 + local;
-                    let dy = (y as f32 - cy) * 0.9;
+                    let by = (y / STEP).min(bh - 1);
+                    let dy = y as f32 - cy;
+                    let down = dy * dy * 0.81;
                     for x in 0..w {
-                        let dx = x as f32 - cx;
-                        let d = ((dx * dx + dy * dy).sqrt() / far).min(1.0);
-                        let v = 1.0 - VIGNETTE * d * d;
-                        let c = band[local * w + x];
+                        let mut c = band[local * w + x];
+                        let s = blurred[by * bw + (x / STEP).min(bw - 1)];
+                        if s[0] > 0.0 || s[1] > 0.0 || s[2] > 0.0 {
+                            c = Rgb::new(
+                                (c.r as f32 + s[0] * BLOOM_STRENGTH).min(255.0) as u8,
+                                (c.g as f32 + s[1] * BLOOM_STRENGTH).min(255.0) as u8,
+                                (c.b as f32 + s[2] * BLOOM_STRENGTH).min(255.0) as u8,
+                            );
+                        }
+                        let d2 = (across[x] + down) / far2;
+                        // Sixteen bits of factor, so the multiply stays an
+                        // integer one and the colour a shift.
+                        let v = if d2 >= 1.0 {
+                            floor
+                        } else {
+                            (((1.0 - VIGNETTE * d2) * 65536.0).round() as u32).min(65536)
+                        };
                         band[local * w + x] = Rgb::new(
-                            (c.r as f32 * v).min(255.0) as u8,
-                            (c.g as f32 * v).min(255.0) as u8,
-                            (c.b as f32 * v).min(255.0) as u8,
+                            ((c.r as u32 * v) >> 16) as u8,
+                            ((c.g as u32 * v) >> 16) as u8,
+                            ((c.b as u32 * v) >> 16) as u8,
                         );
                     }
                 }
             });
         }
+    });
     });
 }
 
@@ -258,7 +338,7 @@ mod tests {
                 f.color[y * 64 + x] = Rgb::new(255, 255, 255);
             }
         }
-        glow(&mut f);
+        glow_and_grade(&mut f);
         assert_eq!(f.color[32 * 64 + 32].r, 255, "the bright patch lost its white");
         let beside = f.color[32 * 64 + 22];
         assert!(beside.r > 0, "nothing bled out of the bright patch");
@@ -268,12 +348,37 @@ mod tests {
     #[test]
     fn the_grade_leaves_the_middle_alone_and_darkens_the_corners() {
         let mut f = blank(64, 64, Rgb::new(200, 200, 200));
-        grade(&mut f);
+        glow_and_grade(&mut f);
         let middle = f.color[32 * 64 + 32].r;
         let corner = f.color[0].r;
         assert!(middle > 190, "the middle was dimmed: {middle}");
         assert!(corner < middle, "the corners are not darker: {corner} vs {middle}");
         assert!(corner > 120, "the vignette is a black border: {corner}");
+    }
+
+    #[test]
+    fn the_cheap_vignette_lands_where_the_square_root_did() {
+        // The squared-distance grade has to be the same picture as the one that
+        // took a root per pixel and squared it, not merely a similar one.
+        let (w, h) = (128, 72);
+        let mut fast = blank(w, h, Rgb::new(255, 255, 255));
+        glow_and_grade(&mut fast);
+        let cx = w as f32 / 2.0;
+        let cy = h as f32 / 2.0;
+        let far = (cx * cx + cy * cy).sqrt().max(1.0);
+        for y in 0..h {
+            for x in 0..w {
+                let dx = x as f32 - cx;
+                let dy = (y as f32 - cy) * 0.9;
+                let d = ((dx * dx + dy * dy).sqrt() / far).min(1.0);
+                let honest = (255.0 * (1.0 - VIGNETTE * d * d)).min(255.0) as u8;
+                let got = fast.color[y * w + x].r;
+                assert!(
+                    got.abs_diff(honest) <= 1,
+                    "at {x},{y}: {got} against {honest}"
+                );
+            }
+        }
     }
 
     #[test]

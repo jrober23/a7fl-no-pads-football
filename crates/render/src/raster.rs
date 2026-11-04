@@ -1014,3 +1014,86 @@ impl Frame {
         out
     }
 }
+
+impl Frame {
+    /// Spend a smaller frame's picture on this one, under a depth test.
+    ///
+    /// The turf is drawn at half resolution because it is a field of painted
+    /// grass: the largest flat surface in the picture, and the pass that fills
+    /// most of the frame. Depth comes up with it, so the stands and the men drawn
+    /// afterwards still depth-test against the ground they stand on.
+    pub fn blit_scaled(&mut self, small: &Frame, factor: usize) {
+        if factor == 0 || small.w == 0 || small.h == 0 || self.w == 0 {
+            return;
+        }
+        let w = self.w;
+        let rows = self.h.div_ceil(8).max(1);
+        std::thread::scope(|scope| {
+            for (bi, (band, dband)) in self
+                .color
+                .chunks_mut(rows * w)
+                .zip(self.depth.chunks_mut(rows * w))
+                .enumerate()
+            {
+                scope.spawn(move || {
+                    let y0 = bi * rows;
+                    for local in 0..band.len() / w {
+                        let sy = (y0 + local) / factor;
+                        if sy >= small.h {
+                            continue;
+                        }
+                        let srow = sy * small.w;
+                        let row = local * w;
+                        for x in 0..w {
+                            let si = srow + (x / factor).min(small.w - 1);
+                            // 1/z: bigger is nearer, and an untouched pixel of
+                            // the small frame is 0, which loses to everything.
+                            let iz = small.depth[si];
+                            if iz <= dband[row + x] {
+                                continue;
+                            }
+                            dband[row + x] = iz;
+                            band[row + x] = small.color[si];
+                        }
+                    }
+                });
+            }
+        });
+    }
+}
+
+#[cfg(test)]
+mod blit_tests {
+    use super::*;
+
+    #[test]
+    fn a_small_frame_lands_scaled_up_and_wins_on_depth() {
+        let mut big = Frame::new(8, 8);
+        big.color.fill(Rgb::new(0, 0, 0));
+        big.depth.fill(2.0); // something near is already drawn
+        let mut small = Frame::new(4, 4);
+        small.color.fill(Rgb::new(10, 20, 30));
+        small.depth.fill(1.0); // the ground is further away: it loses
+        big.blit_scaled(&small, 2);
+        assert_eq!(big.color[0], Rgb::new(0, 0, 0), "the turf covered something in front of it");
+        assert_eq!(big.depth[0], 2.0);
+
+        small.depth.fill(3.0); // now the ground is in front
+        big.blit_scaled(&small, 2);
+        assert_eq!(big.color[0], Rgb::new(10, 20, 30), "the turf did not reach the picture");
+        assert_eq!(big.depth[7 * 8 + 7], 3.0, "the ground brought no depth with it");
+        assert_eq!(big.color[7 * 8 + 7], Rgb::new(10, 20, 30));
+    }
+
+    #[test]
+    fn an_untouched_small_frame_leaves_the_picture_alone() {
+        // Within the small frame, the pixels no triangle reached keep depth 0:
+        // the sky is still there and the turf must not paint over it.
+        let mut big = Frame::new(8, 8);
+        big.color.fill(Rgb::new(7, 7, 7));
+        let small = Frame::new(4, 4);
+        big.blit_scaled(&small, 2);
+        assert_eq!(big.color[0], Rgb::new(7, 7, 7));
+        assert_eq!(big.depth[63], 0.0);
+    }
+}

@@ -1199,8 +1199,29 @@ impl Broadcast {
         let t_sky = ts.elapsed();
         let tg = std::time::Instant::now();
         let (x0, x1, y0, y1) = fieldtex::coverage();
-        self.scene.draw_ground(frame, &self.field, camera, x0, x1, y0, y1, 2.2);
-        self.scene.draw_mesh(frame, &self.stands, camera);
+        // The turf is the biggest flat thing in the picture and the pass that
+        // fills most of it, so it is drawn at half resolution and blown back up.
+        // A field of painted grass has no edge sharp enough to pay for alone at
+        // the top size, and the depth comes up with the picture, so the stands
+        // and the men drawn after it still test against the ground.
+        //
+        // The stands used to be drawn here as well as in the pass below, which
+        // put a whole mesh through the rasteriser twice a frame.
+        const GROUND_SHRINK: usize = 2;
+        if frame.w >= GROUND_SHRINK * 16 && frame.h >= GROUND_SHRINK * 16 {
+            let mut small = Frame::new(frame.w / GROUND_SHRINK, frame.h / GROUND_SHRINK);
+            let full = self.scene.projector;
+            self.scene.projector = crate::scene::Projector {
+                w: full.w / GROUND_SHRINK as f32,
+                h: full.h / GROUND_SHRINK as f32,
+                focal: full.focal / GROUND_SHRINK as f32,
+            };
+            self.scene.draw_ground(&mut small, &self.field, camera, x0, x1, y0, y1, 2.2);
+            self.scene.projector = full;
+            frame.blit_scaled(&small, GROUND_SHRINK);
+        } else {
+            self.scene.draw_ground(frame, &self.field, camera, x0, x1, y0, y1, 2.2);
+        }
         // The crowd moves: bodies bob on their own phases and a few put their
         // arms up. It is rebuilt every frame because placing a mesh bakes it.
         let t_ground = tg.elapsed();
