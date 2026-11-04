@@ -1144,7 +1144,7 @@ impl Broadcast {
             let lift = if f.arms { cheer * 0.18 } else { 0.0 };
             let z = f.at.z + bob + lift;
             let (x, y) = (f.at.x, f.at.y);
-            let w = 0.20;
+            let w = 0.24;
             let body = f.color;
             mesh.quad(
                 Vec3::new(x - w, y, z),
@@ -1160,7 +1160,9 @@ impl Broadcast {
                 Vec3::new(x - w, y, z),
                 body,
             );
-            let head = body.scale(1.18);
+            // A head reads as a head against a shirt because it is darker, not
+            // because it is a wider box of the same colour.
+            let head = body.scale(0.62);
             mesh.quad(
                 Vec3::new(x - 0.10, y, z + f.tall),
                 Vec3::new(x + 0.10, y, z + f.tall),
@@ -1424,12 +1426,12 @@ impl Broadcast {
     fn hand_camera(&self, h: HandCamera, direction: i8) -> Camera {
         let d = direction as f32;
         let (s, c) = h.yaw.sin_cos();
-        let base = Vec3::new(-d * 6.0, 0.0, 2.4);
+        let base = Vec3::new(-d * 7.5, 0.0, 2.7);
         let turned = Vec3::new(base.x * c - base.y * s, base.x * s + base.y * c, base.z);
         let anchor = Vec3::new(h.at.x, h.at.y, 0.0);
         let mut cam = Camera::new(anchor + turned * h.zoom, 0.0, 0.0);
         cam.look_at(Vec3::new(h.at.x, h.at.y, 0.9));
-        cam.fov = 30f32.to_radians();
+        cam.fov = 33f32.to_radians();
         cam
     }
 
@@ -1484,10 +1486,14 @@ impl Broadcast {
             // The aim is the ball, not a spot past it: a lens on the field is
             // close enough that leading the play downfield swings the ball itself
             // out of the picture on a play near a sideline.
+            // Backed off from six yards at 28 degrees, which put the lens inside
+            // the pile on a goal-line play: at that range a jersey is two metres
+            // of flat colour and the painted number is a pair of slabs. Nine yards
+            // and a wider lens keeps the men in the picture as figures.
             CameraMode::Replay => (
-                Vec3::new(action.x - d * 6.0, action.y * 0.5, 2.1),
-                Vec3::new(action.x + d * 2.0, action.y * 0.95, 0.8),
-                28f32,
+                Vec3::new(action.x - d * 9.0, action.y * 0.5, 3.0),
+                Vec3::new(action.x + d * 3.0, action.y * 0.95, 0.9),
+                34f32,
             ),
             CameraMode::Endzone => (
                 Vec3::new(field::opponent_goal_side(direction) - d * 12.0, 6.0, 7.5),
@@ -1691,7 +1697,11 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
     // drawn as one block each so a full house costs a couple of thousand
     // triangles, not tens of thousands. The near sideline is left open.
     // ------------------------------------------------------------------
-    let rows = 7;
+    // Eleven rows, not seven. Seven rows stood about five yards off the grass,
+    // which from a camera seven yards up is a kerb on the horizon: the ground
+    // read as a field with a wall behind it rather than as a stadium. Eleven
+    // takes it to roughly eight yards, still well under every lens.
+    let rows = 11;
     let tread = 1.30f32;
     let riser = 0.62f32;
     let mut z = 1.18f32;
@@ -1754,7 +1764,11 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
                 Vec3::new(x1, y_roof_front, z + 2.2),
                 Vec3::new(x0, y_roof_front, z + 2.2),
             ],
-            steel,
+            // The underside of the roof is the biggest surface in every low
+            // shot, and at `steel` it was a black band across the top of the
+            // frame. Picked out in the home club's colour, it reads as a
+            // building with lights under it.
+            teams[0].primary.scale(0.62),
         );
         both_windings(
             &mut mesh,
@@ -1856,8 +1870,15 @@ fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode, lens: (f32, f32)) -> 
         CameraMode::SkyCam => (4.0, 24.0, 3.0, 42.0),
         // The workhorse: a runner's height, close enough to see hands and feet,
         // tipped up enough that the men are not pinned to the bottom of the frame.
-        _ => (10.0, 7.0, 6.0, 33.0),
+        // Aimed further past the ball, higher and wider than a scrimmage lens.
+        // The old six-yard lead aimed at the turf six yards ahead and tipped the
+        // lens down until the horizon -- and the whole ground -- sat above the top
+        // of the frame. A lead long enough to lift the horizon flattens the pitch,
+        // though, and a ball eleven yards ahead then falls out of the bottom of a
+        // narrow lens, so the wider fov is part of the same fix.
+        _ => (12.0, 6.4, 12.0, 38.0),
     };
+    let look_z = if mode == CameraMode::SkyCam || mode == CameraMode::Classic { 0.35 } else { 1.1 };
     // The sky shot sits in the return lane and looks straight up it; the rest sit
     // a little off the line, which is what gives the field some width to them.
     let (pos_y, look_y) = if mode == CameraMode::SkyCam {
@@ -1866,7 +1887,7 @@ fn throw_off_lens(dir: f32, focus: Vec2, mode: CameraMode, lens: (f32, f32)) -> 
         (focus.y * 0.55, focus.y * 0.72)
     };
     let pos = Vec3::new(focus.x - dir * dist, pos_y, height);
-    let look = Vec3::new(focus.x + dir * lead, look_y, 0.35);
+    let look = Vec3::new(focus.x + dir * lead, look_y, look_z);
     let (pos, look) = lens_shift(pos, look, focus, lens.0, lens.1);
     let mut cam = Camera::new(pos, 0.0, 0.0);
     cam.fov = fov.to_radians();
@@ -2469,7 +2490,9 @@ fn build_crowd(teams: &[Team; 2], bowl: bool) -> Vec<CrowdFigure> {
         Rgb::hex(0x27303C),
         Rgb::hex(0x8C4B3B),
     ];
-    let rows = 7;
+    // The same rows and risers as the stand it sits on: a crowd that stops
+    // short of the top row leaves the back of the building empty.
+    let rows = 11;
     let tread = 1.30f32;
     let riser = 0.62f32;
     let x0 = -14.0f32;
@@ -2479,7 +2502,11 @@ fn build_crowd(teams: &[Team; 2], bowl: bool) -> Vec<CrowdFigure> {
     // A closed bowl has a stand on both sidelines, so it fills both.
     let sides: &[f32] = if bowl { &[-1.0, 1.0] } else { &[-1.0] };
     let mut out = Vec::new();
-    for _ in 0..rows {
+    // Where the section boundaries fall: a block of seats wears one club's
+    // colour. Picking a colour per seat instead turned the stand into a field of
+    // coloured static, which is what a crowd is not.
+    let section = |x: f32| ((x - x0) / 8.5).floor() as i32;
+    for row in 0..rows {
         let z_top = z + riser;
         let y_back = y_front + tread;
         for &side in sides {
@@ -2488,9 +2515,20 @@ fn build_crowd(teams: &[Team; 2], bowl: bool) -> Vec<CrowdFigure> {
                 let gap = 0.74 + rand() * 0.42;
                 if rand() < 0.92 {
                     let y_crowd = (y_front + 0.30 + rand() * 0.25) * side;
+                    // Two sections in three wear a club colour; the rest are the
+                    // neutral coats, and a scatter inside every block keeps it
+                    // from looking painted on.
+                    let sec = section(px_i);
+                    let seat = if rand() < 0.74 {
+                        colors[(sec.rem_euclid(3) != 2) as usize]
+                    } else {
+                        colors[2 + (rand() * 4.0) as usize % 4]
+                    };
+                    // The back rows sit under the roof and in their own shade.
+                    let seat = seat.scale(0.82 + row as f32 * 0.03);
                     out.push(CrowdFigure {
                         at: Vec3::new(px_i + rand() * 0.3, y_crowd, z_top),
-                        color: colors[(rand() * colors.len() as f32) as usize % colors.len()],
+                        color: seat,
                         phase: rand() * std::f32::consts::TAU,
                         tall: 0.62 + rand() * 0.16,
                         arms: rand() < 0.12,

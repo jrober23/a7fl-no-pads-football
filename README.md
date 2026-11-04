@@ -974,7 +974,7 @@ crates/cli      the `7on7` binary
 ```
 
 The `nopads_core` crate has no dependencies and no rendering code, so the rules and
-simulation can be unit tested (39 tests) without touching the renderer.
+simulation can be unit tested (125 tests) without touching the renderer.
 
 ## Honest limits
 
@@ -987,8 +987,8 @@ simulation can be unit tested (39 tests) without touching the renderer.
   photograph of a football game: a yard from the lens you can still see the facets
   on a cheek, and closing that gap takes texture maps, not more polygons.
 - **No audio, franchise mode, drafting or online play.** `arcade` is one player
-  against the CPU; the renderer writes images and ANSI blocks, it does not open a
-  window.
+  against the CPU, drawn either in a window or as ANSI blocks in a terminal; the
+  renderer itself writes images and never needs a display.
 - Teams and players are fictional, with names and colours invented so nothing
   real is reproduced.
 - Rendering is CPU-bound: a 1280×720 still takes a fraction of a second, the full

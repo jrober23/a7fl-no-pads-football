@@ -131,6 +131,35 @@ fn team_row(
     font::draw_right(frame, x + w - 12, y + (h - 7 * 5) / 2, &format!("{score}"), 5, WHITE, 1);
 }
 
+/// The longest run of `text` that fits in `room` pixels at `scale`, cut at a
+/// space where there is one and given an ellipsis when it had to be shortened.
+///
+/// Everything the overlay says comes from a play description, and those are as
+/// long as the play was: a card is a fixed width and the text is not.
+fn fit_text(text: &str, scale: usize, room: i32) -> String {
+    let width = |t: &str| font::text_width(t, scale) as i32;
+    if width(text) <= room {
+        return text.to_string();
+    }
+    let ell = width("...");
+    let mut used = 0;
+    let mut cut = 0;
+    let mut buf = [0u8; 4];
+    for (i, ch) in text.char_indices() {
+        let w = width(ch.encode_utf8(&mut buf));
+        if used + w + ell > room {
+            break;
+        }
+        used += w;
+        cut = i + ch.len_utf8();
+    }
+    let head = text[..cut].trim_end();
+    match head.rfind(' ') {
+        Some(at) if at > 0 => format!("{}...", head[..at].trim_end()),
+        _ => format!("{head}..."),
+    }
+}
+
 pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, caption: Option<&str>) {
     let w = frame.w as i32;
     let h = frame.h as i32;
@@ -216,7 +245,7 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
         .or_else(|| game.log.last().map(|r| r.description().to_string()))
         .unwrap_or_default()
         .to_uppercase();
-    let trimmed = if ticker.len() > 96 { format!("{}…", &ticker[..96]) } else { ticker };
+    let trimmed = fit_text(&ticker, 2, w - 56);
     font::draw_styled(frame, 28, ty + 13, &trimmed, 2, WHITE, 1, false);
 
     // ----------------------- situational banner ----------------------------
@@ -242,7 +271,11 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
         font::draw_centered(frame, bx + bw / 2, by + 26, &b.title.to_uppercase(), 6, WHITE, 2);
         if !b.subtitle.is_empty() {
             let sub = b.subtitle.to_uppercase();
-            let sub = if sub.len() > 60 { format!("{}…", &sub[..60]) } else { sub };
+            // Fit to the card rather than to a character count. A count cut the
+            // last word through the middle at whatever letter the tally landed
+            // on -- "...BROUGHT DOWN BY C PEMBERTON AFTE" -- on a card with
+            // nothing behind that word.
+            let sub = fit_text(&sub, 2, bw - 64);
             // The gradient darkens toward the bottom, so pale text needs a dark
             // colour only over bright team colours.
             let ink = if b.color.luma() > 140.0 { Rgb::hex(0x101418) } else { WHITE };
@@ -258,7 +291,9 @@ pub fn draw(frame: &mut Frame, state: &HudState, banner: Option<&Banner>, captio
                 w / 2,
                 60,
                 &format!(
-                    "THROW-OFF FROM THE {} · {} RETURNS",
+                    // A hyphen, not a middle dot: the 5x7 face has no glyph for
+                    // `·` and drew the fallback box, which read as an O.
+                    "THROW-OFF FROM THE {} - {} RETURNS",
                     from_own as i32, game.teams[receiving].abbr
                 ),
                 2,
