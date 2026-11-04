@@ -2250,6 +2250,242 @@ fn scrub(pos: f32, last: f32, playing: bool, fwd: bool, back: bool, dt: f32) -> 
     p.clamp(0.0, last)
 }
 
+/// How a tape is being watched.
+#[derive(Clone, Copy)]
+enum Tape {
+    /// The second look a big play gets: the play runs back once at the rate it was
+    /// recorded, A skips it, and the picture sinks to black on the whistle.
+    Auto { label: &'static str, whole: bool },
+    /// The pause menu's theatre, where the pad has the tape and the camera.
+    Hand { dir: i8, start: Vec2 },
+}
+
+/// The plate in the corner of a replay: the label, and the tab that says this is
+/// tape rather than live.
+fn tape_plate(frame: &mut nopads_render::raster::Frame, label: &str) {
+    let tw = nopads_render::font::text_width(label, 3) as i32;
+    frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
+    frame.fill_rect(12, 12, 4, 30, hud::RED);
+    frame.text_shadowed(23, 20, label, 3, hud::WHITE, 1);
+}
+
+/// Run a tape back, whichever way it is being watched.
+///
+/// The two ways are the same five things -- the frames, the plate, the bar under
+/// the picture, the quit, and the rate the tape is played at -- and they were four
+/// functions with a copy of each between them: the theatre, the automatic second
+/// look, the flag's pinned version of it, and the throw-off's whole-tape version.
+/// What actually differs is the pad. The automatic look answers A and nothing
+/// else; the theatre runs, rewinds, steps and flies the camera. That is the
+/// `Tape` this is handed, and it is the only branch in the loop.
+///
+/// Returns false only when the picture is gone, which is the one thing the game
+/// cannot carry on from.
+fn run_tape<T>(
+    tape: &[T],
+    broadcast: &mut Broadcast,
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    flip_y: bool,
+    mode: Tape,
+    mut draw: impl FnMut(&mut Broadcast, &T) -> nopads_render::raster::Frame,
+) -> bool {
+    if tape.is_empty() {
+        return true;
+    }
+    let last = tape.len().saturating_sub(1);
+    let started = Instant::now();
+    let mut next = Instant::now();
+    // Six seconds of tape is a replay, forty is the whole game again: a snap that
+    // ran too long is sampled rather than run back for as long as it took.
+    let (step, take) = match mode {
+        Tape::Auto { whole, .. } => (
+            if whole { 1 } else { (tape.len() / 360).max(1) },
+            if whole { tape.len() } else { 360 },
+        ),
+        Tape::Hand { .. } => (1, usize::MAX),
+    };
+    // It opens playing, so the replay is a replay: the player can stop it with A
+    // the moment he sees what he wants to look at.
+    let mut playing = true;
+    // Where the tape is, in frames.
+    let mut pos = 0.0f32;
+    let mut hand = match mode {
+        Tape::Hand { start, .. } => Some(HandCamera {
+            at: start,
+            zoom: 1.0,
+            yaw: 0.0,
+        }),
+        Tape::Auto { .. } => None,
+    };
+    let mut drawn = 0usize;
+    let mut last_tick = Instant::now();
+    if hand.is_some() {
+        view.reset();
+    }
+
+    let keep: bool = 'tape: {
+        loop {
+            let now = Instant::now();
+            let dt = now.duration_since(last_tick).as_secs_f32().min(0.1);
+            last_tick = now;
+            let mut input = pad::mix(pad.as_deref_mut(), view.poll());
+            // A press in the frame the replay opens is the press that ended the
+            // play, not a request to skip the look at it.
+            let ready = !matches!(mode, Tape::Auto { .. })
+                || started.elapsed() >= Duration::from_millis(400);
+
+            match mode {
+                Tape::Auto { .. } => {
+                    if ready && (input.pressed.a || input.pressed.start) {
+                        break 'tape true;
+                    }
+                    if drawn >= take {
+                        break;
+                    }
+                    // Hold the rate the tape was recorded at, and keep watching the
+                    // pad while the clock runs out.
+                    loop {
+                        if Instant::now() >= next {
+                            next += Duration::from_millis(16);
+                            break;
+                        }
+                        std::thread::sleep(Duration::from_millis(2));
+                        input = pad::mix(pad.as_deref_mut(), view.poll());
+                        if started.elapsed() >= Duration::from_millis(400)
+                            && (input.pressed.a || input.pressed.start)
+                        {
+                            break 'tape true;
+                        }
+                    }
+                }
+                Tape::Hand { dir, .. } => {
+                    if input.pressed.b || input.pressed.start {
+                        break 'tape true;
+                    }
+                    // A plays and pauses. Y and X are one frame of tape each way,
+                    // and leave it stopped so the frame can be looked at.
+                    if input.pressed.a {
+                        playing = !playing;
+                    }
+                    if input.pressed.y {
+                        pos = (pos + 1.0).min(last as f32);
+                        playing = false;
+                    }
+                    if input.pressed.x {
+                        pos = (pos - 1.0).max(0.0);
+                        playing = false;
+                    }
+                    let before = pos;
+                    pos = scrub(
+                        pos,
+                        last as f32,
+                        playing,
+                        input.held.shoulder,
+                        input.held.dummy,
+                        dt,
+                    );
+                    // The end of the tape stops it rather than sitting there
+                    // spinning.
+                    if playing && before < last as f32 && pos >= last as f32 {
+                        playing = false;
+                    }
+                    if let Some(lens) = hand.as_mut() {
+                        // The right stick is the lens: up and down are zoom, the
+                        // sides are the orbit round the play.
+                        if input.held.truck {
+                            lens.zoom = (lens.zoom - ZOOM_RATE * dt).max(MIN_ZOOM);
+                        }
+                        if input.held.stop {
+                            lens.zoom = (lens.zoom + ZOOM_RATE * dt).min(MAX_ZOOM);
+                        }
+                        if input.held.juke_l {
+                            lens.yaw += ORBIT_RATE * dt;
+                        }
+                        if input.held.juke_r {
+                            lens.yaw -= ORBIT_RATE * dt;
+                        }
+                        // The left stick walks the camera over the field.
+                        let pan = stick_to_world(input.stick, flip_y, CameraMode::Replay, dir);
+                        lens.at += pan * PAN_SPEED * dt;
+                        lens.at.x = lens.at.x.clamp(-12.0, 112.0);
+                        lens.at.y = lens.at.y.clamp(-32.0, 32.0);
+                    }
+                }
+            }
+
+            let index = match mode {
+                Tape::Auto { .. } => (drawn * step).min(last),
+                Tape::Hand { .. } => (pos.round() as usize).min(last),
+            };
+            drawn += 1;
+            if let Some(lens) = hand {
+                broadcast.set_hand_camera(Some(lens));
+            }
+            let mut frame = draw(broadcast, &tape[index]);
+            let label = match mode {
+                Tape::Auto { label, .. } => label,
+                Tape::Hand { .. } if playing => "REPLAY",
+                Tape::Hand { .. } => "REPLAY - PAUSED",
+            };
+            tape_plate(&mut frame, label);
+            let lines = match mode {
+                Tape::Auto { .. } => vec!["REPLAY   [A] SKIP".to_string()],
+                Tape::Hand { .. } => vec![
+                    format!("  REPLAY   FRAME {}/{last}", index + 1),
+                    "  [A] PLAY / PAUSE   [RB] FAST FORWARD   [LB] REWIND   [Y] STEP FORWARD   [X] STEP BACK"
+                        .to_string(),
+                    "  [RS] ZOOM / ORBIT   [LS] PAN   [B] BACK TO THE GAME".to_string(),
+                ],
+            };
+            if !view.show(&mut frame, &lines) {
+                break 'tape false;
+            }
+            std::thread::sleep(Duration::from_millis(16));
+        }
+
+        // The whistle is not the end of the replay. Hold on the last frame a beat
+        // so the play reads as finished rather than cut off mid-stride, then sink
+        // to black and hand the picture back to the call sheet.
+        if matches!(mode, Tape::Auto { .. }) {
+            let Some(end) = tape.last() else {
+                break 'tape true;
+            };
+            let mut frame = draw(broadcast, end);
+            tape_plate(&mut frame, "END OF PLAY");
+            if !view.show(&mut frame, &["REPLAY DONE   [A] CONTINUE".to_string()]) {
+                break 'tape false;
+            }
+            let hold = Instant::now();
+            while hold.elapsed() < Duration::from_millis(1200) {
+                let input = pad::mix(pad.as_deref_mut(), view.poll());
+                if input.pressed.a || input.pressed.start {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(4));
+            }
+            // A cut on the whistle reads as the game having fallen over, so the
+            // picture goes down to the ink over a quarter of a second first.
+            let fade = Instant::now();
+            while fade.elapsed() < Duration::from_millis(280) {
+                let t = (fade.elapsed().as_secs_f32() / 0.28).clamp(0.0, 1.0);
+                let mut frame = draw(broadcast, end);
+                frame.fill_rect_alpha(0, 0, frame.w as i32, frame.h as i32, hud::INK, t);
+                if !view.show(&mut frame, &[]) {
+                    break 'tape false;
+                }
+            }
+        }
+        true
+    };
+
+    if hand.is_some() {
+        broadcast.set_hand_camera(None);
+        view.reset();
+    }
+    keep
+}
+
 /// The replay theatre: the tape of the last snap, run by hand.
 ///
 /// The picture is the same broadcast the game is played in, with the camera off
@@ -2260,104 +2496,21 @@ fn replay_theatre<T>(
     tape: &[T],
     broadcast: &mut Broadcast,
     view: &mut View,
-    mut pad: Option<&mut Pad>,
+    pad: Option<&mut Pad>,
     flip_y: bool,
     dir: i8,
     start: Vec2,
-    draw: impl Fn(&mut Broadcast, &T) -> nopads_render::Frame,
+    draw: impl FnMut(&mut Broadcast, &T) -> nopads_render::raster::Frame,
 ) -> bool {
-    if tape.is_empty() {
-        return true;
-    }
-    let last = tape.len().saturating_sub(1);
-    // It opens playing, so the replay is a replay: the player can stop it with A
-    // the moment he sees what he wants to look at.
-    let mut playing = true;
-    let mut pos = 0.0f32;
-    let mut hand = HandCamera {
-        at: start,
-        zoom: 1.0,
-        yaw: 0.0,
-    };
-    view.reset();
-    let mut last_tick = Instant::now();
-    loop {
-        let now = Instant::now();
-        let dt = now.duration_since(last_tick).as_secs_f32().min(0.1);
-        last_tick = now;
-        let input = pad::mix(pad.as_deref_mut(), view.poll());
-
-        if input.pressed.b || input.pressed.start {
-            break;
-        }
-        // A plays and pauses. Y and X are one frame of tape each way, and leave it
-        // stopped so the frame can be looked at.
-        if input.pressed.a {
-            playing = !playing;
-        }
-        if input.pressed.y {
-            pos = (pos + 1.0).min(last as f32);
-            playing = false;
-        }
-        if input.pressed.x {
-            pos = (pos - 1.0).max(0.0);
-            playing = false;
-        }
-        let before = pos;
-        pos = scrub(
-            pos,
-            last as f32,
-            playing,
-            input.held.shoulder,
-            input.held.dummy,
-            dt,
-        );
-        // The end of the tape stops it rather than sitting there spinning.
-        if playing && before < last as f32 && pos >= last as f32 {
-            playing = false;
-        }
-        // The right stick is the lens: up and down are zoom, the sides are the
-        // orbit round the play.
-        if input.held.truck {
-            hand.zoom = (hand.zoom - ZOOM_RATE * dt).max(MIN_ZOOM);
-        }
-        if input.held.stop {
-            hand.zoom = (hand.zoom + ZOOM_RATE * dt).min(MAX_ZOOM);
-        }
-        if input.held.juke_l {
-            hand.yaw += ORBIT_RATE * dt;
-        }
-        if input.held.juke_r {
-            hand.yaw -= ORBIT_RATE * dt;
-        }
-        // The left stick walks the camera over the field.
-        let pan = stick_to_world(input.stick, flip_y, CameraMode::Replay, dir);
-        hand.at += pan * PAN_SPEED * dt;
-        hand.at.x = hand.at.x.clamp(-12.0, 112.0);
-        hand.at.y = hand.at.y.clamp(-32.0, 32.0);
-
-        let index = (pos.round() as usize).min(last);
-        broadcast.set_hand_camera(Some(hand));
-        let mut frame = draw(broadcast, &tape[index]);
-        let label = if playing { "REPLAY" } else { "REPLAY - PAUSED" };
-        let tw = nopads_render::font::text_width(label, 3) as i32;
-        frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
-        frame.fill_rect(12, 12, 4, 30, hud::RED);
-        frame.text_shadowed(23, 20, label, 3, hud::WHITE, 1);
-        let lines = vec![
-            format!("  REPLAY   FRAME {}/{last}", index + 1),
-            "  [A] PLAY / PAUSE   [RB] FAST FORWARD   [LB] REWIND   [Y] STEP FORWARD   [X] STEP BACK"
-                .to_string(),
-            "  [RS] ZOOM / ORBIT   [LS] PAN   [B] BACK TO THE GAME".to_string(),
-        ];
-        if !view.show(&mut frame, &lines) {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(16));
-    }
-    broadcast.set_hand_camera(None);
-    view.reset();
-    true
+    run_tape(
+        tape,
+        broadcast,
+        view,
+        pad,
+        flip_y,
+        Tape::Hand { dir, start },
+        draw,
+    )
 }
 
 /// Whether a dead snap is worth running back: fifteen yards of offence, six
@@ -2398,44 +2551,43 @@ fn play_back(
         .iter()
         .rev()
         .find_map(|snap| snap.flag.as_ref())
-        .map(|call| nopads_core::math::Vec2::new(call.spot_of_foul, 0.0));
+        .map(|call| Vec2::new(call.spot_of_foul, 0.0));
     let (mode, label) = if flag.is_some() {
         (CameraMode::Replay, "THE FLAG")
     } else {
         (CameraMode::Broadcast, "REPLAY")
     };
     broadcast.pin_focus(flag);
-    let done = play_back_tape(tape, broadcast, view, pad, mode, label);
+    let done = run_tape(
+        tape,
+        broadcast,
+        view,
+        pad,
+        false,
+        Tape::Auto {
+            label,
+            whole: false,
+        },
+        |b, snap| {
+            // The arrow follows the man the flag is on, frame by frame: he is
+            // running while the tape plays, so a marker pinned to the spot of the
+            // foul would be pointing at empty grass by the third frame.
+            let ui = PassUi {
+                flag: snap
+                    .flagged_player()
+                    .map(|i| Vec3::new(snap.players[i].pos.x, snap.players[i].pos.y, 0.0)),
+                focus: None,
+                badges: Vec::new(),
+                guide: None,
+                power: None,
+                short: false,
+                needed: None,
+            };
+            b.live_frame_ui(snap, mode, &ui)
+        },
+    );
     broadcast.pin_focus(None);
     done
-}
-
-fn play_back_tape(
-    tape: &[PlaySim],
-    broadcast: &mut Broadcast,
-    view: &mut View,
-    pad: Option<&mut Pad>,
-    mode: CameraMode,
-    label: &str,
-) -> bool {
-    let screen = broadcast;
-    play_back_frames(tape, view, pad, label, false, |snap| {
-        // The arrow follows the man the flag is on, frame by frame: he is running
-        // while the tape plays, so a marker pinned to the spot of the foul would
-        // be pointing at empty grass by the third frame.
-        let ui = PassUi {
-            flag: snap
-                .flagged_player()
-                .map(|i| Vec3::new(snap.players[i].pos.x, snap.players[i].pos.y, 0.0)),
-            focus: None,
-            badges: Vec::new(),
-            guide: None,
-            power: None,
-            short: false,
-            needed: None,
-        };
-        screen.live_frame_ui(snap, mode, &ui)
-    })
 }
 
 /// A return that goes the distance gets the same second look a snap gets. It was
@@ -2450,109 +2602,19 @@ fn play_back_throw_off(
     view: &mut View,
     pad: Option<&mut Pad>,
 ) -> bool {
-    let ui = PassUi {
-        flag: None,
-        focus: None,
-        badges: Vec::new(),
-        guide: None,
-        power: None,
-        short: false,
-        needed: None,
-    };
-    let screen = broadcast;
-    play_back_frames(tape, view, pad, "REPLAY", true, |snap| {
-        screen.throw_off_frame_live(snap, CameraMode::Broadcast, &ui)
-    })
-}
-
-/// The tape itself: the frames that were played, run back at the rate they were
-/// played at, with the label plate in the corner.
-///
-/// A `whole` replay plays every frame in order. A return that scores is shown that
-/// way, from the catch to the whistle: sampling it down to keep the second look
-/// short was what made the picture appear to start and then jump to the end of the
-/// play. A long snap is still sampled, so a replay cannot outlast the game.
-fn play_back_frames<T>(
-    tape: &[T],
-    view: &mut View,
-    mut pad: Option<&mut Pad>,
-    label: &str,
-    whole: bool,
-    mut draw: impl FnMut(&T) -> nopads_render::raster::Frame,
-) -> bool {
-    let started = Instant::now();
-    let mut next = Instant::now();
-    // Six seconds of tape is a replay, forty is the whole game again: a snap that
-    // ran long is sampled rather than run back for as long as it took.
-    let step = if whole { 1 } else { (tape.len() / 360).max(1) };
-    let take = if whole { tape.len() } else { 360 };
-    for snapshot in tape.iter().step_by(step).take(take) {
-        if started.elapsed() > Duration::from_millis(400) {
-            let input = pad::mix(pad.as_deref_mut(), view.poll());
-            if input.pressed.a || input.pressed.start {
-                return true;
-            }
-        }
-        // The tape was recorded one frame per fixed step, so play it back at
-        // the same rate.
-        loop {
-            if Instant::now() >= next {
-                next += Duration::from_millis(16);
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-            if started.elapsed() > Duration::from_millis(400) {
-                let input = pad::mix(pad.as_deref_mut(), view.poll());
-                if input.pressed.a || input.pressed.start {
-                    return true;
-                }
-            }
-        }
-        let mut frame = draw(snapshot);
-        let tw = nopads_render::font::text_width(label, 3) as i32;
-        frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
-        frame.fill_rect(12, 12, 4, 30, hud::RED);
-        frame.text_shadowed(23, 20, label, 3, hud::WHITE, 1);
-        let lines = vec!["REPLAY   [A] SKIP".to_string()];
-        if !view.show(&mut frame, &lines) {
-            return false;
-        }
-    }
-
-    // The whistle is not the end of the replay. Hold on the last frame a beat so
-    // the play reads as finished rather than cut off mid-stride, then sink to
-    // black and hand the picture back to the call sheet.
-    let Some(last) = tape.last() else {
-        return true;
-    };
-    let mut frame = draw(last);
-    let tw = nopads_render::font::text_width("END OF PLAY", 3) as i32;
-    frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
-    frame.fill_rect(12, 12, 4, 30, hud::RED);
-    frame.text_shadowed(23, 20, "END OF PLAY", 3, hud::WHITE, 1);
-    if !view.show(&mut frame, &["REPLAY DONE   [A] CONTINUE".to_string()]) {
-        return false;
-    }
-    let hold = Instant::now();
-    while hold.elapsed() < Duration::from_millis(1200) {
-        let input = pad::mix(pad.as_deref_mut(), view.poll());
-        if input.pressed.a || input.pressed.start {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(4));
-    }
-    // A cut on the whistle reads as the game having fallen over, so the picture
-    // goes down to the ink over a quarter of a second first.
-    let fade = Instant::now();
-    while fade.elapsed() < Duration::from_millis(280) {
-        let t = (fade.elapsed().as_secs_f32() / 0.28).clamp(0.0, 1.0);
-        let mut frame = draw(last);
-        frame.fill_rect_alpha(0, 0, frame.w as i32, frame.h as i32, hud::INK, t);
-        if !view.show(&mut frame, &[]) {
-            return false;
-        }
-    }
-    true
+    let ui = ui_none();
+    run_tape(
+        tape,
+        broadcast,
+        view,
+        pad,
+        false,
+        Tape::Auto {
+            label: "REPLAY",
+            whole: true,
+        },
+        |b, snap| b.throw_off_frame_live(snap, CameraMode::Broadcast, &ui),
+    )
 }
 
 /// One frame of a snap as the side playing it sees it: the sim, the picture, the
