@@ -1373,6 +1373,7 @@ fn coin_flip(
 
 #[cfg(test)]
 mod tests {
+    use crate::view::UI_SCALE;
     use super::*;
 
     #[test]
