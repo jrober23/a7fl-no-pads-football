@@ -552,14 +552,39 @@ impl Mask {
 
     /// Soften the coverage. Two box passes either way, which is close enough to a
     /// gaussian at this size and costs four running sums a pixel.
+    ///
+    /// The two directions are walked very differently. Across a row the mask is
+    /// contiguous and a running sum is nearly free; down a column every tap is a
+    /// whole row away, so the old column walk took a cache miss per tap and four
+    /// of those passes were the longest piece of the shadow. Read down a column
+    /// as a row at a time instead -- keep the column sums of the rows in reach,
+    /// step the window down one row and add what came in, subtract what went out
+    /// -- and both directions read memory in order.
     pub fn blur(&mut self, radius: usize) {
         if radius == 0 || self.w == 0 || self.h == 0 {
             return;
         }
         let mut tmp = vec![0u8; self.cover.len()];
         for _ in 0..2 {
-            box_pass(&self.cover, &mut tmp, self.w, self.h, radius as i32, true);
-            box_pass(&tmp, &mut self.cover, self.w, self.h, radius as i32, false);
+            box_rows(&self.cover, &mut tmp, self.w, self.h, radius as i32);
+            box_lines(&tmp, &mut self.cover, self.w, self.h, radius as i32);
+        }
+    }
+
+    /// Take the strongest coverage another mask holds for each pixel.
+    ///
+    /// Coverage only ever grows -- the raster keeps whatever shape covered a
+    /// pixel best -- so masks built apart, one per band of the machine, join up
+    /// with a maximum. That is what lets the silhouette be cast in parallel
+    /// without a lock in the middle of it.
+    pub fn merge(&mut self, other: &Mask) {
+        if self.w != other.w || self.h != other.h {
+            return;
+        }
+        for (mine, theirs) in self.cover.iter_mut().zip(&other.cover) {
+            if *theirs > *mine {
+                *mine = *theirs;
+            }
         }
     }
 
@@ -614,24 +639,57 @@ impl Mask {
     }
 }
 
-fn box_pass(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: i32, horizontal: bool) {
-    let (len, lines) = if horizontal { (w, h) } else { (h, w) };
-    if len == 0 || lines == 0 {
+/// One box pass across the mask's rows: every output pixel is the average of the
+/// ones within `r` of it along its row.
+fn box_lines(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: i32) {
+    if w == 0 || h == 0 {
         return;
     }
     let span = (2 * r + 1) as u32;
-    for line in 0..lines {
-        let at = |i: i32, line: usize| -> u32 {
-            let i = i.clamp(0, len as i32 - 1) as usize;
-            let idx = if horizontal { line * w + i } else { i * w + line };
-            src[idx] as u32
-        };
-        let mut sum: u32 = (-r..=r).map(|i| at(i, line)).sum();
-        for i in 0..len as i32 {
-            let o = if horizontal { line * w + i as usize } else { i as usize * w + line };
-            dst[o] = (sum / span) as u8;
-            sum -= at(i - r, line);
-            sum += at(i + r + 1, line);
+    for y in 0..h {
+        let row = &src[y * w..(y + 1) * w];
+        let at = |i: i32| -> u32 { row[i.clamp(0, w as i32 - 1) as usize] as u32 };
+        let out = &mut dst[y * w..(y + 1) * w];
+        let mut sum: u32 = (-r..=r).map(at).sum();
+        for (x, o) in out.iter_mut().enumerate() {
+            *o = (sum / span) as u8;
+            sum -= at(x as i32 - r);
+            sum += at(x as i32 + r + 1);
+        }
+    }
+}
+
+/// A box pass down the mask's columns, a row at a time.
+///
+/// The column sums are held for the whole width at once, so the window slides
+/// down the picture reading rows in order: one add and one subtract a pixel,
+/// and no tap is ever a cache miss. Rows past the edges repeat the last row,
+/// the same as the ends of a row do.
+fn box_rows(src: &[u8], dst: &mut [u8], w: usize, h: usize, r: i32) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    let span = (2 * r + 1) as u32;
+    let edge = |y: i32| -> usize { y.clamp(0, h as i32 - 1) as usize };
+    let mut sum = vec![0u32; w];
+    for k in -r..=r {
+        let row = &src[edge(k) * w..(edge(k) + 1) * w];
+        for (acc, v) in sum.iter_mut().zip(row) {
+            *acc += *v as u32;
+        }
+    }
+    for y in 0..h {
+        let out = &mut dst[y * w..(y + 1) * w];
+        for (o, acc) in out.iter_mut().zip(&sum) {
+            *o = (acc / span) as u8;
+        }
+        if y + 1 == h {
+            break;
+        }
+        let add = &src[edge(y as i32 + 1 + r) * w..][..w];
+        let sub = &src[edge(y as i32 - r) * w..][..w];
+        for ((acc, a), s) in sum.iter_mut().zip(add).zip(sub) {
+            *acc = *acc + *a as u32 - *s as u32;
         }
     }
 }
@@ -658,6 +716,56 @@ mod mask_tests {
         twice.cast(&mut b, 0.42, SHADE);
         assert_eq!(a.color, b.color, "a second shape over the first darkened it twice");
         assert_ne!(a.color[32 * 12 + 12], TURF, "the shadow never landed");
+    }
+
+    /// The blur the picture was tuned against: two box passes each way, every
+    /// pixel the plain average of the ones within reach, edges repeating the
+    /// last row or column.
+    fn reference_blur(src: &[u8], w: usize, h: usize, r: i32) -> Vec<u8> {
+        let span = (2 * r + 1) as u32;
+        let mut cur = src.to_vec();
+        for _ in 0..2 {
+            for horizontal in [false, true] {
+                let mut out = vec![0u8; cur.len()];
+                for y in 0..h {
+                    for x in 0..w {
+                        let mut sum = 0u32;
+                        for k in -r..=r {
+                            let (yy, xx) = if horizontal {
+                                (y, (x as i32 + k).clamp(0, w as i32 - 1) as usize)
+                            } else {
+                                ((y as i32 + k).clamp(0, h as i32 - 1) as usize, x)
+                            };
+                            sum += cur[yy * w + xx] as u32;
+                        }
+                        out[y * w + x] = (sum / span) as u8;
+                    }
+                }
+                cur = out;
+            }
+        }
+        cur
+    }
+
+    #[test]
+    fn the_blur_is_the_plain_box_blur() {
+        let (w, h) = (37, 29);
+        let mut mask = Mask::new(w, h);
+        mask.tri([(6.0, 4.0), (30.0, 9.0), (18.0, 25.0)]);
+        mask.tri([(2.0, 2.0), (10.0, 2.0), (9.0, 20.0)]);
+        let want = reference_blur(&mask.cover, w, h, 2);
+        mask.blur(2);
+        let bad: Vec<usize> = (0..want.len()).filter(|i| want[*i] != mask.cover[*i]).collect();
+        assert!(
+            bad.is_empty(),
+            "{} of {} pixels differ; first at ({}, {}): wanted {} got {}",
+            bad.len(),
+            want.len(),
+            bad.first().map(|i| i % w).unwrap_or(0),
+            bad.first().map(|i| i / w).unwrap_or(0),
+            bad.first().map(|i| want[*i]).unwrap_or(0),
+            bad.first().map(|i| mask.cover[*i]).unwrap_or(0)
+        );
     }
 
     #[test]

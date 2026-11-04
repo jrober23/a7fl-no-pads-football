@@ -914,19 +914,57 @@ impl Broadcast {
     }
 
     fn draw_bodies(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
+        // Every man is built once and used twice: the same mesh lays his shadow
+        // down and then draws him. He used to be built a second time, at a
+        // coarser level of detail, only to be flattened for the shadow -- a whole
+        // model per man per frame spent on a blurred shape on the grass.
+        let t = std::time::Instant::now();
+        let built = self.build_men(camera, bodies);
+        let build = t.elapsed();
         // Shadows first so every player casts one.
         let t = std::time::Instant::now();
-        self.draw_shadows(frame, camera, bodies);
+        self.draw_shadows(frame, camera, &built);
         let shadow = t.elapsed();
         let t = std::time::Instant::now();
-        self.paint_men(frame, camera, bodies);
+        self.paint_men(frame, camera, &built);
         if std::env::var_os("NOPADS_TIMING").is_some() {
             eprintln!(
-                "    shadows {:>5.1}  men {:>5.1}",
+                "    build {:>5.1}  shadows {:>5.1}  men {:>5.1}",
+                build.as_secs_f64() * 1000.0,
                 shadow.as_secs_f64() * 1000.0,
                 t.elapsed().as_secs_f64() * 1000.0
             );
         }
+    }
+
+    /// One build per man, at the level of detail the picture asks for, placed on
+    /// the field. The body and the shadow both come from this: they shared the
+    /// pose already, and now they share the geometry.
+    fn build_men(&mut self, camera: &Camera, bodies: &[RenderPlayer]) -> Vec<Mesh> {
+        let mut close_builds = 0;
+        let mut built: Vec<Mesh> = Vec::with_capacity(bodies.len());
+        for p in bodies {
+            let roster = &self.teams[p.team].roster[p.roster];
+            let uniform = &self.uniforms[p.team];
+            let pose = Self::pose_of(p);
+            // A man a long way from the lens is built cheaply: at that size the
+            // eyes and the quadriceps are less than a pixel each.
+            let dist = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
+            let mut detail = players::Detail::for_distance(dist);
+            // The modelled face is worth two men. A pile-up would otherwise ask
+            // for six of them at once and spend the frame on the far hash.
+            if detail == players::Detail::Close {
+                if close_builds >= 2 {
+                    detail = players::Detail::Full;
+                } else {
+                    close_builds += 1;
+                }
+            }
+            let mut mesh = players::build_mesh_at(roster, uniform, &pose, p.roster as u32, detail);
+            mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
+            built.push(mesh);
+        }
+        built
     }
 
     /// The men themselves, drawn straight onto the canvas.
@@ -936,8 +974,11 @@ impl Broadcast {
     /// and the men are where that showed. The canvas is 1280x720 now, so the
     /// second pass was a quarter of the frame's work for a picture the frame can
     /// already resolve: same pixels per man, a quarter of the cost.
-    fn paint_men(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
-        self.paint_men_at(frame, camera, bodies);
+    fn paint_men(&mut self, frame: &mut Frame, camera: &Camera, built: &[Mesh]) {
+        // One pass for the whole field: the men are prepared together and the
+        // frame is split across the machine once.
+        let meshes: Vec<&Mesh> = built.iter().collect();
+        self.scene.draw_meshes(frame, &meshes, camera);
     }
 
     /// A man's pose, shared by his body and by his shadow, so the two can never
@@ -971,10 +1012,8 @@ impl Broadcast {
     ///
     /// It is built at half the canvas: a shadow is a blurred silhouette and
     /// carries no detail a smaller mask would lose, so the mask, its blur and
-    /// its composite cost a quarter of what they did at full size. The far level
-    /// of detail is all the shape it needs, and a second close build per man
-    /// would cost more than the shadow is worth.
-    fn draw_shadows(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
+    /// its composite cost a quarter of what they did at full size.
+    fn draw_shadows(&mut self, frame: &mut Frame, camera: &Camera, built: &[Mesh]) {
         const DARKNESS: f32 = 0.42;
         const TINT: Rgb = Rgb::hex(0x0B1A10);
         /// How much smaller the shadow mask is than the picture.
@@ -990,54 +1029,37 @@ impl Broadcast {
             focal: full.focal / SHRINK as f32,
         };
         let sun = self.scene.lighting.sun;
-        for p in bodies {
-            let roster = &self.teams[p.team].roster[p.roster];
-            let uniform = &self.uniforms[p.team];
-            let mut mesh = players::build_mesh_at(
-                roster,
-                uniform,
-                &Self::pose_of(p),
-                p.roster as u32,
-                players::Detail::Far,
-            );
-            mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
-            self.scene.cast_silhouette(&mut mask, camera, &mesh, sun);
+        // The men are shared out across the machine with a coverage mask each,
+        // joined up afterwards. Flattening a man's triangles costs a projection
+        // and a span fill per triangle and none of it touches the picture: it was
+        // the longest piece of the frame still running on one core.
+        let (mw, mh) = (mask.w, mask.h);
+        let bands = crate::scene::threads().clamp(1, built.len().max(1));
+        let per = built.len().div_ceil(bands).max(1);
+        let scene = &self.scene;
+        let parts: Vec<crate::raster::Mask> = std::thread::scope(|scope| {
+            let handles: Vec<_> = built
+                .chunks(per)
+                .map(|chunk| {
+                    let mut part = crate::raster::Mask::new(mw, mh);
+                    scope.spawn(move || {
+                        for mesh in chunk {
+                            scene.cast_silhouette(&mut part, camera, mesh, sun);
+                        }
+                        part
+                    })
+                })
+                .collect();
+            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        });
+        for part in &parts {
+            mask.merge(part);
         }
         self.scene.projector = full;
         mask.blur(2);
         mask.cast_scaled(frame, SHRINK, DARKNESS, TINT);
     }
 
-    /// One build and one draw per man, into whichever frame the caller gave it.
-    fn paint_men_at(&mut self, frame: &mut Frame, camera: &Camera, bodies: &[RenderPlayer]) {
-        let mut close_builds = 0;
-        let mut built: Vec<Mesh> = Vec::with_capacity(bodies.len());
-        for p in bodies {
-            let roster = &self.teams[p.team].roster[p.roster];
-            let uniform = &self.uniforms[p.team];
-            let pose = Self::pose_of(p);
-            // A man a long way from the lens is built cheaply: at that size the
-            // eyes and the quadriceps are less than a pixel each.
-            let dist = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
-            let mut detail = players::Detail::for_distance(dist);
-            // The modelled face is worth two men. A pile-up would otherwise ask
-            // for six of them at once and spend the frame on the far hash.
-            if detail == players::Detail::Close {
-                if close_builds >= 2 {
-                    detail = players::Detail::Full;
-                } else {
-                    close_builds += 1;
-                }
-            }
-            let mut mesh = players::build_mesh_at(roster, uniform, &pose, p.roster as u32, detail);
-            mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
-            built.push(mesh);
-        }
-        // One pass for the whole field: the men are prepared together and the
-        // frame is split across the machine once.
-        let meshes: Vec<&Mesh> = built.iter().collect();
-        self.scene.draw_meshes(frame, &meshes, camera);
-    }
 
     /// The crowd for this frame: everybody bobbing on his own phase, with a few
     /// arms up. Two quads a man, doubled over so the far side of the ground is
