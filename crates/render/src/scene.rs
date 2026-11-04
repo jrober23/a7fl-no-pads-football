@@ -122,6 +122,23 @@ impl Mesh {
         Mesh { tris: Vec::new(), textures: Vec::new() }
     }
 
+    /// An empty mesh with room already found for `tris` triangles.
+    ///
+    /// A figure is a couple of thousand triangles and it is rebuilt every frame,
+    /// so growing the buffer a doubling at a time -- copying what is already
+    /// there on every step -- is a cost paid fourteen times a frame for nothing.
+    pub fn with_capacity(tris: usize) -> Self {
+        Mesh { tris: Vec::with_capacity(tris), textures: Vec::new() }
+    }
+
+    /// Empty the mesh but keep the buffers: the same man is the same size of
+    /// figure next frame, so the memory his triangles lived in is still the
+    /// memory they want.
+    pub fn reuse(&mut self) {
+        self.tris.clear();
+        self.textures.clear();
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tris.is_empty()
     }

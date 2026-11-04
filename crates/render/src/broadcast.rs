@@ -133,6 +133,9 @@ pub struct Broadcast {
     /// The crowd, one man at a time, so it can move.
     crowd: Vec<CrowdFigure>,
     crowd_t: f32,
+    /// The men on the field, kept between frames: a man is the same size of
+    /// figure every frame, so the triangles he is built from have a home.
+    men: Vec<Mesh>,
     /// The school outside the glass, when the ground is the dome.
     fish: Vec<crate::venues::FishFigure>,
 }
@@ -204,6 +207,7 @@ impl Broadcast {
             pin: None,
             crowd,
             crowd_t: 0.0,
+            men: Vec::new(),
             fish: if matches!(venue.kind(), crate::venues::Kind::Underwater) {
                 crate::venues::school(0xA7F1_5EED)
             } else {
@@ -918,21 +922,29 @@ impl Broadcast {
         // down and then draws him. He used to be built a second time, at a
         // coarser level of detail, only to be flattened for the shadow -- a whole
         // model per man per frame spent on a blurred shape on the grass.
+        //
+        // The meshes themselves outlive the frame. A rebuild asks for the same
+        // two thousand triangles every frame, so the vectors are taken out of
+        // the renderer, filled again, and put back: after the first frame the
+        // geometry costs no allocations at all.
+        let mut men = std::mem::take(&mut self.men);
         let t = std::time::Instant::now();
-        let built = self.build_men(camera, bodies);
+        let count = self.build_men(camera, bodies, &mut men);
         let build = t.elapsed();
         // Shadows first so every player casts one.
         let t = std::time::Instant::now();
-        self.draw_shadows(frame, camera, &built);
+        self.draw_shadows(frame, camera, &men[..count]);
         let shadow = t.elapsed();
         let t = std::time::Instant::now();
-        self.paint_men(frame, camera, &built);
+        self.paint_men(frame, camera, &men[..count]);
+        let paint = t.elapsed();
+        self.men = men;
         if std::env::var_os("NOPADS_TIMING").is_some() {
             eprintln!(
                 "    build {:>5.1}  shadows {:>5.1}  men {:>5.1}",
                 build.as_secs_f64() * 1000.0,
                 shadow.as_secs_f64() * 1000.0,
-                t.elapsed().as_secs_f64() * 1000.0
+                paint.as_secs_f64() * 1000.0
             );
         }
     }
@@ -940,10 +952,17 @@ impl Broadcast {
     /// One build per man, at the level of detail the picture asks for, placed on
     /// the field. The body and the shadow both come from this: they shared the
     /// pose already, and now they share the geometry.
-    fn build_men(&mut self, camera: &Camera, bodies: &[RenderPlayer]) -> Vec<Mesh> {
+    ///
+    /// Fills `men`, growing it to fit, and leaves any spare figures past the men
+    /// currently on the field alone: a man shoved out of the picture this frame
+    /// is back next frame, and his buffers are still his. Returns how many of
+    /// them are this frame's.
+    fn build_men(&mut self, camera: &Camera, bodies: &[RenderPlayer], men: &mut Vec<Mesh>) -> usize {
         let mut close_builds = 0;
-        let mut built: Vec<Mesh> = Vec::with_capacity(bodies.len());
-        for p in bodies {
+        while men.len() < bodies.len() {
+            men.push(Mesh::new());
+        }
+        for (mesh, p) in men.iter_mut().zip(bodies) {
             let roster = &self.teams[p.team].roster[p.roster];
             let uniform = &self.uniforms[p.team];
             let pose = Self::pose_of(p);
@@ -960,11 +979,10 @@ impl Broadcast {
                     close_builds += 1;
                 }
             }
-            let mut mesh = players::build_mesh_at(roster, uniform, &pose, p.roster as u32, detail);
+            players::build_mesh_into(mesh, roster, uniform, &pose, p.roster as u32, detail);
             mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
-            built.push(mesh);
         }
-        built
+        bodies.len()
     }
 
     /// The men themselves, drawn straight onto the canvas.

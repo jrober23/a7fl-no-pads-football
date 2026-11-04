@@ -117,6 +117,23 @@ impl Detail {
         !matches!(self, Detail::Far)
     }
 
+    /// How many triangles a figure at this level comes to.
+    ///
+    /// Measured off the figures themselves rather than guessed: the first draft
+    /// of these numbers was less than half the truth, and a reserve that is too
+    /// small is a buffer that doubles itself anyway. They are a little generous
+    /// so a level that grows does not immediately outgrow its room, and the test
+    /// below holds them to the figures.
+    fn triangles(self) -> usize {
+        match self {
+            Detail::Close => 9500,
+            Detail::Full => 6300,
+            Detail::Mid => 5600,
+            Detail::Far => 2400,
+        }
+    }
+
+
     /// How much face to build: 3 is the modelled head, 0 is a head-shaped lump.
     fn quality(self) -> u8 {
         match self {
@@ -838,7 +855,26 @@ pub fn build_mesh_at(
     team_skin_seed: u32,
     detail: Detail,
 ) -> Mesh {
-    let mut mesh = Mesh::new();
+    let mut mesh = Mesh::with_capacity(detail.triangles());
+    build_mesh_into(&mut mesh, player, uniform, pose, team_skin_seed, detail);
+    mesh
+}
+
+/// The same figure, built into a mesh that is already there.
+///
+/// Every man on the field is rebuilt every frame, and every rebuild wants the
+/// same triangles in the same buffer as the frame before. Handing the builder a
+/// buffer to fill again is free; asking the allocator for two thousand
+/// triangles, fourteen times a frame, costs more than the geometry does.
+pub fn build_mesh_into(
+    mesh: &mut Mesh,
+    player: &Player,
+    uniform: &Uniform,
+    pose: &Pose,
+    team_skin_seed: u32,
+    detail: Detail,
+) {
+    mesh.reuse();
     let sides = detail.sides();
     let body_sides = detail.body_sides();
     let h = player.height_yards().clamp(1.55, 2.05);
@@ -964,7 +1000,7 @@ pub fn build_mesh_at(
         );
         // Trim round the hem, so the short leg ends on a line instead of a cut.
         limb(
-            &mut mesh,
+            mesh,
             hem.lerp(hip, 0.07),
             hem,
             // Proud enough to clear a twelve-sided ring's own facet depth;
@@ -1007,7 +1043,7 @@ pub fn build_mesh_at(
             if player.id % 4 == 3 {
                 let up = (hip - knee_pos).normalize_or_zero();
                 limb(
-                    &mut mesh,
+                    mesh,
                     knee_pos + up * 0.012,
                     knee_pos + up * 0.095,
                     knee_r * 1.10,
@@ -1062,7 +1098,7 @@ pub fn build_mesh_at(
             sides,
             accent,
         );
-        shoe(&mut mesh, ankle, foot, shoes);
+        shoe(mesh, ankle, foot, shoes);
     }
 
     // ---------------- seat and shorts ----------------
@@ -1090,7 +1126,7 @@ pub fn build_mesh_at(
             hip_yaw * 0.7,
         ),
     ];
-    loft(&mut mesh, &seat, body_sides, TORSO_ROUND, true, true, |i, k| {
+    loft(mesh, &seat, body_sides, TORSO_ROUND, true, true, |i, k| {
         let a = (k as f32 + 0.5) / body_sides as f32 * std::f32::consts::TAU;
         let lateral = a.sin().abs();
         // A stripe down each side of the shorts.
@@ -1157,7 +1193,7 @@ pub fn build_mesh_at(
         base.scale(fold)
     };
     let torso_first = mesh.tris.len();
-    loft(&mut mesh, &torso, body_sides, TORSO_ROUND, true, true, cloth);
+    loft(mesh, &torso, body_sides, TORSO_ROUND, true, true, cloth);
     let torso_end = mesh.tris.len();
     // The shirt is cloth, and cloth is a texture: a weave two pixels wide, the
     // seams where the panels join, the stitch along the hem. A man far enough
@@ -1176,7 +1212,7 @@ pub fn build_mesh_at(
         shoulder_w * 0.280,
         hip_yaw * 0.8,
     );
-    loft(&mut mesh, &[hem_lo, hem_hi], body_sides, TORSO_ROUND, false, false, |_, _| {
+    loft(mesh, &[hem_lo, hem_hi], body_sides, TORSO_ROUND, false, false, |_, _| {
         accent
     });
 
@@ -1206,7 +1242,7 @@ pub fn build_mesh_at(
             )
         };
         paint_number(
-            &mut mesh,
+            mesh,
             player.number,
             1.0,
             cell,
@@ -1216,7 +1252,7 @@ pub fn build_mesh_at(
             &cloth_at,
         );
         paint_number(
-            &mut mesh,
+            mesh,
             player.number,
             -1.0,
             cell * 0.68,
@@ -1239,7 +1275,7 @@ pub fn build_mesh_at(
             let word_cell = (flat / (letters * 6.15)).min(cell * 0.40);
             if word_cell > 0.0025 {
                 paint_wordmark(
-                    &mut mesh,
+                    mesh,
                     &mark,
                     -1.0,
                     word_cell,
@@ -1261,7 +1297,7 @@ pub fn build_mesh_at(
         let crest_cell = cell * 0.32;
         let crest_at = -crest_ry * 0.60;
         paint_rows(
-            &mut mesh,
+            mesh,
             &CREST,
             -1.0,
             crest_cell,
@@ -1272,7 +1308,7 @@ pub fn build_mesh_at(
             crest_at,
         );
         paint_rows(
-            &mut mesh,
+            mesh,
             &CREST_FIELD,
             -1.0,
             crest_cell * 0.56,
@@ -1295,7 +1331,7 @@ pub fn build_mesh_at(
         // brown sliver over each shoulder even when the cap itself is covered.
         if detail.fine() {
             taper3(
-                &mut mesh,
+                mesh,
                 shoulder.lerp(shoulder_zone, 0.5) + Vec3::new(0.0, 0.0, 0.004),
                 Vec3::new(0.062, 0.056, 0.024),
                 Vec3::new(0.048, 0.086, 0.021),
@@ -1430,7 +1466,7 @@ pub fn build_mesh_at(
             let hem_lo = shoulder.lerp(elbow, 0.50);
             let hem_hi = shoulder.lerp(elbow, 0.58);
             limb(
-                &mut mesh,
+                mesh,
                 hem_lo,
                 hem_hi,
                 0.100 * bulk,
@@ -1453,7 +1489,7 @@ pub fn build_mesh_at(
         // arm, and it puts a break in the line where the forearm meets the hand.
         let wrist = elbow.lerp(hand, 0.84);
         limb(
-            &mut mesh,
+            mesh,
             wrist,
             wrist + fore_dir * 0.046,
             0.050,
@@ -1487,7 +1523,7 @@ pub fn build_mesh_at(
         // Cuff, over the wristband: the glove starts on the forearm, so there is
         // no gap between the arm and the hand when the arm swings.
         limb(
-            &mut mesh,
+            mesh,
             hand - fore_dir * 0.042,
             hand - fore_dir * 0.018,
             0.048,
@@ -1501,7 +1537,7 @@ pub fn build_mesh_at(
             let ball_center = hand + Vec3::new(-0.02, 0.0, 0.02);
             mesh.sphere(ball_center, Vec3::new(0.058, 0.098, 0.074), 5, 9, Rgb::hex(0x6B3B1E));
             box3(
-                &mut mesh,
+                mesh,
                 ball_center + Vec3::new(-0.05, 0.0, 0.0),
                 Vec3::new(0.012, 0.010, 0.006),
                 0.0,
@@ -1547,7 +1583,7 @@ pub fn build_mesh_at(
         accent,
         mask: if masked { Some(jersey) } else { None },
     }
-    .build(&mut mesh, detail.quality());
+    .build(mesh, detail.quality());
 
     // Helmet? Never. This is no-pads football.
 
@@ -1558,8 +1594,8 @@ pub fn build_mesh_at(
     let fall = if pose.down { 1.0 } else { pose.tackled.clamp(0.0, 1.0) };
     if fall > 0.001 {
         let e = fall * fall * (3.0 - 2.0 * fall);
-        pitch_mesh(&mut mesh, SOLE, e * 1.42);
-        raise_to_turf(&mut mesh);
+        pitch_mesh(mesh, SOLE, e * 1.42);
+        raise_to_turf(mesh);
     }
 
     if let Some(kind) = pose.motion {
@@ -1568,29 +1604,29 @@ pub fn build_mesh_at(
         let e = p * p * (3.0 - 2.0 * p);
         match kind {
             // One full turn with his feet under him.
-            Kind::Spin => yaw_mesh(&mut mesh, e * std::f32::consts::TAU),
+            Kind::Spin => yaw_mesh(mesh, e * std::f32::consts::TAU),
             // Up and over a man: the whole body leaves the turf on an arc and
             // comes back down inside the length of the move.
-            Kind::Hurdle => lift_mesh(&mut mesh, (std::f32::consts::PI * p).sin() * 0.62),
+            Kind::Hurdle => lift_mesh(mesh, (std::f32::consts::PI * p).sin() * 0.62),
             // Forward and out over his feet, ending parallel to the ground.
             Kind::Dive => {
-                pitch_mesh(&mut mesh, SOLE, e * 1.30);
-                raise_to_turf(&mut mesh);
+                pitch_mesh(mesh, SOLE, e * 1.30);
+                raise_to_turf(mesh);
             }
             // Down and back onto his hip, the way a quarterback gives himself up.
             Kind::Slide => {
-                pitch_mesh(&mut mesh, SOLE, -e * 1.15);
-                raise_to_turf(&mut mesh);
+                pitch_mesh(mesh, SOLE, -e * 1.15);
+                raise_to_turf(mesh);
             }
             // The arm goes out, not the body: handled where the arms are built,
             // so the runner keeps his feet and his stride.
             Kind::StiffArm => {}
             // A break is all hips: the body turns off its line without leaving
             // the ground, and the stride keeps running through it.
-            Kind::Cut => yaw_mesh(&mut mesh, e * 0.85),
-            Kind::Juke => yaw_mesh(&mut mesh, e * 1.35),
+            Kind::Cut => yaw_mesh(mesh, e * 0.85),
+            Kind::Juke => yaw_mesh(mesh, e * 1.35),
             // A stop sits him back on both feet, weight going down and back.
-            Kind::Stop => pitch_mesh(&mut mesh, SOLE, -e * 0.30),
+            Kind::Stop => pitch_mesh(mesh, SOLE, -e * 0.30),
         }
     }
 
@@ -1603,7 +1639,6 @@ pub fn build_mesh_at(
     }
 
     let _ = team_skin_seed;
-    mesh
 }
 
 /// Build the ball on its own so it can be drawn in flight.
@@ -1895,6 +1930,24 @@ mod tests {
             "the close figure is too heavy to draw twice: {} tris",
             close.tris.len()
         );
+    }
+
+    /// The room kept for a figure is what a rebuild of a man costs: if a level
+    /// outgrows it, the frame grows a buffer a doubling at a time and the number
+    /// in `Detail::triangles` has stopped being true.
+    #[test]
+    fn every_level_of_detail_fits_in_the_room_kept_for_it() {
+        let teams = nopads_core::team::league_teams();
+        let player = &teams[0].roster[0];
+        let uniform = &teams[0].home;
+        let pose = Pose { run_phase: 0.3, speed: 0.75, carrying: true, ..Default::default() };
+        let over: Vec<String> = [Detail::Far, Detail::Mid, Detail::Full, Detail::Close]
+            .into_iter()
+            .map(|detail| (detail, build_mesh_at(player, uniform, &pose, 0, detail).tris.len()))
+            .filter(|(detail, tris)| *tris > detail.triangles())
+            .map(|(detail, tris)| format!("{detail:?} {tris} into {}", detail.triangles()))
+            .collect();
+        assert!(over.is_empty(), "outgrew the room kept: {}", over.join(", "));
     }
 
     /// Every man wears a balaclava in club colour, and the face shows in the
