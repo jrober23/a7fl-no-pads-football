@@ -136,6 +136,9 @@ pub struct Broadcast {
     /// The men on the field, kept between frames: a man is the same size of
     /// figure every frame, so the triangles he is built from have a home.
     men: Vec<Mesh>,
+    /// The coverage masks the shadows are cast into, kept for the same reason:
+    /// each is a quarter of the picture and the same quarter every frame.
+    shadow_masks: Vec<crate::raster::Mask>,
     /// The school outside the glass, when the ground is the dome.
     fish: Vec<crate::venues::FishFigure>,
 }
@@ -208,6 +211,7 @@ impl Broadcast {
             crowd,
             crowd_t: 0.0,
             men: Vec::new(),
+            shadow_masks: Vec::new(),
             fish: if matches!(venue.kind(), crate::venues::Kind::Underwater) {
                 crate::venues::school(0xA7F1_5EED)
             } else {
@@ -1036,10 +1040,30 @@ impl Broadcast {
         const TINT: Rgb = Rgb::hex(0x0B1A10);
         /// How much smaller the shadow mask is than the picture.
         const SHRINK: usize = 2;
-        if frame.w < SHRINK || frame.h < SHRINK {
+        if frame.w < SHRINK || frame.h < SHRINK || built.is_empty() {
             return;
         }
-        let mut mask = crate::raster::Mask::new(frame.w / SHRINK, frame.h / SHRINK);
+        let (mw, mh) = (frame.w / SHRINK, frame.h / SHRINK);
+        if mw == 0 || mh == 0 {
+            return;
+        }
+        // The masks outlive the frame, like the men: a shadow is cast into the
+        // same quarter of the picture every frame, and finding two megabytes of
+        // memory for it again sixty times a second is work that buys nothing.
+        let mut masks = std::mem::take(&mut self.shadow_masks);
+        let bands = crate::scene::threads().clamp(1, built.len());
+        let per = built.len().div_ceil(bands).max(1);
+        let used = built.len().div_ceil(per);
+        while masks.len() < used {
+            masks.push(crate::raster::Mask::new(mw, mh));
+        }
+        for part in masks.iter_mut().take(used) {
+            if part.w == mw && part.h == mh {
+                part.clear();
+            } else {
+                *part = crate::raster::Mask::new(mw, mh);
+            }
+        }
         let full = self.scene.projector;
         self.scene.projector = crate::scene::Projector {
             w: full.w / SHRINK as f32,
@@ -1047,35 +1071,33 @@ impl Broadcast {
             focal: full.focal / SHRINK as f32,
         };
         let sun = self.scene.lighting.sun;
-        // The men are shared out across the machine with a coverage mask each,
-        // joined up afterwards. Flattening a man's triangles costs a projection
-        // and a span fill per triangle and none of it touches the picture: it was
-        // the longest piece of the frame still running on one core.
-        let (mw, mh) = (mask.w, mask.h);
-        let bands = crate::scene::threads().clamp(1, built.len().max(1));
-        let per = built.len().div_ceil(bands).max(1);
+        // The men are shared out across the machine with a mask each, joined up
+        // afterwards. Flattening a man's triangles costs a projection and a span
+        // fill per triangle and none of it touches the picture. A man is wholly
+        // inside one band, so no silhouette is ever split between two masks and
+        // the union below is exact rather than an approximation of one.
         let scene = &self.scene;
-        let parts: Vec<crate::raster::Mask> = std::thread::scope(|scope| {
-            let handles: Vec<_> = built
-                .chunks(per)
-                .map(|chunk| {
-                    let mut part = crate::raster::Mask::new(mw, mh);
-                    scope.spawn(move || {
-                        for mesh in chunk {
-                            scene.cast_silhouette(&mut part, camera, mesh, sun);
-                        }
-                        part
-                    })
-                })
-                .collect();
-            handles.into_iter().filter_map(|h| h.join().ok()).collect()
+        std::thread::scope(|scope| {
+            for (part, chunk) in masks.iter_mut().zip(built.chunks(per)) {
+                scope.spawn(move || {
+                    for mesh in chunk {
+                        scene.cast_silhouette(part, camera, mesh, sun);
+                    }
+                });
+            }
         });
-        for part in &parts {
-            mask.merge(part);
-        }
+        // A worker that panics takes the frame down with it here: the scope
+        // re-raises, rather than a band of shadows quietly going missing from
+        // the turf.
         self.scene.projector = full;
-        mask.blur(2);
-        mask.cast_scaled(frame, SHRINK, DARKNESS, TINT);
+        let (head, rest) = masks.split_at_mut(1);
+        let shadow = &mut head[0];
+        for part in rest.iter().take(used - 1) {
+            shadow.merge(part);
+        }
+        shadow.blur(2);
+        shadow.cast_scaled(frame, SHRINK, DARKNESS, TINT);
+        self.shadow_masks = masks;
     }
 
 

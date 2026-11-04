@@ -510,6 +510,15 @@ impl Mask {
         Mask { w, h, cover: vec![0; w * h] }
     }
 
+    /// Empty the mask but keep the buffer it lives in.
+    ///
+    /// The same shadows are cast into the same footprint every frame, so the
+    /// memory a mask wants next frame is the memory it had this one: a cleared
+    /// mask costs a memset and no allocation at all.
+    pub fn clear(&mut self) {
+        self.cover.fill(0);
+    }
+
     /// Cover a triangle's pixels, keeping the strongest coverage any shape gave
     /// a pixel, so a second shape over the first changes nothing.
     pub fn tri(&mut self, p: [(f32, f32); 3]) {
@@ -700,6 +709,18 @@ mod mask_tests {
 
     const TURF: Rgb = Rgb::hex(0x3A7C41);
     const SHADE: Rgb = Rgb::hex(0x0B1A10);
+
+    #[test]
+    fn a_mask_can_be_emptied_and_used_again() {
+        let mut mask = Mask::new(32, 32);
+        mask.tri([(4.0, 4.0), (20.0, 4.0), (12.0, 20.0)]);
+        assert!(mask.cover.iter().any(|c| *c != 0), "nothing was covered to begin with");
+        let room = mask.cover.capacity();
+        mask.clear();
+        assert!(mask.cover.iter().all(|c| *c == 0), "last frame's shadow is still in the mask");
+        assert_eq!((mask.w, mask.h), (32, 32));
+        assert_eq!(mask.cover.capacity(), room, "clearing it threw the buffer away");
+    }
 
     #[test]
     fn overlapping_shapes_darken_the_ground_once() {
