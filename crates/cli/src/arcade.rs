@@ -21,7 +21,7 @@ use nopads_core::playbook::{
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use nopads_core::sim::{Hit, DefControl, Phase, PlaySim, QbControl};
-use nopads_core::team::league_teams;
+use nopads_core::team::{league_teams, Team};
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use nopads_render::broadcast::{HandCamera, Broadcast, CameraMode};
 use nopads_render::hud;
@@ -1170,8 +1170,34 @@ impl Arcade {
         }
 
         let board = hud::Scoreboard::from_game(&self.game);
-        let finished = self.drive_throw_off(&mut sim, my_team, &header, &board);
+        // A throw-off is a live play like any other, so it is the same loop: the
+        // clock, the pause, the tape, the dead-ball hold and the second look all
+        // belong to the loop, and all this side owns is the pad and the bar.
+        let mut caller = ThrowOffSnap {
+            game: &mut self.game,
+            my_team,
+            hold: 0.0,
+            charging: false,
+            aim_y: 0.0,
+            armed: false,
+            cover_pick: 0,
+            cover_order: None,
+        };
+        let finished = snap_loop(
+            &mut SnapScreen {
+                sim: &mut sim,
+                broadcast: &mut self.broadcast,
+                view: &mut self.view,
+                pad: self.pad.as_mut(),
+                cam: &mut self.cam,
+                flip_y: self.flip_y,
+            },
+            &mut caller,
+            &header,
+            &board,
+        );
         if !finished {
+            self.quit = true;
             return false;
         }
         if let Some(result) = sim.result.clone() {
@@ -1192,279 +1218,6 @@ impl Arcade {
                 Some(self.game.throw_off_setup(*receiving, *from_own, false))
             }
             _ => None,
-        }
-    }
-
-    /// The live throw-off. Returns false when the player has quit.
-    fn drive_throw_off(
-        &mut self,
-        sim: &mut ThrowOffSim,
-        my_team: usize,
-        header: &str,
-        board: &hud::Scoreboard,
-    ) -> bool {
-        let mut acc = 0.0f64;
-        let mut last = Instant::now();
-        let mut drew = Instant::now() - FRAME;
-        // The meter, filled while the throw button is held.
-        let mut hold = 0.0f32;
-        let mut charging = false;
-        // Where across the field the throw is aimed, in yards.
-        let mut aim_y = 0.0f32;
-        // The throw button has been up since this throw-off started.
-        let mut armed = false;
-        // Which of your men the switch button has walked to.
-        let mut cover_pick = 0usize;
-        // The men you can cover with, nearest the ball first, taken once the ball is
-        // caught so the pad starts on a man who can actually make the tackle.
-        let mut cover_order: Option<Vec<usize>> = None;
-        // When the ball died, so the picture can hold on the tackle before the card.
-        let mut dead_at: Option<Instant> = None;
-        // The throw-off frame by frame, for the replay a score gets.
-        let mut tape: Vec<ThrowOffSim<'_>> = Vec::new();
-
-        loop {
-            let now = Instant::now();
-            let frame_dt = now.duration_since(last).as_secs_f64();
-            acc += frame_dt;
-            last = now;
-
-            let input = pad::mix(self.pad.as_mut(), self.view.poll());
-            if input.pressed.select {
-            self.call_timeout();
-        }
-        if input.pressed.start {
-                // START pauses: the camera setting and quitting both live behind it.
-                match pause_menu(
-                    &mut self.view,
-                    self.pad.as_mut(),
-                    &mut self.cam,
-                    &mut self.broadcast,
-                    PausedShot::ThrowOff(&*sim),
-                    // The tape starts at the catch, so before the ball is caught
-                    // there is nothing behind the menu to run back.
-                    !tape.is_empty(),
-                ) {
-                    PauseAction::Quit => {
-                        self.quit = true;
-                        return false;
-                    }
-                    PauseAction::Replay => {
-                        let kept = replay_theatre(
-                            &tape,
-                            &mut self.broadcast,
-                            &mut self.view,
-                            self.pad.as_mut(),
-                            self.flip_y,
-                            sim.setup.receive_direction,
-                            sim.ball_position().0,
-                            |b, snap| {
-                                let ui = ui_none();
-                                b.throw_off_frame_live(snap, CameraMode::Replay, &ui)
-                            },
-                        );
-                        if !kept {
-                            self.quit = true;
-                            return false;
-                        }
-                    }
-                    PauseAction::Resume => {}
-                }
-                last = Instant::now();
-                acc = 0.0;
-                continue;
-            }
-            // The camera is on the left bumper: SELECT is the timeout button now,
-            // and the trigger is the throw, so neither can be the camera.
-            if input.pressed.dummy {
-                self.cam = (self.cam + 1) % CAMS.len();
-            }
-            // The same screen mapping as a scrimmage snap, pointed the way this
-            // shot points: downfield with the throw, then behind the returner once
-            // the ball is his.
-            let cam_dir = if matches!(
-                sim.phase,
-                ThrowPhase::Loose | ThrowPhase::Return | ThrowPhase::Dead
-            ) {
-                sim.setup.receive_direction
-            } else {
-                sim.setup.throwing_direction()
-            };
-            let stick = stick_to_world(input.stick, self.flip_y, CameraMode::Classic, cam_dir);
-
-            if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
-                // Three beats, the way a kickoff is played: pick the line the ball
-                // will take, hold A to load the arm, let go to throw it. The throw
-                // waits for the man on the pad, so there is no clock to beat.
-                let holding = input.held.a || input.held.throw;
-                // A still held from the kickoff card must not load the arm: the
-                // button has to come up once before it means anything here.
-                if !holding {
-                    armed = true;
-                }
-                if holding && armed {
-                    charging = true;
-                    hold = (hold + frame_dt as f32).min(CHARGE_TIME);
-                } else if charging && !holding {
-                    let power = (hold / CHARGE_TIME).clamp(MIN_POWER, 1.0);
-                    sim.launch_with(power, aim_y);
-                    charging = false;
-                    hold = 0.0;
-                }
-                // The line is set before the arm comes back and locked there.
-                if !charging {
-                    let push = aim_push(input.stick.x, sim.setup.throwing_direction());
-                    aim_y = aim_step(aim_y, push, frame_dt as f32);
-                }
-            }
-
-            // Whoever is yours: the returner while you are receiving, otherwise
-            // one of the three men in coverage, and B walks the pad round them.
-            if input.pressed.b && sim.setup.throwing_team == my_team {
-                cover_pick = cover_pick.wrapping_add(1);
-            }
-            // Covering an AI return used to start on the first gunner in the list,
-            // however far downfield he was. The pad now starts on the man closest to
-            // the ball, and the order is taken when it is caught rather than every
-            // frame, so the man under the pad does not change mid-stride.
-            if cover_order.is_none() && sim.catch_time().is_some() {
-                cover_order = Some(men_by_distance(sim, my_team));
-            }
-            let mine = cover_order
-                .as_ref()
-                .and_then(|order| live_man(sim, order, cover_pick))
-                .or_else(|| human_man(sim, my_team, cover_pick));
-            sim.set_human(mine, stick);
-            // The returner has the ball, so the four buttons are the four moves: the
-            // same set the back gets, on the same buttons.
-            let returning_it = sim.phase == ThrowPhase::Return
-                && mine
-                    .map(|i| sim.players[i].role == ThrowRole::Returner)
-                    .unwrap_or(false);
-            if returning_it {
-                runner_moves(&input, |kind, side| {
-                    if side == 0.0 {
-                        sim.request_move(kind);
-                    } else {
-                        sim.request_move_dir(kind, side);
-                    }
-                });
-            }
-            // On the cover: A wraps him up, X dives at him from further out.
-            if sim.phase == ThrowPhase::Return && sim.setup.throwing_team == my_team {
-                if input.pressed.a {
-                    sim.call_tackle(false);
-                }
-                if input.pressed.x {
-                    sim.call_tackle(true);
-                }
-            }
-
-            // Fair catch: the receiving player calls it while the ball is in the
-            // air and takes it where it comes down, instead of running it out.
-            if sim.phase == ThrowPhase::Flight
-                && sim.setup.receiving_team == my_team
-                && input.pressed.y
-            {
-                sim.call_fair_catch();
-            }
-
-            while acc >= STEP as f64 && sim.result.is_none() {
-                sim.step(STEP);
-                acc -= STEP as f64;
-                // The tape starts when he catches it. The throw and the flight are
-                // not the return, and a replay that began with them was still showing
-                // the kick when the play it was showing was already over.
-                if sim.catch_time().is_some() && tape.len() < 3600 {
-                    tape.push(sim.clone());
-                }
-            }
-
-            if now.duration_since(drew) >= FRAME || sim.result.is_some() {
-                drew = now;
-                let mut guide = None;
-                let mut short = false;
-                let mut needed = None;
-                let mut power = None;
-                if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
-                    let p = (hold / CHARGE_TIME).clamp(0.0, 1.0);
-                    let plan = sim.throw_off_plan(p, aim_y);
-                    short = plan.too_short;
-                    // The notch is the 40-yard rule: under it is a Run Back.
-                    needed = Some(power_for_air(THROW_OFF_MIN_AIR_YARDS));
-                    power = Some(p);
-                    let hand = sim.players[0].pos;
-                    guide = Some(Guide {
-                        from: Vec3::new(hand.x, hand.y, 1.8),
-                        receiver: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
-                        landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
-                    });
-                }
-                // The pad is on a man here too: the returner, a gunner, or the
-                // thrower while the ball is still his.
-                let focus_index = mine.or_else(|| {
-                    sim.players
-                        .iter()
-                        .position(|p| p.team == my_team && p.role == ThrowRole::Returner)
-                });
-                let focus = focus_index.map(|i| Focus {
-                    at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
-                    label: "YOU".to_string(),
-                });
-                let ui = PassUi {
-                    flag: None,
-                    focus,
-                    badges: Vec::new(),
-                    guide,
-                    power,
-                    short,
-                    needed,
-                };
-                let mode = CAMS[self.cam % CAMS.len()];
-                let mut frame = self.broadcast.throw_off_frame_live(sim, mode, &ui);
-
-                if sim.phase == ThrowPhase::Presnap {
-                    hud::draw_scoreboard(&mut frame, board);
-                }
-                let lines = vec![
-                    header.to_string(),
-                    throw_off_line(self, sim, my_team, aim_y, charging),
-                    throw_off_controls(self, sim, my_team, cover_pick),
-                ];
-                if !self.view.show(&mut frame, &lines) {
-                    self.quit = true;
-                    return false;
-                }
-            }
-
-            if sim.result.is_some() {
-                // The ball is dead; the picture is not. A return that ends in a
-                // tackle gets the hit and the landing before the card.
-                let since = *dead_at.get_or_insert(now);
-                let waited = since.elapsed();
-                if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
-                    // Only a score. A twenty-five yard return is a good return, not a
-                    // big play, and a replay on every one of them came round far too
-                    // often to be worth watching.
-                    let big = sim.result.as_ref().map(|r| r.touchdown).unwrap_or(false);
-                    if big
-                        && self.view.is_window()
-                        && !play_back_throw_off(
-                            &tape,
-                            &mut self.broadcast,
-                            &mut self.view,
-                            self.pad.as_mut(),
-                        )
-                    {
-                        self.quit = true;
-                        return false;
-                    }
-                    return true;
-                }
-                std::thread::sleep(Duration::from_millis(2));
-                continue;
-            }
-            std::thread::sleep(Duration::from_millis(2));
         }
     }
 
@@ -1965,33 +1718,31 @@ fn ui_none() -> PassUi {
 
 /// What the pause screen can put behind its menu: the call sheet and the
 /// between-plays cards have no live picture, but a snap and a throw-off do.
-enum PausedShot<'s, 'a> {
+enum PausedShot<'s> {
     None,
-    Play(&'s PlaySim<'a>),
-    ThrowOff(&'s ThrowOffSim<'a>),
+    /// The frozen picture, drawn by whichever sim is behind the menu: a snap and
+    /// a throw-off are both live plays, and the menu sits over both.
+    Frozen(Box<dyn Fn(&mut Broadcast, CameraMode) -> nopads_render::Frame + 's>),
+}
+
+impl<'s> PausedShot<'s> {
+    /// The picture of a live play, as its own sim draws it.
+    fn live<S: SnapSim + 's>(sim: &'s S) -> Self {
+        PausedShot::Frozen(Box::new(move |broadcast, mode| {
+            S::frame(broadcast, sim, mode, None)
+        }))
+    }
 }
 
 /// A still of the game as the lens currently sees it.
 fn paused_still(
     broadcast: &mut Broadcast,
-    shot: &PausedShot<'_, '_>,
+    shot: &PausedShot<'_>,
     mode: CameraMode,
 ) -> Option<nopads_render::Frame> {
     match shot {
         PausedShot::None => None,
-        PausedShot::Play(sim) => Some(broadcast.live_frame(sim, mode)),
-        PausedShot::ThrowOff(sim) => {
-            let ui = PassUi {
-                flag: None,
-                focus: None,
-                badges: Vec::new(),
-                guide: None,
-                power: None,
-                short: false,
-                needed: None,
-            };
-            Some(broadcast.throw_off_frame_live(sim, mode, &ui))
-        }
+        PausedShot::Frozen(draw) => Some(draw(broadcast, mode)),
     }
 }
 
@@ -2050,7 +1801,7 @@ fn pause_menu(
     mut pad: Option<&mut Pad>,
     cam: &mut usize,
     broadcast: &mut Broadcast,
-    shot: PausedShot<'_, '_>,
+    shot: PausedShot<'_>,
     can_replay: bool,
 ) -> PauseAction {
     // The replay sits under Resume when the caller has a tape to run: the pause
@@ -2513,115 +2264,279 @@ fn replay_theatre<T>(
     )
 }
 
-/// Whether a dead snap is worth running back: fifteen yards of offence, six
-/// points, a return that came out of a turnover, or any flag at all.
+/// What a dead play is worth running back, if anything.
 ///
-/// A penalty is always worth a look: the flag is the one thing on the field a
-/// player cannot see for himself from the far sideline, and the snap is where
-/// the foul happened.
-fn worth_a_replay(sim: &PlaySim) -> bool {
-    sim.result
-        .as_ref()
-        .map(|r| {
-            r.touchdown
-                || r.yards >= 15.0
-                || r.return_yards >= 15.0
-                || r.penalty.is_some()
-                || sim.flag.is_some()
+/// The label says what the tape is being run for. Whether it is run at all is
+/// the sim's answer, because only the sim knows what happened: a forty-yard
+/// catch and a hundred-yard return are the same question asked of two plays.
+#[derive(Clone, Copy)]
+struct Replay {
+    label: &'static str,
+    /// Run the tape through rather than sampling it: a return is the run itself,
+    /// not a snap that lasted forty seconds.
+    whole: bool,
+}
+
+/// Everything the live loop asks of the play it is driving.
+///
+/// A scrimmage snap and a throw-off are the same loop: one clock, one pause, one
+/// tape, one dead-ball hold, one scoreboard, one quit. What differs is the sim,
+/// and this is the whole of it. Two loops used to hold two copies of the shared
+/// half, and the throw-off's had already drifted: it announced nothing, its tape
+/// started at the catch rather than the snap, and it never settled the picture
+/// after the tackle.
+trait SnapSim: Clone {
+    /// Run the sim forward by a step.
+    fn advance(&mut self, dt: f32);
+
+    /// The ball is dead and the play has a result.
+    fn is_done(&self) -> bool;
+
+    /// The ball is still the player's to put in play.
+    fn at_the_line(&self) -> bool;
+
+    /// Which way the play runs on screen, for the stick mapping.
+    fn facing(&self) -> i8;
+
+    /// Where the ball is, for the camera a theatre opens on.
+    fn ball_spot(&self) -> Vec2;
+
+    /// Let the bodies come to rest while the shot holds on the tackle.
+    fn settle(&mut self, _dt: f32) {}
+
+    /// Hold the shot while something turns the play round.
+    fn holds_shot(&self) -> bool {
+        false
+    }
+
+    /// Whether this frame belongs on the tape. A snap starts at the hike; a
+    /// return starts at the catch.
+    fn taping(&self) -> bool;
+
+    /// How many frames a tape of this play may hold.
+    fn tape_cap(&self) -> usize {
+        2400
+    }
+
+    /// Whether the scoreboard belongs on this frame.
+    fn scoreboard_visible(&self) -> bool;
+
+    /// The play clock, at the line where it is still the player's to spend.
+    fn clock_row(&self) -> Option<String> {
+        None
+    }
+
+    /// The flag row, when there is a flag on the play.
+    fn flag_row(&self) -> Option<String> {
+        None
+    }
+
+    /// The second look this play has earned, if it has earned one.
+    fn replay_look(&self) -> Option<Replay> {
+        None
+    }
+
+    /// The spot a replay pins its camera to, on the frames that have one.
+    fn replay_pin(&self) -> Option<Vec2> {
+        None
+    }
+
+    /// The overlay a tape frame carries: the arrow on the man a flag is about.
+    fn replay_ui(&self) -> Option<PassUi> {
+        None
+    }
+
+    /// The picture, with or without an overlay. `None` is the still behind the
+    /// pause menu, which carries no badges at all.
+    fn frame(
+        broadcast: &mut Broadcast,
+        sim: &Self,
+        mode: CameraMode,
+        ui: Option<&PassUi>,
+    ) -> nopads_render::Frame;
+}
+
+impl SnapSim for PlaySim<'_> {
+    fn advance(&mut self, dt: f32) {
+        self.step(dt);
+    }
+
+    fn is_done(&self) -> bool {
+        self.result.is_some()
+    }
+
+    fn at_the_line(&self) -> bool {
+        self.phase == Phase::PreSnap
+    }
+
+    fn facing(&self) -> i8 {
+        PlaySim::facing(self)
+    }
+
+    fn ball_spot(&self) -> Vec2 {
+        self.ball_position().0
+    }
+
+    fn settle(&mut self, dt: f32) {
+        PlaySim::settle(self, dt);
+    }
+
+    fn holds_shot(&self) -> bool {
+        self.phase == Phase::Return
+    }
+
+    fn taping(&self) -> bool {
+        self.phase != Phase::PreSnap
+    }
+
+    fn scoreboard_visible(&self) -> bool {
+        self.phase == Phase::PreSnap && !self.previewing()
+    }
+
+    fn clock_row(&self) -> Option<String> {
+        (self.phase == Phase::PreSnap)
+            .then(|| format!("  PLAY CLOCK  {:.0}", self.play_clock.ceil()))
+    }
+
+    fn flag_row(&self) -> Option<String> {
+        self.flag.as_ref().map(|flag| {
+            format!(
+                "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
+                flag.kind.label().to_uppercase(),
+                match flag.against {
+                    FoulTeam::Offense => "OFFENSE",
+                    FoulTeam::Defense => "DEFENSE",
+                }
+            )
         })
-        .unwrap_or(false)
-}
+    }
 
-/// Run the taped snap back over the broadcast camera. A (or START) skips it.
-///
-/// The tape holds the played frames themselves rather than re-running the snap:
-/// the player's throws, moves and stick work are all in it, and a re-simulation
-/// would have none of them and would disagree with the result it is replaying.
-///
-/// A snap with a flag on it is reviewed where the flag is. The call is what the
-/// tape is being run for, so the shot is cut to the spot of the foul rather than
-/// following the big play it happened on.
-fn play_back(
-    tape: &[PlaySim],
-    broadcast: &mut Broadcast,
-    view: &mut View,
-    pad: Option<&mut Pad>,
-) -> bool {
-    let flag = tape
-        .iter()
-        .rev()
-        .find_map(|snap| snap.flag.as_ref())
-        .map(|call| Vec2::new(call.spot_of_foul, 0.0));
-    let (mode, label) = if flag.is_some() {
-        (CameraMode::Replay, "THE FLAG")
-    } else {
-        (CameraMode::Broadcast, "REPLAY")
-    };
-    broadcast.pin_focus(flag);
-    let done = run_tape(
-        tape,
-        broadcast,
-        view,
-        pad,
-        false,
-        Tape::Auto {
-            label,
+    fn replay_look(&self) -> Option<Replay> {
+        let result = self.result.as_ref()?;
+        let worth = result.touchdown
+            || result.yards >= 15.0
+            || result.return_yards >= 15.0
+            || result.penalty.is_some()
+            || self.flag.is_some();
+        worth.then_some(Replay {
+            label: if self.flag.is_some() {
+                "THE FLAG"
+            } else {
+                "REPLAY"
+            },
             whole: false,
-        },
-        |b, snap| {
-            // The arrow follows the man the flag is on, frame by frame: he is
-            // running while the tape plays, so a marker pinned to the spot of the
-            // foul would be pointing at empty grass by the third frame.
-            let ui = PassUi {
-                flag: snap
-                    .flagged_player()
-                    .map(|i| Vec3::new(snap.players[i].pos.x, snap.players[i].pos.y, 0.0)),
-                focus: None,
-                badges: Vec::new(),
-                guide: None,
-                power: None,
-                short: false,
-                needed: None,
-            };
-            b.live_frame_ui(snap, mode, &ui)
-        },
-    );
-    broadcast.pin_focus(None);
-    done
+        })
+    }
+
+    fn replay_pin(&self) -> Option<Vec2> {
+        self.flag
+            .as_ref()
+            .map(|call| Vec2::new(call.spot_of_foul, 0.0))
+    }
+
+    fn replay_ui(&self) -> Option<PassUi> {
+        // The arrow follows the man the flag is on, frame by frame: he is running
+        // while the tape plays, so a marker pinned to the spot of the foul would
+        // be pointing at empty grass by the third frame.
+        Some(PassUi {
+            flag: self
+                .flagged_player()
+                .map(|i| Vec3::new(self.players[i].pos.x, self.players[i].pos.y, 0.0)),
+            ..ui_none()
+        })
+    }
+
+    fn frame(
+        broadcast: &mut Broadcast,
+        sim: &Self,
+        mode: CameraMode,
+        ui: Option<&PassUi>,
+    ) -> nopads_render::Frame {
+        match ui {
+            Some(ui) => broadcast.live_frame_ui(sim, mode, ui),
+            None => broadcast.live_frame(sim, mode),
+        }
+    }
 }
 
-/// A return that goes the distance gets the same second look a snap gets. It was
-/// the one score in the game with no replay on it: a throw-off had no tape at all,
-/// so a hundred-yard return went straight to the card.
-///
-/// It is the only throw-off that gets one, and the tape starts at the catch, so the
-/// replay is the return itself, run all the way through rather than sampled.
-fn play_back_throw_off(
-    tape: &[ThrowOffSim<'_>],
-    broadcast: &mut Broadcast,
-    view: &mut View,
-    pad: Option<&mut Pad>,
-) -> bool {
-    let ui = ui_none();
-    run_tape(
-        tape,
-        broadcast,
-        view,
-        pad,
-        false,
-        Tape::Auto {
-            label: "REPLAY",
-            whole: true,
-        },
-        |b, snap| b.throw_off_frame_live(snap, CameraMode::Broadcast, &ui),
-    )
+impl SnapSim for ThrowOffSim<'_> {
+    fn advance(&mut self, dt: f32) {
+        let _ = self.step(dt);
+    }
+
+    fn is_done(&self) -> bool {
+        self.result.is_some()
+    }
+
+    fn at_the_line(&self) -> bool {
+        self.phase == ThrowPhase::Presnap
+    }
+
+    fn facing(&self) -> i8 {
+        // Downfield with the throw, then behind the returner once the ball is his.
+        if matches!(
+            self.phase,
+            ThrowPhase::Loose | ThrowPhase::Return | ThrowPhase::Dead
+        ) {
+            self.setup.receive_direction
+        } else {
+            self.setup.throwing_direction()
+        }
+    }
+
+    fn ball_spot(&self) -> Vec2 {
+        self.ball_position().0
+    }
+
+    fn taping(&self) -> bool {
+        // The throw and the flight are not the return, and a replay that began
+        // with them was still showing the kick when the play it was showing was
+        // already over.
+        self.catch_time().is_some()
+    }
+
+    fn tape_cap(&self) -> usize {
+        3600
+    }
+
+    fn scoreboard_visible(&self) -> bool {
+        self.phase == ThrowPhase::Presnap
+    }
+
+    fn replay_look(&self) -> Option<Replay> {
+        // Only a score. A twenty-five yard return is a good return, not a big
+        // play, and a replay on every one of them came round far too often to be
+        // worth watching.
+        self.result
+            .as_ref()
+            .filter(|result| result.touchdown)
+            .map(|_| Replay {
+                label: "REPLAY",
+                whole: true,
+            })
+    }
+
+    fn frame(
+        broadcast: &mut Broadcast,
+        sim: &Self,
+        mode: CameraMode,
+        ui: Option<&PassUi>,
+    ) -> nopads_render::Frame {
+        match ui {
+            Some(ui) => broadcast.throw_off_frame_live(sim, mode, ui),
+            None => {
+                let none = ui_none();
+                broadcast.throw_off_frame_live(sim, mode, &none)
+            }
+        }
+    }
 }
 
 /// One frame of a snap as the side playing it sees it: the sim, the picture, the
 /// pad and the camera, bundled because a card over the field mid-play writes to
 /// all four.
-struct SnapScreen<'p, 'a> {
-    sim: &'a mut PlaySim<'p>,
+struct SnapScreen<'a, S> {
+    sim: &'a mut S,
     broadcast: &'a mut Broadcast,
     view: &'a mut View,
     pad: Option<&'a mut Pad>,
@@ -2629,7 +2544,7 @@ struct SnapScreen<'p, 'a> {
     flip_y: bool,
 }
 
-impl SnapScreen<'_, '_> {
+impl<S> SnapScreen<'_, S> {
     fn mode(&self) -> CameraMode {
         CAMS[*self.cam % CAMS.len()]
     }
@@ -2646,39 +2561,44 @@ enum Flow {
     Quit,
 }
 
-/// The half of a snap that depends on which side the player is on.
+/// The half of a live play that depends on which side the player is on.
 ///
-/// The clock, the pause, the replay tape, the dead-ball hold, the announce and
-/// the scoreboard are the same on both sides of the ball and live in `snap_loop`.
-/// This is the rest of it: what the pad means, and what the bar under the picture
-/// says. Two loops used to hold two copies of the shared half, and they had
-/// already drifted -- the replay was wired into both by hand, twice.
-trait SnapCaller {
+/// The clock, the pause, the replay tape, the dead-ball hold, the announce, the
+/// scoreboard and the second look are the same on both sides of the ball and live
+/// in `snap_loop`. This is the rest of it: what the pad means, and what the bar
+/// under the picture says. Two loops used to hold two copies of the shared half,
+/// and they had already drifted -- the replay was wired into both by hand, twice.
+trait SnapCaller<S> {
     /// True when the side spends the left bumper at the line on itself, so the
     /// camera stays where it is until the ball is hiked.
     fn takes_dummy_at_line(&self) -> bool {
         false
     }
 
+    /// SELECT: the timeout. On a snap it is a word to the sim, which is where the
+    /// clock lives; on a throw-off it is the call itself, and it goes to the game.
+    fn ask_timeout(&mut self, screen: &mut SnapScreen<'_, S>);
+
     /// Anything the side does before the frame's controls: previews, cards,
     /// the snap itself.
-    fn before_frame(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> Flow;
+    fn before_frame(&mut self, screen: &mut SnapScreen<'_, S>, input: &Input) -> Flow;
 
     /// This frame's pad, as the sim wants it.
-    fn controls(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input, stick: Vec2, dt: f32);
+    fn controls(&mut self, screen: &mut SnapScreen<'_, S>, input: &Input, stick: Vec2, dt: f32);
 
     /// The badges and guide over the field, and the side's own rows of the bar.
     /// The header, the play clock and the flag are the loop's to add.
-    fn picture(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> (PassUi, Vec<String>);
+    fn picture(&mut self, screen: &mut SnapScreen<'_, S>, input: &Input) -> (PassUi, Vec<String>);
 }
 
-/// Play one snap from the snap to the card, whichever side the player is on.
+/// Play one live down from the ball going in to the card: a scrimmage snap or a
+/// throw-off, whichever side the player is on.
 ///
 /// Returns false when the player wants out of the game rather than out of the
 /// play, which is the one thing the caller has to act on.
-fn snap_loop(
-    screen: &mut SnapScreen<'_, '_>,
-    caller: &mut impl SnapCaller,
+fn snap_loop<S: SnapSim>(
+    screen: &mut SnapScreen<'_, S>,
+    caller: &mut impl SnapCaller<S>,
     header: &str,
     board: &hud::Scoreboard,
 ) -> bool {
@@ -2689,8 +2609,8 @@ fn snap_loop(
     let mut dead_at: Option<Instant> = None;
     // When the play turned round on an interception, so the screen can swing.
     let mut turn: Option<Instant> = None;
-    // The snap frame by frame, for the replay.
-    let mut tape: Vec<PlaySim> = Vec::new();
+    // The live play frame by frame, for the replay.
+    let mut tape: Vec<S> = Vec::new();
 
     loop {
         let now = Instant::now();
@@ -2700,7 +2620,7 @@ fn snap_loop(
 
         let input = pad::mix(screen.pad.as_deref_mut(), screen.view.poll());
         if input.pressed.select {
-            screen.sim.timeout_asked = true;
+            caller.ask_timeout(screen);
         }
         if input.pressed.start {
             match pause_menu(
@@ -2708,8 +2628,8 @@ fn snap_loop(
                 screen.pad.as_deref_mut(),
                 screen.cam,
                 screen.broadcast,
-                PausedShot::Play(&*screen.sim),
-                true,
+                PausedShot::live(&*screen.sim),
+                !tape.is_empty(),
             ) {
                 PauseAction::Quit => return false,
                 PauseAction::Replay => {
@@ -2720,8 +2640,11 @@ fn snap_loop(
                         screen.pad.as_deref_mut(),
                         screen.flip_y,
                         screen.sim.facing(),
-                        screen.sim.ball_position().0,
-                        |b, snap| b.live_frame_ui(snap, CameraMode::Replay, &ui_none()),
+                        screen.sim.ball_spot(),
+                        |b, snap| {
+                            let ui = ui_none();
+                            S::frame(b, snap, CameraMode::Replay, Some(&ui))
+                        },
                     );
                     if !keep {
                         return false;
@@ -2739,7 +2662,7 @@ fn snap_loop(
         // the bumper is the hard count. SELECT is the timeout, and it is called at
         // the sheet.
         if input.pressed.dummy
-            && !(screen.sim.phase == Phase::PreSnap && caller.takes_dummy_at_line())
+            && !(screen.sim.at_the_line() && caller.takes_dummy_at_line())
         {
             *screen.cam = (*screen.cam + 1) % CAMS.len();
         }
@@ -2762,19 +2685,17 @@ fn snap_loop(
         caller.controls(screen, &input, stick, frame_dt as f32);
 
         // A pick turns the play round: hold the shot while the camera swings.
-        if screen.sim.phase == Phase::Return && turn.is_none() {
+        if screen.sim.holds_shot() && turn.is_none() {
             turn = Some(now);
         }
         let turning = turn
             .map(|since| now.duration_since(since) < TURNAROUND)
             .unwrap_or(false);
         if !turning {
-            while acc >= STEP as f64 && screen.sim.result.is_none() {
-                screen.sim.step(STEP);
+            while acc >= STEP as f64 && !screen.sim.is_done() {
+                screen.sim.advance(STEP);
                 acc -= STEP as f64;
-                // The tape starts with the snap: the shuffle at the line is not
-                // the part of the play anybody rewinds for.
-                if screen.sim.phase != Phase::PreSnap && tape.len() < 2400 {
+                if screen.sim.taping() && tape.len() < screen.sim.tape_cap() {
                     tape.push(screen.sim.clone());
                 }
             }
@@ -2790,14 +2711,14 @@ fn snap_loop(
                 .unwrap_or(1.0),
         );
 
-        if now.duration_since(drew) >= FRAME || screen.sim.result.is_some() {
+        if now.duration_since(drew) >= FRAME || screen.sim.is_done() {
             drew = now;
             let (ui, rows) = caller.picture(screen, &input);
-            let mut frame = screen.broadcast.live_frame_ui(screen.sim, view_mode, &ui);
+            let mut frame = S::frame(screen.broadcast, &*screen.sim, view_mode, Some(&ui));
             // The scoreboard is a broadcast bug: it gets out of the way when the
             // ball is hiked, and while the route tree is up for the preview, and
             // comes back when the play is dead and reset.
-            if screen.sim.phase == Phase::PreSnap && !screen.sim.previewing() {
+            if screen.sim.scoreboard_visible() {
                 hud::draw_scoreboard(&mut frame, board);
             }
             let mut lines = Vec::with_capacity(rows.len() + 3);
@@ -2805,25 +2726,18 @@ fn snap_loop(
             lines.extend(rows);
             // The clock at the line, where the player can see it while the ball is
             // still his to snap: the scoreboard bar is the game's clock, not this.
-            if screen.sim.phase == Phase::PreSnap {
-                lines.push(format!("  PLAY CLOCK  {:.0}", screen.sim.play_clock.ceil()));
+            if let Some(clock) = screen.sim.clock_row() {
+                lines.push(clock);
             }
-            if let Some(flag) = &screen.sim.flag {
-                lines.push(format!(
-                    "  YELLOW FLAG - {} ON THE {}   PLAY ON, BALL MOVES AFTER IT",
-                    flag.kind.label().to_uppercase(),
-                    match flag.against {
-                        FoulTeam::Offense => "OFFENSE",
-                        FoulTeam::Defense => "DEFENSE",
-                    }
-                ));
+            if let Some(flag) = screen.sim.flag_row() {
+                lines.push(flag);
             }
             if !screen.view.show(&mut frame, &lines) {
                 return false;
             }
         }
 
-        if screen.sim.result.is_some() {
+        if screen.sim.is_done() {
             // The ball is dead; the picture is not. Hold the shot while the hit
             // finishes and the players get up, then let the card come up.
             let since = *dead_at.get_or_insert(now);
@@ -2832,18 +2746,38 @@ fn snap_loop(
             screen.sim.settle(frame_dt as f32);
             let waited = since.elapsed();
             if waited >= DEAD_BALL_HOLD || (waited >= DEAD_BALL_SKIP && input.pressed.a) {
-                // A big play gets a second look before the card comes up. The
-                // tape is the play as it was played, not a re-run of it.
-                if worth_a_replay(screen.sim)
-                    && screen.view.is_window()
-                    && !play_back(
+                // A big play gets a second look before the card comes up. The tape
+                // is the play as it was played, not a re-run of it. A flag is
+                // reviewed where the flag is: the call is what the tape is being
+                // run for, so the shot is cut to the spot of the foul rather than
+                // following the big play it happened on.
+                if let Some(look) = screen.sim.replay_look().filter(|_| screen.view.is_window()) {
+                    let pin = tape.iter().rev().find_map(|snap| snap.replay_pin());
+                    let mode = if pin.is_some() {
+                        CameraMode::Replay
+                    } else {
+                        CameraMode::Broadcast
+                    };
+                    screen.broadcast.pin_focus(pin);
+                    let kept = run_tape(
                         &tape,
                         screen.broadcast,
                         screen.view,
                         screen.pad.as_deref_mut(),
-                    )
-                {
-                    return false;
+                        false,
+                        Tape::Auto {
+                            label: look.label,
+                            whole: look.whole,
+                        },
+                        |b, snap| {
+                            let ui = snap.replay_ui();
+                            S::frame(b, snap, mode, ui.as_ref())
+                        },
+                    );
+                    screen.broadcast.pin_focus(None);
+                    if !kept {
+                        return false;
+                    }
                 }
                 return true;
             }
@@ -2870,13 +2804,19 @@ struct OffenseSnap<'a> {
     targets: Vec<(OffRole, usize)>,
 }
 
-impl SnapCaller for OffenseSnap<'_> {
+impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
+    /// SELECT stops the clock: the word goes to the sim, which is where a snap's
+    /// clock lives.
+    fn ask_timeout(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>) {
+        screen.sim.timeout_asked = true;
+    }
+
     /// At the line the bumper is the hard count, not the camera.
     fn takes_dummy_at_line(&self) -> bool {
         true
     }
 
-    fn before_frame(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> Flow {
+    fn before_frame(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>, input: &Input) -> Flow {
         let mode = screen.mode();
         let sim = &mut *screen.sim;
         // Before the snap the pad belongs to the line, not to the quarterback: A
@@ -2922,7 +2862,7 @@ impl SnapCaller for OffenseSnap<'_> {
         Flow::Run
     }
 
-    fn controls(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input, stick: Vec2, dt: f32) {
+    fn controls(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>, input: &Input, stick: Vec2, dt: f32) {
         let sim = &mut *screen.sim;
         let presnap = sim.phase == Phase::PreSnap;
         // A running play has no throw to weigh, so it has no meter, no badges and
@@ -3032,7 +2972,7 @@ impl SnapCaller for OffenseSnap<'_> {
         }
     }
 
-    fn picture(&mut self, screen: &mut SnapScreen<'_, '_>, _input: &Input) -> (PassUi, Vec<String>) {
+    fn picture(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>, _input: &Input) -> (PassUi, Vec<String>) {
         let mode = screen.mode();
         let sim = &*screen.sim;
         let presnap = sim.phase == Phase::PreSnap;
@@ -3411,8 +3351,14 @@ struct DefenseSnap<'a> {
     switched: Instant,
 }
 
-impl SnapCaller for DefenseSnap<'_> {
-    fn before_frame(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> Flow {
+impl<'p> SnapCaller<PlaySim<'p>> for DefenseSnap<'_> {
+    /// SELECT stops the clock: the word goes to the sim, which is where a snap's
+    /// clock lives.
+    fn ask_timeout(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>) {
+        screen.sim.timeout_asked = true;
+    }
+
+    fn before_frame(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>, input: &Input) -> Flow {
         let mode = screen.mode();
         {
             let sim = &mut *screen.sim;
@@ -3450,7 +3396,7 @@ impl SnapCaller for DefenseSnap<'_> {
         Flow::Run
     }
 
-    fn controls(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input, stick: Vec2, _dt: f32) {
+    fn controls(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>, input: &Input, stick: Vec2, _dt: f32) {
         let sim = &mut *screen.sim;
         // The ball in your hands makes you the runner, and the four buttons are the
         // four moves. B is a move then, so it does not walk the pad around.
@@ -3487,7 +3433,7 @@ impl SnapCaller for DefenseSnap<'_> {
         }));
     }
 
-    fn picture(&mut self, screen: &mut SnapScreen<'_, '_>, input: &Input) -> (PassUi, Vec<String>) {
+    fn picture(&mut self, screen: &mut SnapScreen<'_, PlaySim<'p>>, input: &Input) -> (PassUi, Vec<String>) {
         let sim = &*screen.sim;
         let my_ball =
             sim.returner_index().is_some() && sim.returner_index() == sim.human_defender;
@@ -3629,14 +3575,193 @@ fn live_man(sim: &ThrowOffSim, order: &[usize], pick: usize) -> Option<usize> {
     Some(live[pick % live.len()])
 }
 
+/// The ball in the air: the charge and the aim for the man throwing it, and the
+/// walk round the coverage for the man receiving it.
+struct ThrowOffSnap<'a> {
+    game: &'a mut GameState,
+    my_team: usize,
+    // The meter, filled while the throw button is held.
+    hold: f32,
+    charging: bool,
+    // Where across the field the throw is aimed, in yards.
+    aim_y: f32,
+    // The throw button has been up since this throw-off started.
+    armed: bool,
+    // Which of your men the switch button has walked to.
+    cover_pick: usize,
+    // The men you can cover with, nearest the ball first, taken once the ball is
+    // caught so the pad starts on a man who can actually make the tackle.
+    cover_order: Option<Vec<usize>>,
+}
+
+impl<'g, 'p> SnapCaller<ThrowOffSim<'p>> for ThrowOffSnap<'g> {
+    /// SELECT on a throw-off is the timeout itself rather than a word to the sim:
+    /// a throw-off has no clock for the sim to stop, so the call goes to the game.
+    fn ask_timeout(&mut self, _screen: &mut SnapScreen<'_, ThrowOffSim<'p>>) {
+        let _ = self.game.use_timeout(self.my_team);
+    }
+
+    fn before_frame(
+        &mut self,
+        _screen: &mut SnapScreen<'_, ThrowOffSim<'p>>,
+        _input: &Input,
+    ) -> Flow {
+        Flow::Run
+    }
+
+    fn controls(
+        &mut self,
+        screen: &mut SnapScreen<'_, ThrowOffSim<'p>>,
+        input: &Input,
+        stick: Vec2,
+        dt: f32,
+    ) {
+        let sim = &mut *screen.sim;
+        if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
+            // Three beats, the way a kickoff is played: pick the line the ball
+            // will take, hold A to load the arm, let go to throw it. The throw
+            // waits for the man on the pad, so there is no clock to beat.
+            let holding = input.held.a || input.held.throw;
+            // A still held from the kickoff card must not load the arm: the
+            // button has to come up once before it means anything here.
+            if !holding {
+                self.armed = true;
+            }
+            if holding && self.armed {
+                self.charging = true;
+                self.hold = (self.hold + dt).min(CHARGE_TIME);
+            } else if self.charging && !holding {
+                let power = (self.hold / CHARGE_TIME).clamp(MIN_POWER, 1.0);
+                sim.launch_with(power, self.aim_y);
+                self.charging = false;
+                self.hold = 0.0;
+            }
+            // The line is set before the arm comes back and locked there.
+            if !self.charging {
+                let push = aim_push(input.stick.x, sim.setup.throwing_direction());
+                self.aim_y = aim_step(self.aim_y, push, dt);
+            }
+        }
+
+        // Whoever is yours: the returner while you are receiving, otherwise one of
+        // the three men in coverage, and B walks the pad round them.
+        if input.pressed.b && sim.setup.throwing_team == self.my_team {
+            self.cover_pick = self.cover_pick.wrapping_add(1);
+        }
+        // Covering an AI return used to start on the first gunner in the list,
+        // however far downfield he was. The pad now starts on the man closest to
+        // the ball, and the order is taken when it is caught rather than every
+        // frame, so the man under the pad does not change mid-stride.
+        if self.cover_order.is_none() && sim.catch_time().is_some() {
+            self.cover_order = Some(men_by_distance(sim, self.my_team));
+        }
+        let mine = self
+            .cover_order
+            .as_ref()
+            .and_then(|order| live_man(sim, order, self.cover_pick))
+            .or_else(|| human_man(sim, self.my_team, self.cover_pick));
+        sim.set_human(mine, stick);
+        // The returner has the ball, so the four buttons are the four moves: the
+        // same set the back gets, on the same buttons.
+        let returning_it = sim.phase == ThrowPhase::Return
+            && mine
+                .map(|i| sim.players[i].role == ThrowRole::Returner)
+                .unwrap_or(false);
+        if returning_it {
+            runner_moves(input, |kind, side| {
+                if side == 0.0 {
+                    sim.request_move(kind);
+                } else {
+                    sim.request_move_dir(kind, side);
+                }
+            });
+        }
+        // On the cover: A wraps him up, X dives at him from further out.
+        if sim.phase == ThrowPhase::Return && sim.setup.throwing_team == self.my_team {
+            if input.pressed.a {
+                sim.call_tackle(false);
+            }
+            if input.pressed.x {
+                sim.call_tackle(true);
+            }
+        }
+
+        // Fair catch: the receiving player calls it while the ball is in the air
+        // and takes it where it comes down, instead of running it out.
+        if sim.phase == ThrowPhase::Flight
+            && sim.setup.receiving_team == self.my_team
+            && input.pressed.y
+        {
+            sim.call_fair_catch();
+        }
+    }
+
+    fn picture(
+        &mut self,
+        screen: &mut SnapScreen<'_, ThrowOffSim<'p>>,
+        _input: &Input,
+    ) -> (PassUi, Vec<String>) {
+        let cam = screen.mode();
+        let sim = &*screen.sim;
+        let mut guide = None;
+        let mut short = false;
+        let mut needed = None;
+        let mut power = None;
+        if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
+            let p = (self.hold / CHARGE_TIME).clamp(0.0, 1.0);
+            let plan = sim.throw_off_plan(p, self.aim_y);
+            short = plan.too_short;
+            // The notch is the 40-yard rule: under it is a Run Back.
+            needed = Some(power_for_air(THROW_OFF_MIN_AIR_YARDS));
+            power = Some(p);
+            let hand = sim.players[0].pos;
+            guide = Some(Guide {
+                from: Vec3::new(hand.x, hand.y, 1.8),
+                receiver: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+                landing: Vec3::new(plan.landing.x, plan.landing.y, 0.12),
+            });
+        }
+        // The pad is on a man here too: the returner, a gunner, or the thrower
+        // while the ball is still his.
+        let mine = self
+            .cover_order
+            .as_ref()
+            .and_then(|order| live_man(sim, order, self.cover_pick))
+            .or_else(|| human_man(sim, self.my_team, self.cover_pick));
+        let focus_index = mine.or_else(|| {
+            sim.players
+                .iter()
+                .position(|p| p.team == self.my_team && p.role == ThrowRole::Returner)
+        });
+        let focus = focus_index.map(|i| Focus {
+            at: Vec3::new(sim.players[i].pos.x, sim.players[i].pos.y, 0.0),
+            label: "YOU".to_string(),
+        });
+        let ui = PassUi {
+            flag: None,
+            focus,
+            badges: Vec::new(),
+            guide,
+            power,
+            short,
+            needed,
+        };
+        let lines = vec![
+            throw_off_line(&self.game.teams, sim, self.my_team, self.aim_y, self.charging),
+            throw_off_controls(&self.game.teams, cam, sim, self.my_team, self.cover_pick),
+        ];
+        (ui, lines)
+    }
+}
+
 fn throw_off_line(
-    arcade: &Arcade,
+    teams: &[Team],
     sim: &ThrowOffSim,
     my_team: usize,
     aim_y: f32,
     charging: bool,
 ) -> String {
-    let abbr = |t: usize| arcade.game.teams[t].abbr.clone();
+    let abbr = |t: usize| teams[t].abbr.clone();
     match sim.phase {
         ThrowPhase::Presnap => {
             if sim.human_thrower {
@@ -3668,8 +3793,14 @@ fn throw_off_line(
     }
 }
 
-fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: usize) -> String {
-    let cam = cam_name(CAMS[arcade.cam % CAMS.len()]);
+fn throw_off_controls(
+    teams: &[Team],
+    cam_mode: CameraMode,
+    sim: &ThrowOffSim,
+    my_team: usize,
+    pick: usize,
+) -> String {
+    let cam = cam_name(cam_mode);
     if sim.phase == ThrowPhase::Presnap && sim.human_thrower {
         return format!(
             "  THROW   AIM WITH STICK   HOLD [A] TO LOAD   [SELECT] CAMERA   [START] PAUSE"
@@ -3689,7 +3820,7 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: 
         let who = men
             .get(pick % men.len().max(1))
             .map(|&i| {
-                arcade.game.teams[sim.players[i].team].roster[sim.players[i].roster]
+                teams[sim.players[i].team].roster[sim.players[i].roster]
                     .last_name()
                     .to_string()
             })
@@ -3709,7 +3840,7 @@ fn throw_off_controls(arcade: &Arcade, sim: &ThrowOffSim, my_team: usize, pick: 
     };
     format!(
         "  RETURN IT   {} BALL   MOVE WITH STICK{fair}   [SELECT] {cam}   [START] PAUSE",
-        arcade.game.teams[sim.setup.receiving_team].abbr,
+        teams[sim.setup.receiving_team].abbr,
     )
 }
 
