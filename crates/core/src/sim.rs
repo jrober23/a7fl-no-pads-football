@@ -414,6 +414,57 @@ pub struct QbControl {
 /// a pass breakup or a pick happen on his own man rather than waiting for the
 /// coordinator's dice. Absent during ordinary AI play, so `sim` and `film` behave
 /// exactly as they always have.
+/// A tackle thrown with the right stick behind it: up over the nameplate, down
+/// under it. Both go for the ball rather than for the man alone, and a high hit
+/// is the one that can be flagged, because in this game hitting above the
+/// nameplate is unnecessary roughness.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Hit {
+    High,
+    Low,
+}
+
+impl Hit {
+    /// How much more of the ball this hit is after, on top of the ordinary
+    /// fumble chance. Strength and tackling together decide how much of the man
+    /// a defender can put behind it, so the strongest tackler in the league is
+    /// worth roughly three times what the softest one is.
+    pub fn fumble_bonus(self, attrs: &crate::team::Attributes) -> f32 {
+        let strength = attrs.strength as f32 / 100.0;
+        let tackling = attrs.tackle_factor();
+        let force = 0.40 + strength * 0.50 + tackling * 0.50;
+        let base = match self {
+            Hit::High => 0.060,
+            Hit::Low => 0.040,
+        };
+        base * force
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Hit::High => "HIGH HIT",
+            Hit::Low => "LOW HIT",
+        }
+    }
+}
+
+/// The chance a wrap-up knocks the ball out, before the carrier's move scales
+/// it. A hit stick tackle is worth more of it, in proportion to how much man the
+/// defender can put behind the hit.
+fn fumble_chance(
+    carrier: &crate::team::Attributes,
+    defender: &crate::team::Attributes,
+    hit: Option<Hit>,
+    difficulty: f32,
+) -> f32 {
+    0.012
+        + (1.0 - carrier.break_tackle_factor()) * 0.022
+        + (1.0 - carrier.awareness_factor()) * 0.012
+        // A hard defence goes for the ball on the way in.
+        + difficulty
+        + hit.map(|h| h.fumble_bonus(defender)).unwrap_or(0.0)
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DefControl {
     /// Stick direction in world space, `x` down the field and `y` across it.
@@ -426,6 +477,9 @@ pub struct DefControl {
     pub dive: bool,
     /// One frame of the pick button: go and take it away.
     pub intercept: bool,
+    /// The right stick behind the tackle: up over the nameplate, down under it.
+    /// An ordinary tackle is `None`.
+    pub hit: Option<Hit>,
 }
 
 /// What a throw of a given weight, bent off a receiver, would do. The interactive
@@ -2616,20 +2670,30 @@ impl<'a> PlaySim<'a> {
                 continue;
             }
 
+            // The right stick behind the tackle goes for the ball, and aimed high
+            // it goes over the nameplate: that is the hit that gets flagged.
+            let hit = if Some(d) == self.human_defender {
+                self.def_control.and_then(|c| c.hit)
+            } else {
+                None
+            };
             // No-pads rules: a tackle above the nameplate is unnecessary roughness.
-            let high_tackle =
-                self.rng.chance(0.02 * (1.2 - defender_attrs.discipline as f32 / 100.0));
+            let mut roughness = 0.02 * (1.2 - defender_attrs.discipline as f32 / 100.0);
+            if hit == Some(Hit::High) {
+                roughness *= 3.0;
+            }
+            let high_tackle = self.rng.chance(roughness);
             let spot = clamp(
                 self.players[carrier].pos.x,
                 -field::ENDZONE_DEPTH,
                 FIELD_LENGTH + field::ENDZONE_DEPTH,
             );
-            let fumble_chance = 0.012
-                + (1.0 - carrier_attrs.break_tackle_factor()) * 0.022
-                + (1.0 - carrier_attrs.awareness_factor()) * 0.012
-                // A hard defence goes for the ball on the way in.
-                + self.difficulty.fumble_bonus();
-            let fumbled = self.rng.chance(fumble_chance);
+            let fumbled = self.rng.chance(fumble_chance(
+                &carrier_attrs,
+                &defender_attrs,
+                hit,
+                self.difficulty.fumble_bonus(),
+            ));
             let scramble = self.scramble_started && carrier == self.qb;
             let sack = !self.pass_caught
                 && !scramble
@@ -4546,6 +4610,7 @@ mod tests {
             dive: false,
             swat: false,
             intercept: false,
+            hit: None,
         }));
         for _ in 0..90 {
             sim.step(FIXED_DT);
@@ -5542,5 +5607,43 @@ mod tests {
             }
         }
         assert!(checked > 6, "hardly any play got far enough to check: {checked}");
+    }
+
+    /// The hit stick is worth more of the ball the stronger the tackler is: a
+    /// high hit over the nameplate is the best of it, a low hit is still a hit,
+    /// and a man with no stick behind the tackle gets the ordinary roll.
+    #[test]
+    fn the_hit_stick_goes_for_the_ball() {
+        use crate::team::Attributes;
+        let carrier = Attributes {
+            break_tackle: 60,
+            awareness: 60,
+            ..Default::default()
+        };
+        let strong = Attributes {
+            strength: 90,
+            tackling: 90,
+            ..Default::default()
+        };
+        let weak = Attributes {
+            strength: 45,
+            tackling: 45,
+            ..Default::default()
+        };
+        let plain = fumble_chance(&carrier, &strong, None, 0.0);
+        let low = fumble_chance(&carrier, &strong, Some(Hit::Low), 0.0);
+        let high = fumble_chance(&carrier, &strong, Some(Hit::High), 0.0);
+        assert!(high > low && low > plain, "{plain} {low} {high}");
+        assert!(
+            high - plain > 0.03,
+            "the hit barely moved the odds: {}",
+            high - plain
+        );
+        assert!(high < 0.5, "a high hit is a coin flip: {high}");
+        // The ratings are what the hit is made of.
+        assert!(
+            high > fumble_chance(&carrier, &weak, Some(Hit::High), 0.0) + 0.02,
+            "strength and tackling did not decide the hit"
+        );
     }
 }

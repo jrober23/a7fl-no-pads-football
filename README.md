@@ -163,6 +163,7 @@ On defense the same pad does different work:
 | B / East, X | Switch to the next defender, nearest the ball first |
 | X / West, Z | Dive tackle: a lunging hit from a half-yard further out. With the ball in the air the same button is the bat-down |
 | Y / North, C | Intercept: go and take the ball away |
+| Right stick up / down, T / G | Hit stick: a high hit over the nameplate or a low hit underneath. Either goes for the ball; the high one is the one that can be flagged |
 | Select / Minus, Tab | Change camera |
 | Start, Esc | Pause |
 
@@ -311,6 +312,17 @@ one that leaves him on the turf when it misses. Y goes and takes the ball away. 
 the ball in the air X is the bat-down instead: he dives at it and knocks it down. X
 and Y only work while the ball is up and your man is close enough to touch it, and he
 gets one look per throw.
+
+The right stick is the hit stick on defense. Push it up as the tackle lands and he
+goes over the nameplate; push it down and he goes underneath it. Either one is a
+tackle thrown for the ball rather than for the man alone, and how much of it he comes
+up with is his strength and his tackling added together: the strongest tackler in the
+league is worth about three times the softest one, and the high hit is the bigger of
+the two. It is also the one the flag is watching for, because this is a no-pads
+league and a tackle above the nameplate is unnecessary roughness. Leave the stick
+alone and the tackle is the ordinary wrap-up. The line at the bottom of the picture
+reads `HIGH HIT` or `LOW HIT` while the stick is held, so you can see what the hit is
+before the ball comes out.
 
 ### The ball in the air
 
@@ -711,6 +723,10 @@ Defense is played out on the field, not decided in the dark:
   drives, the carrier goes over the top of the hit, and the ball is dead when the
   two of them are on the turf. The clock stops on contact, so the extra beat costs
   picture and not time played.
+- **The hit stick.** The right stick behind a tackle turns a wrap-up into a hit for
+  the ball. Up is over the nameplate, down is underneath; either adds to the chance of
+  knocking it loose, in proportion to the tackler's strength and tackling, and the
+  high hit adds more and carries the roughness flag with it.
 - **Sacks.** A quarterback still holding the ball in the pocket is a live target.
   The rush gets home, the hit is the same wrap, and the picture says `SACK`.
 - **Tackles for loss.** A run stopped behind the line is read as a tackle for loss

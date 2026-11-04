@@ -20,7 +20,7 @@ use nopads_core::playbook::{
     DefFront, DefRole, Formation, Play,
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
-use nopads_core::sim::{DefControl, Phase, PlaySim, QbControl};
+use nopads_core::sim::{Hit, DefControl, Phase, PlaySim, QbControl};
 use nopads_core::team::league_teams;
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use nopads_render::broadcast::{Broadcast, CameraMode};
@@ -108,6 +108,20 @@ fn runner_moves(input: &Input, mut act: impl FnMut(Kind, f32)) {
     }
     if input.pressed.stop {
         act(Kind::Stop, 0.0);
+    }
+}
+
+/// The right stick on defence is the hit stick: up goes over the nameplate, down
+/// goes under it. It is the same stick that is the carrier's body on offence, so
+/// this is only ever read for a man in coverage, and a tackle with the stick left
+/// alone is the ordinary wrap-up.
+fn hit_stick(input: &Input) -> Option<Hit> {
+    if input.held.truck {
+        Some(Hit::High)
+    } else if input.held.stop {
+        Some(Hit::Low)
+    } else {
+        None
     }
 }
 /// How far across the field a throw-off can be aimed: the width of the landing
@@ -2516,6 +2530,7 @@ fn drive(
                 dive: false,
                 swat: false,
                 intercept: false,
+                hit: None,
             }));
             // The man running it back is a runner, so the four face buttons are the
             // four moves: a pick return used to be the one carry in the game where
@@ -3072,6 +3087,7 @@ fn drive_defense(
             dive: input.pressed.x,
             swat: false,
             intercept: input.pressed.y,
+            hit: hit_stick(&input),
         }));
 
         // A pick turns the play round: hold the shot while the camera swings.
@@ -3143,7 +3159,13 @@ fn drive_defense(
                     if sim.play.flip { " (FLIPPED)" } else { "" },
                     broadcast.teams[sim.setup.offense_team].abbr
                 ),
-                format!("  YOU: {role} {who}"),
+                format!(
+                    "  YOU: {role} {who}{}",
+                    match hit_stick(&input) {
+                        Some(h) => format!(" - {}", h.label()),
+                        None => String::new(),
+                    }
+                ),
             ];
             if sim.phase == Phase::Return && my_ball {
                 // A pick is not a dead ball: the man who took it is a runner now, and
@@ -3172,7 +3194,7 @@ fn drive_defense(
                     );
                 } else {
                     lines.push(
-                        "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [SELECT] CAMERA   [START] PAUSE"
+                        "  [B] SWITCH DEFENDER   [A] TACKLE   [X] DIVE TACKLE   [Y] INTERCEPT   [RS] HIGH/LOW HIT   [SELECT] CAMERA   [START] PAUSE"
                             .to_string(),
                     );
                 }
