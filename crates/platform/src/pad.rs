@@ -211,25 +211,16 @@ mod backend {
             // Dead zone, so a resting stick does not make the quarterback drift.
             let stick = if raw.length() < 0.22 { Vec2::ZERO } else { raw };
 
-            let mut pressed = Buttons::default();
-            edge(&mut pressed.a, held.a, self.prev.a);
-            edge(&mut pressed.b, held.b, self.prev.b);
-            edge(&mut pressed.x, held.x, self.prev.x);
-            edge(&mut pressed.y, held.y, self.prev.y);
-            edge(&mut pressed.throw, held.throw, self.prev.throw);
-            edge(&mut pressed.select, held.select, self.prev.select);
-            edge(&mut pressed.preview, held.preview, self.prev.preview);
-            edge(&mut pressed.dummy, held.dummy, self.prev.dummy);
-            edge(&mut pressed.shoulder, held.shoulder, self.prev.shoulder);
-            edge(&mut pressed.start, held.start, self.prev.start);
+            // Every button gets its edge from one place. This used to be a list
+            // of ten `edge()` calls written out by hand, and the four buttons of
+            // the right stick were not on it: the stick set `held` and the game
+            // waited for `pressed`, so truck, stop and both cuts did nothing on a
+            // pad while the keyboard worked.
+            let pressed = held.edges(self.prev);
             self.prev = held;
 
             Input { stick, held, pressed }
         }
-    }
-
-    fn edge(pressed: &mut bool, now: bool, before: bool) {
-        *pressed = now && !before;
     }
 }
 
