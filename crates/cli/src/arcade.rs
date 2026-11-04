@@ -23,7 +23,7 @@ use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use nopads_core::sim::{Hit, DefControl, Phase, PlaySim, QbControl};
 use nopads_core::team::league_teams;
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
-use nopads_render::broadcast::{Broadcast, CameraMode};
+use nopads_render::broadcast::{HandCamera, Broadcast, CameraMode};
 use nopads_render::hud;
 use nopads_render::passing::{Badge, Focus, Guide, PassUi, Tone};
 use nopads_render::callsheet;
@@ -845,13 +845,13 @@ impl Arcade {
                 // The call sheet is where a player spends most of the game, so this
                 // is the door to the camera setting and to quitting, not an instant
                 // exit the way it used to be.
-                if !pause_menu(
+                if pause_menu(
                     &mut self.view,
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
                     PausedShot::None,
-                ) {
+                false) == PauseAction::Quit {
                     self.quit = true;
                     return None;
                 }
@@ -967,13 +967,13 @@ impl Arcade {
             }
             let input = self.input();
             if input.pressed.start {
-                if !pause_menu(
+                if pause_menu(
                     &mut self.view,
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
                     PausedShot::None,
-                ) {
+                false) == PauseAction::Quit {
                     self.quit = true;
                     return None;
                 }
@@ -1115,13 +1115,13 @@ impl Arcade {
             }
             let input = self.input();
             if input.pressed.start {
-                if !pause_menu(
+                if pause_menu(
                     &mut self.view,
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
                     PausedShot::None,
-                ) {
+                false) == PauseAction::Quit {
                     self.quit = true;
                     return false;
                 }
@@ -1235,13 +1235,13 @@ impl Arcade {
         }
         if input.pressed.start {
                 // START pauses: the camera setting and quitting both live behind it.
-                if !pause_menu(
+                if pause_menu(
                     &mut self.view,
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
                     PausedShot::ThrowOff(&*sim),
-                ) {
+                false) == PauseAction::Quit {
                     self.quit = true;
                     return false;
                 }
@@ -1643,13 +1643,13 @@ impl Arcade {
                 continue;
             }
             if input.pressed.start {
-                if !pause_menu(
+                if pause_menu(
                     &mut self.view,
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
                     PausedShot::None,
-                ) {
+                false) == PauseAction::Quit {
                     self.quit = true;
                     return None;
                 }
@@ -1952,6 +1952,17 @@ fn paused_still(
     }
 }
 
+/// What the pause screen was asked for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PauseAction {
+    /// Back to the game.
+    Resume,
+    /// Out of the game.
+    Quit,
+    /// The tape of the last snap, in the player's hands.
+    Replay,
+}
+
 /// The menu, set over the frozen picture rather than on a page of their own.
 fn draw_pause_lines(frame: &mut nopads_render::Frame, lines: &[String]) {
     // The one screen drawn straight onto the frozen picture rather than on a
@@ -1997,8 +2008,15 @@ fn pause_menu(
     cam: &mut usize,
     broadcast: &mut Broadcast,
     shot: PausedShot<'_, '_>,
-) -> bool {
-    const ITEMS: usize = 4;
+    can_replay: bool,
+) -> PauseAction {
+    // The replay sits under Resume when the caller has a tape to run: the pause
+    // screen of a call sheet has no play behind it.
+    let items = if can_replay { 5 } else { 4 };
+    let replay_item = 1;
+    let cam_item = if can_replay { 2 } else { 1 };
+    let lens_item = cam_item + 1;
+    let leave_item = cam_item + 2;
     let mut nav = Nav::default();
     let mut pick = 0usize;
     // The lens sub-screen: the stick on the camera, the frozen picture in front
@@ -2011,7 +2029,7 @@ fn pause_menu(
     let mut still: Option<nopads_render::Frame> = None;
     // A button still held from the game must not select the first item.
     view.reset();
-    let keep = loop {
+    let action = loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
@@ -2023,7 +2041,7 @@ fn pause_menu(
             } else if leaving.is_some() {
                 leaving = None;
             } else {
-                break true;
+                break PauseAction::Resume;
             }
         }
         if tuning {
@@ -2061,23 +2079,24 @@ fn pause_menu(
                 if *choice == 0 {
                     BACK_TO_MENU.store(true, Ordering::Relaxed);
                 }
-                break false;
+                break PauseAction::Quit;
             }
         } else {
             match nav.step(input.stick, dt) {
-                Some(Dir::Up) => pick = (pick + ITEMS - 1) % ITEMS,
-                Some(Dir::Down) => pick = (pick + 1) % ITEMS,
+                Some(Dir::Up) => pick = (pick + items - 1) % items,
+                Some(Dir::Down) => pick = (pick + 1) % items,
                 _ => {}
             }
             if input.pressed.a {
                 match pick {
-                    0 => break true,
-                    1 => {
+                    0 => break PauseAction::Resume,
+                    1 if can_replay => break PauseAction::Replay,
+                    p if p == cam_item => {
                         *cam = (*cam + 1) % CAMS.len();
                         still = None;
                     }
-                    2 => tuning = true,
-                    3 => leaving = Some(0),
+                    p if p == lens_item => tuning = true,
+                    p if p == leave_item => leaving = Some(0),
                     _ => {}
                 }
             }
@@ -2104,21 +2123,33 @@ fn pause_menu(
                 "  [STICK] CHOOSE   [A] SELECT   [B] STAY".to_string(),
             ]
         } else {
-            vec![
-                String::new(),
-                "  PAUSED".to_string(),
-                String::new(),
-                format!("    {} RESUME", mark(pick == 0)),
-                format!(
+            {
+                let mut lines = vec![
+                    String::new(),
+                    "  PAUSED".to_string(),
+                    String::new(),
+                    format!("    {} RESUME", mark(pick == 0)),
+                ];
+                if can_replay {
+                    lines.push(format!(
+                        "    {} REPLAY    LAST PLAY   [A] WATCH",
+                        mark(pick == replay_item)
+                    ));
+                }
+                lines.push(format!(
                     "    {} CAMERA    {:<9}   [A] CHANGE",
-                    mark(pick == 1),
+                    mark(pick == cam_item),
                     cam_name(CAMS[*cam % CAMS.len()])
-                ),
-                format!("    {} LENS      {zoom:.2} / {tilt:+.2}   [A] ADJUST", mark(pick == 2)),
-                format!("    {} LEAVE GAME", mark(pick == 3)),
-                String::new(),
-                "  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string(),
-            ]
+                ));
+                lines.push(format!(
+                    "    {} LENS      {zoom:.2} / {tilt:+.2}   [A] ADJUST",
+                    mark(pick == lens_item)
+                ));
+                lines.push(format!("    {} LEAVE GAME", mark(pick == leave_item)));
+                lines.push(String::new());
+                lines.push("  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string());
+                lines
+            }
         };
         // The picture behind the menu, unless there is none or this is the
         // terminal, where a page of text is the only thing that reads.
@@ -2132,18 +2163,158 @@ fn pause_menu(
                 draw_pause_lines(&mut frame, &lines);
                 shown = true;
                 if !view.show(&mut frame, &[]) {
-                    break false;
+                    break PauseAction::Quit;
                 }
             }
         }
         if !shown && !view.page(&lines) {
-            break false;
+            break PauseAction::Quit;
         }
         std::thread::sleep(Duration::from_millis(16));
     };
     // Whatever was pressed in here must not carry into the game.
     view.reset();
-    keep
+    action
+}
+
+/// How fast the tape runs. It was recorded one frame per fixed step, so it runs
+/// back at the rate it was played at.
+const TAPE_FPS: f32 = 60.0;
+/// How much faster the bumpers scrub it.
+const SCRUB_FAST: f32 = 4.0;
+/// How far the stick pans the replay's camera, in yards a second.
+const PAN_SPEED: f32 = 14.0;
+/// How fast the right stick turns the replay's camera, in radians a second.
+const ORBIT_RATE: f32 = 1.6;
+/// How fast the right stick pulls the shot in and out, a second.
+const ZOOM_RATE: f32 = 0.9;
+const MIN_ZOOM: f32 = 0.35;
+const MAX_ZOOM: f32 = 3.0;
+
+/// Where the tape lands after one tick: `A` plays it at the rate it was recorded,
+/// the bumpers run it fast either way, and the game clamps at both ends.
+fn scrub(pos: f32, last: f32, playing: bool, fwd: bool, back: bool, dt: f32) -> f32 {
+    let mut p = pos;
+    if playing {
+        p += dt * TAPE_FPS;
+    }
+    if fwd {
+        p += dt * TAPE_FPS * SCRUB_FAST;
+    }
+    if back {
+        p -= dt * TAPE_FPS * SCRUB_FAST;
+    }
+    p.clamp(0.0, last)
+}
+
+/// The replay theatre: the tape of the last snap, run by hand.
+///
+/// The picture is the same broadcast the game is played in, with the camera off
+/// its rail: the stick pans, the right stick zooms and orbits, and the tape runs,
+/// rewinds and steps a frame at a time. B or START puts the game back.
+#[allow(clippy::too_many_arguments)]
+fn replay_theatre<T>(
+    tape: &[T],
+    broadcast: &mut Broadcast,
+    view: &mut View,
+    mut pad: Option<&mut Pad>,
+    flip_y: bool,
+    dir: i8,
+    start: Vec2,
+    draw: impl Fn(&mut Broadcast, &T) -> nopads_render::Frame,
+) -> bool {
+    if tape.is_empty() {
+        return true;
+    }
+    let last = tape.len().saturating_sub(1);
+    // It opens playing, so the replay is a replay: the player can stop it with A
+    // the moment he sees what he wants to look at.
+    let mut playing = true;
+    let mut pos = 0.0f32;
+    let mut hand = HandCamera {
+        at: start,
+        zoom: 1.0,
+        yaw: 0.0,
+    };
+    view.reset();
+    let mut last_tick = Instant::now();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last_tick).as_secs_f32().min(0.1);
+        last_tick = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+
+        if input.pressed.b || input.pressed.start {
+            break;
+        }
+        // A plays and pauses. Y and X are one frame of tape each way, and leave it
+        // stopped so the frame can be looked at.
+        if input.pressed.a {
+            playing = !playing;
+        }
+        if input.pressed.y {
+            pos = (pos + 1.0).min(last as f32);
+            playing = false;
+        }
+        if input.pressed.x {
+            pos = (pos - 1.0).max(0.0);
+            playing = false;
+        }
+        let before = pos;
+        pos = scrub(
+            pos,
+            last as f32,
+            playing,
+            input.held.shoulder,
+            input.held.dummy,
+            dt,
+        );
+        // The end of the tape stops it rather than sitting there spinning.
+        if playing && before < last as f32 && pos >= last as f32 {
+            playing = false;
+        }
+        // The right stick is the lens: up and down are zoom, the sides are the
+        // orbit round the play.
+        if input.held.truck {
+            hand.zoom = (hand.zoom - ZOOM_RATE * dt).max(MIN_ZOOM);
+        }
+        if input.held.stop {
+            hand.zoom = (hand.zoom + ZOOM_RATE * dt).min(MAX_ZOOM);
+        }
+        if input.held.juke_l {
+            hand.yaw += ORBIT_RATE * dt;
+        }
+        if input.held.juke_r {
+            hand.yaw -= ORBIT_RATE * dt;
+        }
+        // The left stick walks the camera over the field.
+        let pan = stick_to_world(input.stick, flip_y, CameraMode::Replay, dir);
+        hand.at += pan * PAN_SPEED * dt;
+        hand.at.x = hand.at.x.clamp(-12.0, 112.0);
+        hand.at.y = hand.at.y.clamp(-32.0, 32.0);
+
+        let index = (pos.round() as usize).min(last);
+        broadcast.set_hand_camera(Some(hand));
+        let mut frame = draw(broadcast, &tape[index]);
+        let label = if playing { "REPLAY" } else { "REPLAY - PAUSED" };
+        let tw = nopads_render::font::text_width(label, 3) as i32;
+        frame.fill_rect_alpha(12, 12, tw + 22, 30, hud::INK, 0.75);
+        frame.fill_rect(12, 12, 4, 30, hud::RED);
+        frame.text_shadowed(23, 20, label, 3, hud::WHITE, 1);
+        let lines = vec![
+            format!("  REPLAY   FRAME {}/{last}", index + 1),
+            "  [A] PLAY / PAUSE   [RB] FAST FORWARD   [LB] REWIND   [Y] STEP FORWARD   [X] STEP BACK"
+                .to_string(),
+            "  [RS] ZOOM / ORBIT   [LS] PAN   [B] BACK TO THE GAME".to_string(),
+        ];
+        if !view.show(&mut frame, &lines) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(16));
+    }
+    broadcast.set_hand_camera(None);
+    view.reset();
+    true
 }
 
 /// Whether a dead snap is worth running back: fifteen yards of offence, six
@@ -2378,8 +2549,31 @@ fn drive(
             sim.timeout_asked = true;
         }
         if input.pressed.start {
-            if !pause_menu(view, pad.as_deref_mut(), cam, broadcast, PausedShot::Play(&*sim)) {
-                return false;
+            match pause_menu(
+                view,
+                pad.as_deref_mut(),
+                cam,
+                broadcast,
+                PausedShot::Play(&*sim),
+                true,
+            ) {
+                PauseAction::Quit => return false,
+                PauseAction::Replay => {
+                    let keep = replay_theatre(
+                        &tape,
+                        broadcast,
+                        view,
+                        pad.as_deref_mut(),
+                        flip_y,
+                        sim.facing(),
+                        sim.ball_position().0,
+                        |b, snap| b.live_frame_ui(snap, CameraMode::Replay, &ui_none()),
+                    );
+                    if !keep {
+                        return false;
+                    }
+                }
+                PauseAction::Resume => {}
             }
             // The whole pause was spent inside the wall clock: do not run the play
             // forward by it.
@@ -3015,8 +3209,31 @@ fn drive_defense(
             sim.timeout_asked = true;
         }
         if input.pressed.start {
-            if !pause_menu(view, pad.as_deref_mut(), cam, broadcast, PausedShot::Play(&*sim)) {
-                return false;
+            match pause_menu(
+                view,
+                pad.as_deref_mut(),
+                cam,
+                broadcast,
+                PausedShot::Play(&*sim),
+                true,
+            ) {
+                PauseAction::Quit => return false,
+                PauseAction::Replay => {
+                    let keep = replay_theatre(
+                        &tape,
+                        broadcast,
+                        view,
+                        pad.as_deref_mut(),
+                        flip_y,
+                        sim.facing(),
+                        sim.ball_position().0,
+                        |b, snap| b.live_frame_ui(snap, CameraMode::Replay, &ui_none()),
+                    );
+                    if !keep {
+                        return false;
+                    }
+                }
+                PauseAction::Resume => {}
             }
             last = Instant::now();
             acc = 0.0;
@@ -3533,5 +3750,20 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// The tape plays at the rate it was recorded, the bumpers run it fast, and
+    /// neither end runs off the end of it.
+    #[test]
+    fn the_tape_scrubs_without_running_off_either_end() {
+        // Half a second of tape at sixty frames a second.
+        assert!((scrub(0.0, 100.0, true, false, false, 0.5) - 30.0).abs() < 0.01);
+        // Fast forward is four times that, and forward stops on the last frame.
+        assert!((scrub(0.0, 1000.0, false, true, false, 0.5) - 120.0).abs() < 0.01);
+        assert!((scrub(990.0, 1000.0, true, true, false, 0.5) - 1000.0).abs() < 0.01);
+        // Rewinding stops on the first.
+        assert!(scrub(10.0, 1000.0, false, false, true, 0.5).abs() < 0.01);
+        // A paused tape with nothing held does not move at all.
+        assert!((scrub(42.0, 1000.0, false, false, false, 0.5) - 42.0).abs() < 0.01);
     }
 }

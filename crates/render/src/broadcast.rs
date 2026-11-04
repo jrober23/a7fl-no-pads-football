@@ -35,6 +35,18 @@ pub enum CameraMode {
     Endzone,
 }
 
+/// A camera in the operator's hands rather than on a rail: the replay's pan,
+/// zoom and orbit, all built around one point on the field.
+#[derive(Clone, Copy, Debug)]
+pub struct HandCamera {
+    /// The spot on the field the shot is built around.
+    pub at: Vec2,
+    /// Distance multiplier: below 1 is closer in.
+    pub zoom: f32,
+    /// Which way round the shot is, in radians.
+    pub yaw: f32,
+}
+
 /// Everything the renderer needs about one body on the field, copied out of the
 /// simulation so the (borrowed) simulation can be dropped before painting.
 #[derive(Clone, Debug)]
@@ -130,6 +142,8 @@ pub struct Broadcast {
     /// A spot the picture is pinned to instead of the ball: the flag on a
     /// reviewed foul.
     pin: Option<Vec2>,
+    /// A camera the player is holding rather than one on a rail: the replay.
+    hand: Option<HandCamera>,
     /// The crowd, one man at a time, so it can move.
     crowd: Vec<CrowdFigure>,
     crowd_t: f32,
@@ -208,6 +222,7 @@ impl Broadcast {
             lens_tilt: 0.0,
             preview_ease: 0.0,
             pin: None,
+            hand: None,
             crowd,
             crowd_t: 0.0,
             men: Vec::new(),
@@ -250,6 +265,14 @@ impl Broadcast {
     /// ease: the shot is already on the flag when the replay starts.
     pub fn pin_focus(&mut self, at: Option<Vec2>) {
         self.pin = at;
+        self.focus = Focus::default();
+    }
+
+    /// Hand the camera to the replay: the shot is built from this point, at this
+    /// distance and this angle, instead of on the rail it normally runs on.
+    /// `None` puts the game back on its rail.
+    pub fn set_hand_camera(&mut self, cam: Option<HandCamera>) {
+        self.hand = cam;
         self.focus = Focus::default();
     }
 
@@ -684,7 +707,10 @@ impl Broadcast {
             self.focus = Focus::default();
         }
         let focus = self.focus.track_with(ball.0, FOLLOW_AIR);
-        let camera = throw_off_camera(sim, focus, mode, (self.lens_zoom, self.lens_tilt));
+        let camera = match self.hand {
+            Some(h) => self.hand_camera(h, sim.setup.receive_direction),
+            None => throw_off_camera(sim, focus, mode, (self.lens_zoom, self.lens_tilt)),
+        };
         let mut frame = self.paint_throw_off(&players, ball, camera.clone());
         ui.draw(&mut frame, &camera, &self.scene.projector);
         Self::fumble_alert(&mut frame, sim.fumble_alert, &sim.fumble_note);
@@ -777,11 +803,14 @@ impl Broadcast {
         if (self.preview_ease - want).abs() < 0.002 {
             self.preview_ease = want;
         }
-        let camera = match self.pin {
+        let camera = match (self.hand, self.pin) {
+            // The replay's camera is where the player put it: no tracking, no
+            // preview blend, no cut. It is his shot until he gives it back.
+            (Some(h), _) => self.hand_camera(h, dir),
             // A pinned shot is cut on the flag and holds it: no ball tracking, no
             // preview blend, just the spot the foul was called on.
-            Some(at) => self.flag_camera(at, dir),
-            None => self.preview_camera(
+            (None, Some(at)) => self.flag_camera(at, dir),
+            (None, None) => self.preview_camera(
                 mode,
                 focus,
                 dir,
@@ -1387,6 +1416,20 @@ impl Broadcast {
         let mut cam = Camera::new(pos, 0.0, 0.0);
         cam.look_at(look);
         cam.fov = 34f32.to_radians();
+        cam
+    }
+
+    /// The replay's camera: a man standing where the tape has the play, with the
+    /// zoom and the orbit the player asked for.
+    fn hand_camera(&self, h: HandCamera, direction: i8) -> Camera {
+        let d = direction as f32;
+        let (s, c) = h.yaw.sin_cos();
+        let base = Vec3::new(-d * 6.0, 0.0, 2.4);
+        let turned = Vec3::new(base.x * c - base.y * s, base.x * s + base.y * c, base.z);
+        let anchor = Vec3::new(h.at.x, h.at.y, 0.0);
+        let mut cam = Camera::new(anchor + turned * h.zoom, 0.0, 0.0);
+        cam.look_at(Vec3::new(h.at.x, h.at.y, 0.9));
+        cam.fov = 30f32.to_radians();
         cam
     }
 

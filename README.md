@@ -324,6 +324,27 @@ alone and the tackle is the ordinary wrap-up. The line at the bottom of the pict
 reads `HIGH HIT` or `LOW HIT` while the stick is held, so you can see what the hit is
 before the ball comes out.
 
+### Replay
+
+The pause screen can run the last snap back. START, then **REPLAY**: the tape of
+the play you just ran is in your hands, and it opens playing.
+
+| Input | In the replay |
+| --- | --- |
+| A | Play it; press it again to stop it where it is |
+| RB / LB | Run it forward fast, or back fast |
+| Y / X | Step one frame forward, or one frame back |
+| Right stick up / down | Zoom in and out |
+| Right stick left / right | Orbit the camera round the play |
+| Left stick | Pan the camera over the field |
+| B or START | Back to the game |
+
+The picture is the same broadcast the game is played in — the shot is only off its
+rail this time, so a player can stand where the camera cannot and look at a play
+from the other side of it. The tape is the snap you were in when you paused, from
+the snap to the whistle: your throws, your cuts and your stick work are all in
+it, because it is the frames that were played rather than a re-run of them.
+
 ### The ball in the air
 
 A pass is not over when the flight ends. A ball nobody catches drops the last of the
