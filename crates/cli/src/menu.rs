@@ -20,7 +20,7 @@ use nopads_render::{Broadcast, CameraMode};
 use crate::arcade::CAMERA_LABELS;
 use nopads_platform::pad::{self, Pad};
 use nopads_platform::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
-use crate::view::{View, UI_H, UI_SCALE, UI_W};
+use crate::view::{View, UI_H, UI_W};
 
 fn paper() -> Rgb {
     Rgb::new(232, 238, 246)
