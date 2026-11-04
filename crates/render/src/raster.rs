@@ -1145,6 +1145,45 @@ impl Frame {
 }
 
 impl Frame {
+    /// Blow a smaller picture up over the whole of this one, each of its pixels
+    /// becoming a square block. Colour and depth both come up.
+    ///
+    /// This is how the interface is drawn: on its own grid, at the size it was
+    /// laid out for, and then scaled onto a canvas that is a whole multiple of
+    /// it. Every coordinate in those screens stays the number it always was.
+    pub fn blit_up(&mut self, small: &Frame, factor: usize) {
+        if factor == 0 || small.w == 0 || small.h == 0 || self.w == 0 || self.h == 0 {
+            return;
+        }
+        let w = self.w;
+        let rows = self.h.div_ceil(8).max(1);
+        std::thread::scope(|scope| {
+            for (bi, (band, dband)) in self
+                .color
+                .chunks_mut(rows * w)
+                .zip(self.depth.chunks_mut(rows * w))
+                .enumerate()
+            {
+                scope.spawn(move || {
+                    let y0 = bi * rows;
+                    for local in 0..band.len() / w {
+                        let sy = (y0 + local) / factor;
+                        if sy >= small.h {
+                            continue;
+                        }
+                        let srow = sy * small.w;
+                        let row = local * w;
+                        for x in 0..w {
+                            let si = srow + (x / factor).min(small.w - 1);
+                            band[row + x] = small.color[si];
+                            dband[row + x] = small.depth[si];
+                        }
+                    }
+                });
+            }
+        });
+    }
+
     /// Spend a smaller frame's picture on this one, under a depth test.
     ///
     /// The turf is drawn at half resolution because it is a field of painted
@@ -1212,6 +1251,28 @@ mod blit_tests {
         assert_eq!(big.color[0], Rgb::new(10, 20, 30), "the turf did not reach the picture");
         assert_eq!(big.depth[7 * 8 + 7], 3.0, "the ground brought no depth with it");
         assert_eq!(big.color[7 * 8 + 7], Rgb::new(10, 20, 30));
+    }
+
+    #[test]
+    fn a_small_frame_blows_up_into_square_blocks() {
+        let mut big = Frame::new(8, 8);
+        let mut small = Frame::new(4, 4);
+        for y in 0..4 {
+            for x in 0..4 {
+                small.color[y * 4 + x] = Rgb::new(x as u8, y as u8, 7);
+            }
+        }
+        big.blit_up(&small, 2);
+        for y in 0..8 {
+            for x in 0..8 {
+                assert_eq!(
+                    big.color[y * 8 + x],
+                    Rgb::new((x / 2) as u8, (y / 2) as u8, 7),
+                    "canvas {x},{y} did not come from grid {},{y}",
+                    x / 2
+                );
+            }
+        }
     }
 
     #[test]

@@ -20,7 +20,7 @@ use nopads_render::{Broadcast, CameraMode};
 use crate::arcade::CAMERA_LABELS;
 use nopads_platform::pad::{self, Pad};
 use nopads_platform::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
-use crate::view::{View, CANVAS_H, CANVAS_W};
+use crate::view::{View, UI_H, UI_SCALE, UI_W};
 
 fn paper() -> Rgb {
     Rgb::new(232, 238, 246)
@@ -96,7 +96,7 @@ fn text_width(text: &str, scale: usize) -> i32 {
 }
 
 fn centered(frame: &mut Frame, y: i32, text: &str, scale: usize, color: Rgb) {
-    let x = (CANVAS_W as i32 - text_width(text, scale)) / 2;
+    let x = (UI_W as i32 - text_width(text, scale)) / 2;
     frame.text_shadowed(x, y, text, scale, color, 1);
 }
 
@@ -109,14 +109,14 @@ fn night(frame: &mut Frame) {
     frame.gradient_rect(
         0,
         0,
-        CANVAS_W as i32,
-        CANVAS_H as i32,
+        UI_W as i32,
+        UI_H as i32,
         Rgb::new(20, 30, 50),
         Rgb::new(6, 9, 15),
     );
     // Two painted lines, so the screen reads as the same field the game is on.
-    frame.fill_rect(0, 96, CANVAS_W as i32, 1, Rgb::new(30, 48, 76));
-    frame.fill_rect(0, 272, CANVAS_W as i32, 1, Rgb::new(30, 48, 76));
+    frame.fill_rect(0, 96, UI_W as i32, 1, Rgb::new(30, 48, 76));
+    frame.fill_rect(0, 272, UI_W as i32, 1, Rgb::new(30, 48, 76));
 }
 
 /// A club's badge: a shield in its colours with the three-letter mark on it.
@@ -145,9 +145,9 @@ fn badge(frame: &mut Frame, cx: i32, cy: i32, size: i32, club: &Club, lit: bool)
 }
 
 fn footer(frame: &mut Frame, text: &str) {
-    frame.fill_rect(0, CANVAS_H as i32 - 22, CANVAS_W as i32, 22, Rgb::new(8, 11, 18));
-    frame.fill_rect(0, CANVAS_H as i32 - 22, CANVAS_W as i32, 1, Rgb::new(30, 48, 76));
-    centered(frame, CANVAS_H as i32 - 15, text, 1, dim());
+    frame.fill_rect(0, UI_H as i32 - 22, UI_W as i32, 22, Rgb::new(8, 11, 18));
+    frame.fill_rect(0, UI_H as i32 - 22, UI_W as i32, 1, Rgb::new(30, 48, 76));
+    centered(frame, UI_H as i32 - 15, text, 1, dim());
 }
 
 // ---------------------------------------------------------------------------
@@ -214,13 +214,36 @@ fn beat() {
 // Start menu
 // ---------------------------------------------------------------------------
 
+/// The start menu, drawn on the interface grid.
+///
+/// This is a function of the cursor rather than the body of the loop that reads
+/// the stick, so the layout can be looked at: it is the screen a player meets
+/// first, and it is laid out corner to corner on the grid rather than in a list
+/// of numbers that only means anything on one canvas.
+fn draw_start(frame: &mut Frame, pick: usize) {
+    const LABELS: [&str; 4] = ["EXHIBITION", "CUSTOMIZATION", "SETTINGS", "QUIT"];
+        night(frame);
+        centered(frame, 34, "7-ON-7", 7, accent());
+        centered(frame, 100, "NO PADS FOOTBALL", 2, paper());
+        frame.fill_rect(150, 168, 340, 1, Rgb::new(48, 92, 148));
+        for (i, label) in LABELS.iter().enumerate() {
+            let y = 192 + i as i32 * 30;
+            let on = i == pick;
+            if on {
+                frame.fill_rect(228, y - 6, 190, 24, panel());
+                frame.fill_rect(228, y - 6, 4, 24, accent());
+            }
+            frame.text_shadowed(246, y, label, 2, if on { paper() } else { dim() }, 1);
+        }
+        footer(frame, "[STICK] CHOOSE   [A] SELECT   [START] QUIT");
+}
+
 fn start_screen(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     _settings: &mut Settings,
 ) -> Option<Start> {
     const ITEMS: usize = 4;
-    let labels = ["EXHIBITION", "CUSTOMIZATION", "SETTINGS", "QUIT"];
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut last = Instant::now();
@@ -239,23 +262,10 @@ fn start_screen(
             }
         }
 
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
-        night(&mut frame);
-        centered(&mut frame, 34, "7-ON-7", 7, accent());
-        centered(&mut frame, 100, "NO PADS FOOTBALL", 2, paper());
-        frame.fill_rect(150, 168, 340, 1, Rgb::new(48, 92, 148));
-        for (i, label) in labels.iter().enumerate() {
-            let y = 192 + i as i32 * 30;
-            let on = i == pick;
-            if on {
-                frame.fill_rect(228, y - 6, 190, 24, panel());
-                frame.fill_rect(228, y - 6, 4, 24, accent());
-            }
-            frame.text_shadowed(246, y, label, 2, if on { paper() } else { dim() }, 1);
-        }
-        footer(&mut frame, "[STICK] CHOOSE   [A] SELECT   [START] QUIT");
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_start(&mut frame, pick);
 
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         if input.pressed.a {
@@ -346,7 +356,7 @@ fn settings_screen(
             last = Instant::now();
             continue;
         }
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 30, "SETTINGS", 3, accent());
         let rows = [
@@ -371,7 +381,7 @@ fn settings_screen(
         }
         centered(&mut frame, 258, "CHANGES ARE SAVED AS YOU MAKE THEM", 1, dim());
         footer(&mut frame, "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK");
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -438,7 +448,7 @@ fn game_setup(
             ("DIFFICULTY", DIFFICULTY[settings.difficulty % 3].to_string()),
             ("KICK OFF", String::new()),
         ];
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 34, "GAME SETUP", 3, accent());
         centered(&mut frame, 76, "HOW LONG, AND HOW HARD", 1, dim());
@@ -460,7 +470,7 @@ fn game_setup(
             &mut frame,
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
         );
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -512,7 +522,7 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             last = Instant::now();
             continue;
         }
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 12, "CUSTOMIZATION", 3, accent());
         centered(&mut frame, 44, "DEPTH CHART AND ROSTER FOR EVERY CLUB", 1, dim());
@@ -533,7 +543,7 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             frame.text_shadowed(cx - 12, cy + 14, all[i].city, 1, dim(), 1);
         }
         footer(&mut frame, "[STICK] CLUB   [A] ROSTER   [B] BACK");
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -634,7 +644,7 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
             last = Instant::now();
             continue;
         }
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 8, &club.full_name().to_uppercase(), 2, accent());
         frame.fill_rect(20, 30, 600, 1, Rgb::new(48, 92, 148));
@@ -683,7 +693,7 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
             &mut frame,
             "[UP/DOWN] MAN   [X] UP  [Y] DOWN   [A] CARD   [LEFT/RIGHT] ROSTER   [B] BACK",
         );
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -708,7 +718,7 @@ fn player_card(view: &mut View, pad: &mut Option<&mut Pad>, player: &Player) -> 
         if input.pressed.a || input.pressed.b || input.pressed.start {
             return Some(());
         }
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(
             &mut frame,
@@ -733,7 +743,7 @@ fn player_card(view: &mut View, pad: &mut Option<&mut Pad>, player: &Player) -> 
             frame.text_shadowed(482, y + 1, &format!("{value}"), 1, paper(), 1);
         }
         footer(&mut frame, "[A/B] BACK");
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -864,13 +874,13 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         }
         let venue = Venue::from_index(sel);
         let sky = venue.sky();
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
-        frame.gradient_rect(0, 0, CANVAS_W as i32, CANVAS_H as i32, sky[0], sky[2]);
-        frame.fill_rect_alpha(0, 0, CANVAS_W as i32, CANVAS_H as i32, Rgb::new(4, 6, 10), 0.62);
+        let mut frame = Frame::new(UI_W, UI_H);
+        frame.gradient_rect(0, 0, UI_W as i32, UI_H as i32, sky[0], sky[2]);
+        frame.fill_rect_alpha(0, 0, UI_W as i32, UI_H as i32, Rgb::new(4, 6, 10), 0.62);
         centered(&mut frame, 8, "WHERE IS IT PLAYED", 2, accent());
         let note = format!("{} OF {}", sel + 1, venues::COUNT);
         frame.text_shadowed(
-            CANVAS_W as i32 - 14 - text_width(&note, 1),
+            UI_W as i32 - 14 - text_width(&note, 1),
             12,
             &note,
             1,
@@ -908,7 +918,7 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         centered(&mut frame, 292, &venue.name(), 2, paper());
         centered(&mut frame, 314, &venue.sub(), 1, sky[1].lerp(paper(), 0.5));
         footer(&mut frame, "[ARROWS] GROUND   [A] PLAY   [B] BACK");
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         if input.pressed.a {
@@ -1076,7 +1086,7 @@ fn pick_team(
         let club = slots[sel];
         let prev = slots[wrap(sel, n, -1)];
         let next = slots[wrap(sel, n, 1)];
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 16, heading, 2, accent());
         for (i, d) in Division::ALL.iter().enumerate() {
@@ -1133,7 +1143,7 @@ fn pick_team(
         };
         let note_color = if said > 0.0 { Rgb::new(255, 120, 96) } else { dim() };
         frame.text_shadowed(
-            CANVAS_W as i32 - 14 - text_width(&note, 1),
+            UI_W as i32 - 14 - text_width(&note, 1),
             18,
             &note,
             1,
@@ -1141,7 +1151,7 @@ fn pick_team(
             1,
         );
         footer(&mut frame, "[LEFT/RIGHT] ROLL   [UP/DOWN] DIVISION   [A] PICK   [B] BACK");
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -1266,7 +1276,7 @@ fn coin_flip(
             }
         }
 
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 18, "COIN TOSS", 3, accent());
         centered(
@@ -1354,7 +1364,7 @@ fn coin_flip(
                 footer(&mut frame, "[LEFT/RIGHT] CHOOSE   [A] KICK OFF");
             }
         }
-        if !view.show(&mut frame, &[]) {
+        if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
@@ -1417,8 +1427,31 @@ mod tests {
     }
 
     #[test]
+    fn the_start_menu_lands_in_the_middle_of_the_picture() {
+        let (cw, ch) = (crate::view::CANVAS_W, crate::view::CANVAS_H);
+        let mut ui = Frame::new(UI_W, UI_H);
+        draw_start(&mut ui, 0);
+        let mut canvas = Frame::new(cw, ch);
+        canvas.blit_up(&ui, UI_SCALE);
+        // The accent bar down the side of the highlighted row is at grid x 228,
+        // which has to come out at twice that on the canvas: in the middle of the
+        // picture, not against its left edge.
+        let x = 228 * UI_SCALE as usize + 2;
+        let y = 190 * UI_SCALE as usize;
+        assert_eq!(
+            canvas.color[y * cw + x],
+            accent(),
+            "the menu did not scale onto the canvas"
+        );
+        assert!(
+            x > cw / 4,
+            "the menu is back in the top left corner at x {x}"
+        );
+    }
+
+    #[test]
     fn a_screen_of_badges_draws_inside_the_canvas() {
-        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         for (i, club) in clubs().iter().enumerate() {
             let x = 40 + (i as i32 % 4) * 150;
@@ -1462,7 +1495,7 @@ fn lens_screen(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Setti
     }
 
     // The preview borrows the teams for its sim, so the picture gets its own copy.
-    let mut broadcast = Broadcast::new(CANVAS_W, CANVAS_H, [home.clone(), away.clone()]);
+    let mut broadcast = Broadcast::new(UI_W, UI_H, [home.clone(), away.clone()]);
     broadcast.set_lens(settings.lens_zoom, settings.lens_tilt);
     let mut last = Instant::now();
     view.reset();
@@ -1497,7 +1530,7 @@ fn lens_screen(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Setti
         frame.text_shadowed(18, 16, &format!("ZOOM {:.2}", settings.lens_zoom), 2, paper(), 1);
         frame.text_shadowed(18, 38, &format!("TILT {:+.2}", settings.lens_tilt), 2, paper(), 1);
         let help = "[STICK] ZOOM / TILT   [X] RESET   [B] DONE".to_string();
-        if !view.show(&mut frame, &[help]) {
+        if !view.show_ui(&mut frame, &[help]) {
             break;
         }
         std::thread::sleep(Duration::from_millis(16));

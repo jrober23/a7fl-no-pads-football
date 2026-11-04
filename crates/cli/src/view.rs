@@ -26,6 +26,18 @@ use nopads_platform::settings::Settings;
 pub const CANVAS_W: usize = 1280;
 pub const CANVAS_H: usize = 720;
 
+/// The grid the front end and the call sheets are laid out on.
+///
+/// Those screens were drawn for 640x360, corner to corner, and they are kept
+/// there: the interface is built on this grid and scaled up whole onto the
+/// canvas, so every screen keeps the proportions it was designed with instead of
+/// being re-laid-out for a bigger picture a coordinate at a time.
+pub const UI_W: usize = 640;
+pub const UI_H: usize = 360;
+
+/// How many canvas pixels one grid pixel becomes.
+pub const UI_SCALE: usize = CANVAS_W / UI_W;
+
 fn paper() -> Rgb {
     Rgb::new(232, 238, 246)
 }
@@ -124,6 +136,18 @@ impl View {
                 true
             }
         }
+    }
+
+    /// Show a screen drawn on the interface grid, scaled onto the canvas.
+    ///
+    /// The menus and the call sheets are laid out in `UI_W`x`UI_H` pixels and
+    /// come out through here: a whole-number scale up, so a screen sits where it
+    /// was designed to sit instead of collecting in the corner of a canvas twice
+    /// the size it was drawn for.
+    pub fn show_ui(&mut self, ui: &mut Frame, lines: &[String]) -> bool {
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        frame.blit_up(ui, UI_SCALE);
+        self.show(&mut frame, lines)
     }
 
     /// A full screen of text: the call sheet, a prompt, the box score.

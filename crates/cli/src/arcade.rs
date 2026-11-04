@@ -34,7 +34,7 @@ use nopads_render::terminal;
 use crate::menu;
 use nopads_platform::pad::{self, Input, Pad};
 use nopads_platform::settings::Settings;
-use crate::view::{View, CANVAS_H, CANVAS_W};
+use crate::view::{View, CANVAS_H, CANVAS_W, UI_H, UI_SCALE, UI_W};
 
 /// Picture refresh for live play. The field is drawn at the full canvas size, so
 /// what you see is the renderer's real detail rather than a scaled-up quarter
@@ -806,7 +806,7 @@ impl Arcade {
             let list = plays_in(&self.book, forms[self.form]);
             self.sheet_pick = self.sheet_pick.min(list.len().saturating_sub(1));
 
-            let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
+            let mut frame = nopads_render::Frame::new(UI_W, UI_H);
             callsheet::draw_layered(
                 &mut frame,
                 &self.book,
@@ -817,7 +817,7 @@ impl Arcade {
                 self.flip,
             );
             let lines = self.call_sheet_lines(&forms, &list);
-            if !self.view.show(&mut frame, &lines) {
+            if !self.view.show_ui(&mut frame, &lines) {
                 self.quit = true;
                 return None;
             }
@@ -1616,10 +1616,10 @@ impl Arcade {
             let list = def_calls_in(&self.defbook, fronts[front]);
             pick = pick.min(list.len().saturating_sub(1));
 
-            let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
+            let mut frame = nopads_render::Frame::new(UI_W, UI_H);
             defsheet::draw_layered(&mut frame, &self.defbook, &fronts, front, pick, in_calls);
             let lines = self.def_sheet_lines(fronts[front], &list, pick, in_calls);
-            if !self.view.show(&mut frame, &lines) {
+            if !self.view.show_ui(&mut frame, &lines) {
                 self.quit = true;
                 return None;
             }
@@ -1940,16 +1940,21 @@ fn paused_still(
 
 /// The menu, set over the frozen picture rather than on a page of their own.
 fn draw_pause_lines(frame: &mut nopads_render::Frame, lines: &[String]) {
-    let line_h = 18;
-    let h = lines.len() as i32 * line_h + 20;
+    // The one screen drawn straight onto the frozen picture rather than on a
+    // frame of its own, so it cannot be laid out small and blown up: its numbers
+    // are multiplied by the same factor the interface grid is scaled by, which
+    // puts the panel and its text where the 640-wide design had them.
+    let s = UI_SCALE as i32;
+    let line_h = 18 * s;
+    let h = lines.len() as i32 * line_h + 20 * s;
     let y0 = ((frame.h as i32 - h) / 2).max(0);
-    frame.fill_rect_alpha(34, y0, frame.w as i32 - 68, h, Rgb::new(8, 12, 18), 0.80);
+    frame.fill_rect_alpha(34 * s, y0, frame.w as i32 - 68 * s, h, Rgb::new(8, 12, 18), 0.80);
     for (i, line) in lines.iter().enumerate() {
         frame.text_shadowed(
-            50,
-            y0 + 10 + i as i32 * line_h,
+            50 * s,
+            y0 + 10 * s + i as i32 * line_h,
             line,
-            2,
+            2 * UI_SCALE,
             Rgb::new(232, 238, 246),
             1,
         );
