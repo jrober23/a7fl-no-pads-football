@@ -343,7 +343,9 @@ The picture is the same broadcast the game is played in — the shot is only off
 rail this time, so a player can stand where the camera cannot and look at a play
 from the other side of it. The tape is the snap you were in when you paused, from
 the snap to the whistle: your throws, your cuts and your stick work are all in
-it, because it is the frames that were played rather than a re-run of them.
+it, because it is the frames that were played rather than a re-run of them. A
+kick is on the same tape from the moment it is caught, so REPLAY appears on a
+return once the ball is in the returner's hands.
 
 ### The ball in the air
 

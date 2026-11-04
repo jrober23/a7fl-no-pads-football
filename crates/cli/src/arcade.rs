@@ -1235,15 +1235,40 @@ impl Arcade {
         }
         if input.pressed.start {
                 // START pauses: the camera setting and quitting both live behind it.
-                if pause_menu(
+                match pause_menu(
                     &mut self.view,
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
                     PausedShot::ThrowOff(&*sim),
-                false) == PauseAction::Quit {
-                    self.quit = true;
-                    return false;
+                    // The tape starts at the catch, so before the ball is caught
+                    // there is nothing behind the menu to run back.
+                    !tape.is_empty(),
+                ) {
+                    PauseAction::Quit => {
+                        self.quit = true;
+                        return false;
+                    }
+                    PauseAction::Replay => {
+                        let kept = replay_theatre(
+                            &tape,
+                            &mut self.broadcast,
+                            &mut self.view,
+                            self.pad.as_mut(),
+                            self.flip_y,
+                            sim.setup.receive_direction,
+                            sim.ball_position().0,
+                            |b, snap| {
+                                let ui = ui_none();
+                                b.throw_off_frame_live(snap, CameraMode::Replay, &ui)
+                            },
+                        );
+                        if !kept {
+                            self.quit = true;
+                            return false;
+                        }
+                    }
+                    PauseAction::Resume => {}
                 }
                 last = Instant::now();
                 acc = 0.0;
