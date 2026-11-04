@@ -238,6 +238,9 @@ pub struct ThrowOffSim<'a> {
     /// The man the human is steering, and which way he is pushing him.
     pub human: Option<usize>,
     pub human_dir: Vec2,
+    /// The player has taken the return over. Until he has, the AI is returning
+    /// the kick for him.
+    returner_taken: bool,
     /// A human is throwing this one, so the AI must not launch it for him.
     pub human_thrower: bool,
     /// A tackle the man on the pad asked for, and whether he dived for it.
@@ -363,6 +366,7 @@ impl<'a> ThrowOffSim<'a> {
             safety_risk: false,
             human: None,
             human_dir: Vec2::ZERO,
+            returner_taken: false,
             human_thrower: false,
             fair_catch: false,
             fumble_alert: 0.0,
@@ -401,6 +405,7 @@ impl<'a> ThrowOffSim<'a> {
         if self.phase != ThrowPhase::Return || self.human != Some(self.returner()) {
             return;
         }
+        self.returner_taken = true;
         let facing = self.returner_line();
         self.begin_move(kind, facing);
     }
@@ -411,6 +416,7 @@ impl<'a> ThrowOffSim<'a> {
         if self.phase != ThrowPhase::Return || self.human != Some(self.returner()) {
             return;
         }
+        self.returner_taken = true;
         let f = self.returner_line().normalize_or_zero();
         let across = Vec2::new(-f.y, f.x) * if side < 0.0 { -1.0 } else { 1.0 };
         self.begin_move(kind, across);
@@ -462,6 +468,20 @@ impl<'a> ThrowOffSim<'a> {
     pub fn set_human(&mut self, index: Option<usize>, dir: Vec2) {
         self.human = index;
         self.human_dir = dir.clamp_len(1.0);
+        // A push on the returner is the player taking the return over. Handing
+        // the pad a man and holding still is not: that is the assist, and it has
+        // to keep returning the kick rather than park him where he caught it.
+        if self.phase == ThrowPhase::Return
+            && index == Some(self.returner())
+            && self.human_dir.length() > 0.2
+        {
+            self.returner_taken = true;
+        }
+    }
+
+    /// Whether the player has taken the returner over from the assist.
+    pub fn returner_taken(&self) -> bool {
+        self.returner_taken
     }
 
     /// Where a man on the pad should run: where the stick is pushing him, or at the
@@ -980,7 +1000,11 @@ impl<'a> ThrowOffSim<'a> {
         let human = self.human;
         let push = self.human_dir;
         let mut speed = self.speed(returner);
-        let mut target = if human == Some(returner) && push.length() > 0.2 {
+        // The AI returns it for him until the pad takes the man over; after that
+        // the returner goes where the stick pushes him and stands where it does
+        // not. Release used to hand him back to the assist, so the return kept
+        // grinding out yards whether the player was driving it or not.
+        let mut target = if human == Some(returner) && self.returner_taken {
             self.players[returner].pos + push * 4.0
         } else {
             target
@@ -1488,6 +1512,66 @@ mod tests {
             }
             assert!(sim.result.is_some(), "a dive never ended the return");
         }
+    }
+
+    /// The return is the AI's until the pad asks for the man: no input at all
+    /// still returns the kick, one push takes the returner over, and the assist
+    /// does not come back when the stick is let go.
+    #[test]
+    fn the_assist_returns_it_until_the_pad_takes_the_man() {
+        let (a, b) = teams();
+        let setup = ThrowOffSetup {
+            receive_direction: 1,
+            ..ThrowOffSetup::normal()
+        };
+        let mut sim = ThrowOffSim::new(&setup, &a, &b);
+        let r = sim.returner();
+        sim.launch_with(0.7, 0.0);
+        let mut guard = 0;
+        while sim.phase != ThrowPhase::Return && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(sim.phase, ThrowPhase::Return, "nobody caught it");
+
+        // The pad is on him from the catch and the stick is idle, the way the
+        // arcade hands him over: the return is still the assist's.
+        let from = sim.players[r].pos;
+        let mut guard = 0;
+        while sim.result.is_none() && guard < 30 {
+            sim.set_human(Some(r), Vec2::ZERO);
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert!(sim.result.is_none(), "the return ended before the pad moved");
+        assert!(!sim.returner_taken(), "an idle stick took the returner over");
+        let assisted = (sim.players[r].pos - from).length();
+        assert!(
+            assisted > 1.0,
+            "the assist did not return it: {assisted} yards in half a second"
+        );
+
+        // One push takes the man.
+        for _ in 0..8 {
+            sim.set_human(Some(r), Vec2::new(0.0, 1.0));
+            sim.step(1.0 / 60.0);
+        }
+        assert!(sim.returner_taken(), "a push did not take the returner over");
+
+        // Letting go leaves him standing instead of handing him back.
+        let mut guard = 0;
+        let mut speed = f32::MAX;
+        while sim.result.is_none() && guard < 30 {
+            sim.set_human(Some(r), Vec2::ZERO);
+            sim.step(1.0 / 60.0);
+            guard += 1;
+            speed = sim.players[r].vel.length();
+        }
+        assert!(sim.result.is_none(), "he was tackled standing still");
+        assert!(
+            speed < 1.5,
+            "the assist came back on: {speed} yards a second with no input"
+        );
     }
 
     #[test]
