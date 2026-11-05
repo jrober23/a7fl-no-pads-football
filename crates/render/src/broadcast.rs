@@ -155,6 +155,10 @@ pub struct Broadcast {
     shadow_masks: Vec<crate::raster::Mask>,
     /// The school outside the glass, when the ground is the dome.
     fish: Vec<crate::venues::FishFigure>,
+    /// An authored figure to draw in place of a man near the lens, when the
+    /// `authored` feature is on and the caller has one to give.
+    #[cfg(feature = "authored")]
+    hero_actor: Option<crate::authored::HeroActor>,
 }
 
 impl Broadcast {
@@ -232,6 +236,8 @@ impl Broadcast {
             } else {
                 Vec::new()
             },
+            #[cfg(feature = "authored")]
+            hero_actor: None,
         }
     }
 
@@ -281,6 +287,13 @@ impl Broadcast {
     pub fn set_lens(&mut self, zoom: f32, tilt: f32) {
         self.lens_zoom = if zoom.is_finite() { zoom.clamp(0.6, 1.8) } else { 1.0 };
         self.lens_tilt = if tilt.is_finite() { tilt.clamp(-0.35, 0.45) } else { 0.0 };
+    }
+
+    /// Draw an authored figure in place of the nearest running man, or put the
+    /// procedural figures back with `None`.
+    #[cfg(feature = "authored")]
+    pub fn set_hero(&mut self, hero: Option<crate::authored::HeroActor>) {
+        self.hero_actor = hero;
     }
 
     /// Render one frame of a recorded play at time `t` (seconds after the snap).
@@ -1026,7 +1039,18 @@ impl Broadcast {
         while men.len() < bodies.len() {
             men.push(Mesh::new());
         }
-        for (mesh, p) in men.iter_mut().zip(bodies) {
+        #[cfg(feature = "authored")]
+        let hero_at = self.hero_slot(camera, bodies);
+        for (slot, (mesh, p)) in men.iter_mut().zip(bodies).enumerate() {
+            // `slot` is only read when a hero is compiled in.
+            let _ = slot;
+            #[cfg(feature = "authored")]
+            if hero_at == Some(slot) {
+                if let Some(actor) = self.hero_actor.as_ref() {
+                    Self::hero_into(actor, p, mesh);
+                    continue;
+                }
+            }
             let roster = &self.teams[p.team].roster[p.roster];
             let uniform = &self.uniforms[p.team];
             let pose = Self::pose_of(p);
@@ -1047,6 +1071,62 @@ impl Broadcast {
             mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
         }
         bodies.len()
+    }
+
+    /// Which man, if any, the authored figure stands in for this frame.
+    ///
+    /// The nearest man to the lens who is actually running, inside the actor's
+    /// reach. A stationary man would be drawn in the bind pose, which on a
+    /// football field reads as a mannequin, and every clip in the file is
+    /// locomotion or a gesture.
+    #[cfg(feature = "authored")]
+    fn hero_slot(&self, camera: &Camera, bodies: &[RenderPlayer]) -> Option<usize> {
+        let actor = self.hero_actor.as_ref()?;
+        let mut nearest: Option<(usize, f32)> = None;
+        let mut carrying: Option<(usize, f32)> = None;
+        let forward = camera.forward();
+        for (i, p) in bodies.iter().enumerate() {
+            if p.speed < 0.30 {
+                continue;
+            }
+            // The nearest man to the lens is no good if he is behind it: on a
+            // hand camera parked in a pile, the nearest body to the glass was a
+            // lineman standing at the cameraman's shoulder, off the picture.
+            let to = Vec3::new(p.pos.x, p.pos.y, 1.0) - camera.pos;
+            let dist = to.length();
+            if dist > actor.within || to.dot(forward) <= 0.0 {
+                continue;
+            }
+            if nearest.map_or(true, |(_, d)| dist < d) {
+                nearest = Some((i, dist));
+            }
+            if p.carrying && carrying.map_or(true, |(_, d)| dist < d) {
+                carrying = Some((i, dist));
+            }
+        }
+        // The ball carrier first. He is the man the shot is about, and the one
+        // the lens is really on; everyone else is the crowd around him.
+        carrying.or(nearest).map(|(i, _)| i)
+    }
+
+    /// Fill a man's mesh with the authored figure: the clip his speed asks for,
+    /// sampled at the point of the stride he is in, standing where he stands.
+    #[cfg(feature = "authored")]
+    fn hero_into(actor: &crate::authored::HeroActor, p: &RenderPlayer, mesh: &mut Mesh) {
+        let clip = if p.speed > 0.45 {
+            actor.hero.clip_index("Running")
+        } else {
+            actor.hero.clip_index("Walking")
+        };
+        let joints = match clip {
+            Some(c) => {
+                let time = p.run_phase.rem_euclid(1.0) * actor.hero.clips[c].duration;
+                actor.hero.pose(c, time)
+            }
+            None => actor.hero.bind_pose(),
+        };
+        actor.hero.skin_into(&joints, actor.scale, mesh);
+        mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
     }
 
     /// The men themselves, drawn straight onto the canvas.
@@ -2408,6 +2488,80 @@ mod tests {
     /// the camera has to be on it for the whole flight -- not merely somewhere near
     /// where it left from. This walks a real pass frame by frame and projects the
     /// ball through the same lens the picture uses.
+    /// The hero takes the nearest man who is running, in front of the lens, and
+    /// the carrier before anyone else. Each of those clauses is a bug that was
+    /// in the first cut of this: a stationary man got a run clip, and a lineman
+    /// standing behind the hand camera took the figure off the picture.
+    #[cfg(feature = "authored")]
+    #[test]
+    fn a_hero_needs_a_moving_man_in_front_of_the_lens() {
+        use crate::authored::{Hero, HeroActor};
+        use std::sync::Arc;
+
+        let teams = league_teams();
+        let hero = Hero {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            uvs: Vec::new(),
+            joints: Vec::new(),
+            weights: Vec::new(),
+            indices: Vec::new(),
+            node_rest: Vec::new(),
+            node_parent: Vec::new(),
+            skin_joints: Vec::new(),
+            inverse_bind: Vec::new(),
+            clips: Vec::new(),
+            texture: Arc::new(Texture::new(1, 1, Rgb::BLACK)),
+            height: 1.7,
+        };
+        let mut b = Broadcast::new(64, 36, [teams[0].clone(), teams[1].clone()]);
+        let body = |at: Vec2, speed: f32, carrying: bool| RenderPlayer {
+            team: 0,
+            roster: 0,
+            pos: at,
+            heading: 0.0,
+            run_phase: 0.0,
+            speed,
+            carrying,
+            blocking: false,
+            hands: 0.0,
+            arms_up: 0.0,
+            down: false,
+            wrap: 0.0,
+            tackled: 0.0,
+            celebrate: 0.0,
+            motion: None,
+            motion_progress: 0.0,
+        };
+        // A lens at the origin looking down +X.
+        let cam = Camera::new(Vec3::new(0.0, 0.0, 1.5), 0.0, 0.0);
+        let ahead = body(Vec2::new(5.0, 0.0), 0.9, false);
+        assert!(
+            b.hero_slot(&cam, &[ahead.clone()]).is_none(),
+            "no hero was set and a man was replaced anyway"
+        );
+        b.set_hero(Some(HeroActor::new(Arc::new(hero), 1.9)));
+        assert_eq!(
+            b.hero_slot(&cam, &[ahead.clone()]),
+            Some(0),
+            "a man running in front of the lens was passed over"
+        );
+        assert!(
+            b.hero_slot(&cam, &[body(Vec2::new(5.0, 0.0), 0.05, false)]).is_none(),
+            "a man standing still was given a run clip"
+        );
+        assert!(
+            b.hero_slot(&cam, &[body(Vec2::new(-5.0, 0.0), 0.9, false)]).is_none(),
+            "a man behind the lens took the figure off the picture"
+        );
+        let carrier = body(Vec2::new(9.0, 0.0), 0.9, true);
+        assert_eq!(
+            b.hero_slot(&cam, &[ahead, carrier]),
+            Some(1),
+            "the ball carrier lost the figure to a nearer man"
+        );
+    }
+
     /// The ground picked on the front end has to reach the world, not just the
     /// label on the bug: the picture opens on the practice field, so the choice has
     /// to rebuild it.

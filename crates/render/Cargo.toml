@@ -21,3 +21,7 @@ authored = ["image/jpeg"]
 name = "hero"
 # The example links the loader, so it cannot be built without the feature.
 required-features = ["authored"]
+
+[[example]]
+name = "hero_shot"
+required-features = ["authored"]

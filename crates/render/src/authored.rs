@@ -417,8 +417,21 @@ impl Hero {
     /// the kit comes off the atlas the same way the procedural cloth comes off
     /// its own.
     pub fn skinned_mesh(&self, joints: &[Affine], scale: f32) -> Mesh {
-        let (pos, nor) = self.skin(joints, scale);
         let mut mesh = Mesh::with_capacity(self.indices.len() / 3);
+        self.skin_into(joints, scale, &mut mesh);
+        mesh
+    }
+
+    /// The same figure, built into a mesh that is already there.
+    ///
+    /// A hero dropped into a broadcast frame is rebuilt every frame, and every
+    /// rebuild wants the same triangles in the same buffer as the frame before.
+    /// The broadcast's own figures are filled this way; this is the same deal for
+    /// an authored one.
+    pub fn skin_into(&self, joints: &[Affine], scale: f32, mesh: &mut Mesh) {
+        let (pos, nor) = self.skin(joints, scale);
+        mesh.reuse();
+        mesh.tris.reserve(self.indices.len() / 3);
         mesh.textures.push(Arc::clone(&self.texture));
         for t in self.indices.chunks_exact(3) {
             let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
@@ -442,7 +455,32 @@ impl Hero {
                 tex: Some(0),
             });
         }
-        mesh
+    }
+}
+
+/// An authored figure dropped into a frame in place of one procedural man.
+///
+/// The broadcast builds every man from primitives. This says: when a man inside
+/// `within` yards of the lens is running, draw this character instead of him --
+/// skinned, standing on the same spot, turned to the same heading -- so nothing
+/// else in the frame has to know he is any different.
+///
+/// Only a moving man is replaced. A clip of a run on a body that is standing
+/// still reads as a mannequin, and the file is locomotion and gestures.
+pub struct HeroActor {
+    pub hero: Arc<Hero>,
+    /// The scale taking the file's own height to the height a man is on the
+    /// field.
+    pub scale: f32,
+    /// Yards from the lens inside which the nearest running man is replaced.
+    pub within: f32,
+}
+
+impl HeroActor {
+    /// A hero standing `height` render units tall -- a man is about 1.9.
+    pub fn new(hero: Arc<Hero>, height: f32) -> HeroActor {
+        let scale = if hero.height > 1e-3 { height / hero.height } else { 1.0 };
+        HeroActor { hero, scale, within: 14.0 }
     }
 }
 
