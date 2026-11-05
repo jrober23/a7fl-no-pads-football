@@ -1047,7 +1047,7 @@ impl Broadcast {
             #[cfg(feature = "authored")]
             if hero_at == Some(slot) {
                 if let Some(actor) = self.hero_actor.as_ref() {
-                    Self::hero_into(actor, p, mesh);
+                    Self::hero_into(actor, p, self.crowd_t, mesh);
                     continue;
                 }
             }
@@ -1075,18 +1075,19 @@ impl Broadcast {
 
     /// Which man, if any, the authored figure stands in for this frame.
     ///
-    /// The nearest man to the lens who is actually running, inside the actor's
-    /// reach. A stationary man would be drawn in the bind pose, which on a
-    /// football field reads as a mannequin, and every clip in the file is
-    /// locomotion or a gesture.
+    /// The nearest man to the lens inside the actor's reach, and the ball
+    /// carrier before anyone else. A man standing still is only a candidate
+    /// when the file carries an idle: without one he would be drawn in the bind
+    /// pose, which on a football field reads as a mannequin.
     #[cfg(feature = "authored")]
     fn hero_slot(&self, camera: &Camera, bodies: &[RenderPlayer]) -> Option<usize> {
         let actor = self.hero_actor.as_ref()?;
+        let stands_ok = crate::authored::idle_clip(&actor.hero).is_some();
         let mut nearest: Option<(usize, f32)> = None;
         let mut carrying: Option<(usize, f32)> = None;
         let forward = camera.forward();
         for (i, p) in bodies.iter().enumerate() {
-            if p.speed < 0.30 {
+            if p.speed < 0.30 && !stands_ok {
                 continue;
             }
             // The nearest man to the lens is no good if he is behind it: on a
@@ -1109,20 +1110,59 @@ impl Broadcast {
         carrying.or(nearest).map(|(i, _)| i)
     }
 
-    /// Fill a man's mesh with the authored figure: the clip his speed asks for,
-    /// sampled at the point of the stride he is in, standing where he stands.
+    /// The clip a man's state asks for, and the point of it to sample.
+    ///
+    /// A stride is driven by the phase he is in, so his feet stay with the
+    /// ground he is covering. Everything else -- an idle, a dance -- runs on the
+    /// frame clock instead: an idle held at one phase is a mannequin again, only
+    /// this time it is a mannequin with an idle clip.
     #[cfg(feature = "authored")]
-    fn hero_into(actor: &crate::authored::HeroActor, p: &RenderPlayer, mesh: &mut Mesh) {
-        let clip = if p.speed > 0.45 {
-            actor.hero.clip_index("Running")
+    fn hero_clip(
+        actor: &crate::authored::HeroActor,
+        p: &RenderPlayer,
+        clock: f32,
+    ) -> Option<(usize, f32)> {
+        let hero = &actor.hero;
+        let named = |names: &[&str]| names.iter().find_map(|n| hero.clip_index(n));
+        let dancing = if p.celebrate > 0.5 {
+            named(&["Hip_Hop_Dance_3", "Agree_Gesture"])
         } else {
-            actor.hero.clip_index("Walking")
+            None
         };
-        let joints = match clip {
-            Some(c) => {
-                let time = p.run_phase.rem_euclid(1.0) * actor.hero.clips[c].duration;
-                actor.hero.pose(c, time)
-            }
+        let running = named(&["Running", "RunFast"]);
+        let walking = named(&["Walking", "Casual_Walk"]);
+        let (clip, by_clock) = if let Some(c) = dancing {
+            (c, true)
+        } else if p.speed > 0.45 {
+            (running.or(walking)?, false)
+        } else if p.speed > 0.10 {
+            (walking.or(running)?, false)
+        } else if let Some(c) = crate::authored::idle_clip(hero) {
+            // Standing about: the idle is the whole reason he is allowed here.
+            (c, true)
+        } else {
+            (walking.or(running)?, true)
+        };
+        let duration = hero.clips[clip].duration.max(1e-3);
+        let time = if by_clock {
+            clock.rem_euclid(duration)
+        } else {
+            p.run_phase.rem_euclid(1.0) * duration
+        };
+        Some((clip, time))
+    }
+
+    /// Fill a man's mesh with the authored figure: the clip his state asks for,
+    /// standing where he stands.
+    #[cfg(feature = "authored")]
+    fn hero_into(
+        actor: &crate::authored::HeroActor,
+        p: &RenderPlayer,
+        clock: f32,
+        mesh: &mut Mesh,
+    ) {
+        let joints = match Self::hero_clip(actor, p, clock) {
+            Some((clip, time)) => actor.hero.pose(clip, time),
             None => actor.hero.bind_pose(),
         };
         actor.hero.skin_into(&joints, actor.scale, mesh);
@@ -2559,6 +2599,95 @@ mod tests {
             b.hero_slot(&cam, &[ahead, carrier]),
             Some(1),
             "the ball carrier lost the figure to a nearer man"
+        );
+    }
+
+    /// A file with an idle is allowed to stand about, and the clip the figure is
+    /// given follows the man: idle at rest, walk, run, and a dance when he is
+    /// celebrating.
+    #[cfg(feature = "authored")]
+    #[test]
+    fn an_idle_lets_the_hero_stand_and_be_celebrated() {
+        use crate::authored::{Clip, Hero, HeroActor};
+        use std::sync::Arc;
+
+        let teams = league_teams();
+        let clip = |name: &str, duration: f32| Clip {
+            name: name.to_string(),
+            duration,
+            channels: Vec::new(),
+            samplers: Vec::new(),
+        };
+        let hero = Arc::new(Hero {
+            positions: Vec::new(),
+            normals: Vec::new(),
+            uvs: Vec::new(),
+            joints: Vec::new(),
+            weights: Vec::new(),
+            indices: Vec::new(),
+            node_rest: Vec::new(),
+            node_parent: Vec::new(),
+            skin_joints: Vec::new(),
+            inverse_bind: Vec::new(),
+            clips: vec![
+                clip("Running", 0.6),
+                clip("Walking", 1.0),
+                clip("Idle_02", 1.9),
+                clip("Hip_Hop_Dance_3", 4.7),
+            ],
+            texture: Arc::new(Texture::new(1, 1, Rgb::BLACK)),
+            height: 1.7,
+        });
+        let at = |speed: f32, celebrate: f32| RenderPlayer {
+            team: 0,
+            roster: 0,
+            pos: Vec2::new(5.0, 0.0),
+            heading: 0.0,
+            run_phase: 0.0,
+            speed,
+            carrying: false,
+            blocking: false,
+            hands: 0.0,
+            arms_up: 0.0,
+            down: false,
+            wrap: 0.0,
+            tackled: 0.0,
+            celebrate,
+            motion: None,
+            motion_progress: 0.0,
+        };
+        let actor = HeroActor::new(Arc::clone(&hero), 1.9);
+        let played = |p: &RenderPlayer| {
+            let (c, _) = Broadcast::hero_clip(&actor, p, 0.7).expect("a clip to play");
+            hero.clips[c].name.clone()
+        };
+        assert_eq!(
+            played(&at(0.0, 0.0)),
+            "Idle_02",
+            "a man standing still was given a stride"
+        );
+        assert_eq!(
+            played(&at(0.2, 0.0)),
+            "Walking",
+            "a man walking was given the wrong clip"
+        );
+        assert_eq!(
+            played(&at(0.9, 0.0)),
+            "Running",
+            "a man running was given the wrong clip"
+        );
+        assert_eq!(
+            played(&at(0.9, 1.0)),
+            "Hip_Hop_Dance_3",
+            "a celebrating man kept running"
+        );
+        let mut b = Broadcast::new(64, 36, [teams[0].clone(), teams[1].clone()]);
+        b.set_hero(Some(actor));
+        let cam = Camera::new(Vec3::new(0.0, 0.0, 1.5), 0.0, 0.0);
+        assert_eq!(
+            b.hero_slot(&cam, &[at(0.0, 0.0)]),
+            Some(0),
+            "an idle in the file did not let a man stand in front of the lens"
         );
     }
 

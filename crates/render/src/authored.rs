@@ -458,6 +458,18 @@ impl Hero {
     }
 }
 
+/// The file's idle clip, if it has one.
+///
+/// The names are the ones the exports actually use: Meshy's rig packs an
+/// `Axe_Breathe_and_Look_Around`, and the Mixamo re-rig comes back with
+/// `Idle_02` and `Idle_5`. Nothing here assumes any of them exist -- a file of
+/// run cycles only answers `None`, and the caller falls back to its old rule.
+pub fn idle_clip(hero: &Hero) -> Option<usize> {
+    ["Idle_02", "Idle_5", "Idle", "Idle_01", "Axe_Breathe_and_Look_Around"]
+        .iter()
+        .find_map(|name| hero.clip_index(name))
+}
+
 /// An authored figure dropped into a frame in place of one procedural man.
 ///
 /// The broadcast builds every man from primitives. This says: when a man inside
