@@ -316,7 +316,10 @@ pub struct SimPlayer {
     /// How much of the lunge he has already covered this dive.
     pub dive_fly: f32,
     /// Whether the dive button has been let go since his last dive.
-    pub dive_armed: bool,
+    /// Ground already covered by the lunges chained into this one. A held
+    /// button keeps him diving; this is what makes the chain continuous instead
+    /// of restarting the curve at zero every window.
+    pub dive_base: f32,
     /// 0..1: how much his hands are up, working to get to the man with the ball.
     pub tackle_arms: f32,
     pub engaged: Option<usize>,
@@ -649,7 +652,7 @@ impl<'a> PlaySim<'a> {
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
                 dive_fly: 0.0,
-                dive_armed: true,
+                dive_base: 0.0,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -690,7 +693,7 @@ impl<'a> PlaySim<'a> {
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
                 dive_fly: 0.0,
-                dive_armed: true,
+                dive_base: 0.0,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -1600,7 +1603,9 @@ impl<'a> PlaySim<'a> {
         if ctl.throw && can_throw && self.t > SNAP_DELAY + 0.25 {
             if let Some(target) = ctl.target {
                 if !self.players[target].down {
-                    self.throw_to_with(i, Some(target), ctl.power);
+                    // The pad's arc means nothing to an AI arm: it throws a
+                    // normal pass, so the button's lob is the human's alone.
+                    self.throw_to_with(i, Some(target), 0.45);
                 }
             }
         }
@@ -1723,28 +1728,27 @@ impl<'a> PlaySim<'a> {
     ///
     /// The ball goes to the receiver the button named, and leading him is the
     /// sim's job, not the player's: a throw at a moving man is aimed where he
-    /// will be, not where he is. The meter decides only how hard it gets there --
-    /// the arm sets how far it can carry, so a soft throw dies in front of a man
-    /// too far downfield and a hard one carries over his head.
-    pub fn throw_plan(&self, qb: usize, target: usize, power: f32) -> ThrowPlan {
+    /// will be, not where he is. How far it carries is the arm and nothing else
+    /// -- the button is the arc now -- so a weak arm physically cannot reach a
+    /// man downfield and a strong one can, whatever the button is doing.
+    pub fn throw_plan(&self, qb: usize, target: usize, _touch: f32) -> ThrowPlan {
         let qb_pos = self.players[qb].pos;
-        let power = power.clamp(0.0, 1.0);
         let arm = self.attrs(qb).arm_strength();
         let receiver = self.players[target].pos;
-        let speed = 17.0 + arm * 0.5;
+        let speed = 16.0 + arm * 0.34;
         let rough = (receiver - qb_pos).length().max(0.1);
         let lead = self.players[target].vel * (rough / speed).clamp(0.25, 2.4) * 0.75;
         let wanted = receiver + lead;
         let offset = wanted - qb_pos;
         let distance = offset.length();
-        let reach = 9.0 + (arm * 0.42 + 8.0) * power;
+        let reach = 9.0 + arm * 0.62;
         let landing = qb_pos + offset.normalize_or_zero() * distance.min(reach);
         let landing = Vec2::new(
             clamp(landing.x, -field::ENDZONE_DEPTH, FIELD_LENGTH + field::ENDZONE_DEPTH),
             clamp(landing.y, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH),
         );
         let air_yards = ((landing.x - qb_pos.x) * self.dirf()).max(0.0);
-        let power_needed = ((distance - 9.0) / (arm * 0.42 + 8.0)).clamp(0.0, 1.0);
+        let power_needed = (distance / reach).clamp(0.0, 1.0);
         ThrowPlan {
             landing,
             air_yards,
@@ -1754,15 +1758,19 @@ impl<'a> PlaySim<'a> {
         }
     }
 
-    fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32) {
+    /// Send the ball to a man at a given arc. Public so the tests can measure
+    /// the flight without going through a pad.
+    pub fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32) {
         // A new throw is a new chance for somebody to get a hand on it.
         self.pass_contacted = false;
         let qb_pos = self.players[qb].pos;
-        let power = power.clamp(0.0, 1.0);
+        // The button is the arc, not the arm. It arrives here called power, but
+        // nothing below uses it for power any more.
+        let touch = power.clamp(0.0, 1.0);
 
         let (to, air, receiver) = match target {
             Some(t) => {
-                let plan = self.throw_plan(qb, t, power);
+                let plan = self.throw_plan(qb, t, touch);
                 let accuracy = self.attrs(qb).accuracy_factor();
                 let pressure = self.qb_pressure();
                 // A soft throw hangs and drifts; a rope arrives flat and can run
@@ -1771,7 +1779,7 @@ impl<'a> PlaySim<'a> {
                     + plan.air_yards * 0.024
                     + (1.0 - accuracy) * 1.4
                     + (2.5 - pressure).max(0.0) * 0.30
-                    + (1.0 - power * power) * 0.6;
+                    + touch * 0.35;
                 let err = Vec2::new(self.rng.gauss() * sigma, self.rng.gauss() * sigma * 0.85);
                 (plan.landing + err, plan.air_yards, Some(t))
             }
@@ -1788,23 +1796,19 @@ impl<'a> PlaySim<'a> {
         };
 
         let arm = self.attrs(qb).arm_strength();
-        // The meter is a range of passes, not one pass thrown harder. A tap is a
-        // floater: slow enough to watch, high enough to come down over a linebacker,
-        // and it hangs long enough that underthrowing a man is a real mistake. Held
-        // all the way down it is a rope. Squaring the meter keeps the soft end soft,
-        // which is the half of the range a hand actually plays in, and keeps the arm
-        // from turning every throw into a fastball — the old formula added the whole
-        // arm rating to the speed, so a strong quarterback could not throw softly at
-        // all.
-        let touch = power * power;
-        let speed = 7.0 + 22.0 * touch + arm * 0.10;
+        // The button shapes the flight; the arm gives it its speed. A tap puts
+        // the ball on a line between the receiver's hips and knees, held down it
+        // is the high one that comes down over a linebacker's hands, and what
+        // leaves his hand is his arm either way -- so a weak arm's lob hangs long
+        // enough to be played on, and a strong arm thrown flat is a rope.
+        let speed = (14.0 + arm * 0.34 - 5.0 * touch).max(9.0);
         // Time the flight on the grass the ball actually has to cover. Timing it on
         // the downfield component alone made a swing pass to the flat, which covers
         // twelve yards sideways and two downfield, arrive like a fastball -- and a
         // floater over the middle is the whole point of the soft end of the meter.
         let carry = (to - qb_pos).length().max(1.0);
         let dur = (carry / speed).clamp(0.35, 3.0);
-        let peak = 0.45 + carry * 0.12 + (1.0 - touch) * 1.9;
+        let peak = 0.5 + carry * 0.02 + touch * (2.0 + carry * 0.22);
         self.ball.flight = Some(Flight {
             from: qb_pos,
             to: Vec2::new(to.x, clamp(to.y, -FIELD_HALF_WIDTH, FIELD_HALF_WIDTH)),
@@ -2213,13 +2217,27 @@ impl<'a> PlaySim<'a> {
                     // back to its first sliver: chasing a runner with the button
                     // down left him piling up at the line instead of going
                     // anywhere. Letting go is what loads the next one.
+                    // He may chain them, and holding the button while he chases
+                    // does exactly that. What broke before was the seam: every
+                    // restart reset the ground already flown to zero, so the step
+                    // was measured from the wrong end of the curve and he stalled
+                    // at the end of each lunge -- press it near the line and he
+                    // got there, hold it in the open field and he stopped dead.
                     if !ctl.dive {
-                        self.players[i].dive_armed = true;
-                    }
-                    if ctl.dive && self.players[i].dive_armed && self.players[i].dive_t <= 0.0 {
-                        self.players[i].dive_armed = false;
-                        self.players[i].dive_t = DIVE_WINDOW;
+                        // Letting go lets the lungs fill: the next press is a
+                        // fresh lunge from a standstill, not a continuation.
+                        self.players[i].dive_base = 0.0;
                         self.players[i].dive_fly = 0.0;
+                    }
+                    if ctl.dive && self.players[i].dive_t <= 0.0 {
+                        self.players[i].dive_base = self.players[i].dive_fly;
+                        // Start the window one frame in. On its first frame a
+                        // lunge has flown nothing, so starting at the full window
+                        // gave every press -- and every chained lunge -- a frame
+                        // in which he did not move at all. That dead frame is the
+                        // stall the report felt.
+                        self.players[i].dive_t =
+                            (DIVE_WINDOW - dt.max(0.0)).max(DIVE_WINDOW * 0.5);
                         // He throws himself at the man with the ball, or at the
                         // ball if nobody has it yet. Leaving the aim at whatever
                         // the last dive left it as meant a press with no carrier
@@ -2254,7 +2272,8 @@ impl<'a> PlaySim<'a> {
                         // was slower than a walk and pressing dive read as the
                         // defender stopping dead.
                         let done = 1.0 - self.players[i].dive_t / DIVE_WINDOW;
-                        let flown = DIVE_LUNGE * (1.0 - (1.0 - done) * (1.0 - done));
+                        let flown = self.players[i].dive_base
+                            + DIVE_LUNGE * (1.0 - (1.0 - done) * (1.0 - done));
                         let step = (flown - self.players[i].dive_fly).max(0.0);
                         self.players[i].dive_fly = flown;
                         let aim = self.players[i].dive_aim;

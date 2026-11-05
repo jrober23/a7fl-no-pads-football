@@ -262,37 +262,56 @@ fn a_tackle_is_made_by_contact_and_a_dive_by_a_lunge() {
 }
 
 #[test]
-fn a_held_dive_button_does_not_re_arm_the_lunge() {
+fn a_held_dive_button_keeps_him_going() {
     let teams = league_teams();
     let mut sim = to_the_handoff(&teams[0], &teams[1], 41).expect("a run play");
     let carrier = sim.carrier.expect("the handoff");
-    // Four yards behind him and out of a tackle: the chase the button is for,
-    // and the one where holding it down used to reload the dive under his feet.
-    sim.players[7].pos = sim.players[carrier].pos - Vec2::new(4.0, 0.0);
+    // Twenty yards behind him, with the rest of the defence parked off the
+    // field: this is the open-field chase the button is for, and nothing here
+    // can end the play or knock him down while it is being measured.
+    sim.players[7].pos = sim.players[carrier].pos - Vec2::new(20.0, 0.0);
     sim.players[7].stun = 0.0;
+    sim.players[7].down = false;
     sim.players[7].dive_t = 0.0;
+    for i in 8..14 {
+        sim.players[i].pos = Vec2::new(sim.players[i].pos.x, 70.0);
+    }
     sim.set_human_defender(Some(7));
-    sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
-    let mut resets = 0;
+    let mut diving = 0;
+    let mut min_step = f32::MAX;
+    let mut total = 0.0;
     let mut frames = 0;
-    let mut last = sim.players[7].dive_fly;
     for _ in 0..60 {
-        if sim.result.is_some() {
+        if sim.result.is_some() || sim.players[7].down || sim.players[7].stun > 0.0 {
             break;
         }
+        // A pad reports the button every frame it is held, not once.
+        sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+        let was_diving = sim.players[7].dive_t > 0.0;
+        let before = sim.players[7].pos;
         sim.step(1.0 / 60.0);
         frames += 1;
-        let now = sim.players[7].dive_fly;
-        // A re-arm puts the lunge back to its first sliver. One press travels a
-        // lunge; a button that reloads itself travels one every window.
-        if now + 1e-4 < last {
-            resets += 1;
+        let step = (sim.players[7].pos - before).length();
+        if was_diving {
+            diving += 1;
+            min_step = min_step.min(step);
+            total += step;
         }
-        last = now;
     }
+    // One lunge is a third of a second. Holding the button for a second has to
+    // be more than one lunge, or it is dead in his hand the moment he leaves
+    // his feet -- which is what the report described.
     assert!(
-        frames >= 30,
-        "the play ended after {frames} frames, before the button was held a full second"
+        diving >= 24,
+        "held down, he was in the air for {diving} frames of {frames}: one lunge, not a chain"
     );
-    assert_eq!(resets, 0, "held down, the button re-armed the lunge {resets} times");
+    assert!(
+        total >= 1.9 * DIVE_LUNGE,
+        "a second of holding covered only {total:.2} yards"
+    );
+    // And the seam between two lunges must not be a dead frame.
+    assert!(
+        min_step > 0.001,
+        "he stopped dead mid-dive ({min_step:.4} yards in a frame)"
+    );
 }

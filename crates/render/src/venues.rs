@@ -193,8 +193,14 @@ struct City {
     pines: u8,
     /// Chimneys and stacks.
     stacks: u8,
-    /// A stretch of water beyond one stand.
-    water: bool,
+    /// What kind of water the ground sits on. The old flag put the same flat
+    /// band past the same stand on every ground, so a harbour and a lake were
+    /// the same picture in two colours.
+    water: Water,
+    /// What the ground outside the stands is made of.
+    ground: Ground,
+    /// How this city stands its towers up.
+    layout: Layout,
     /// A tall lit spire over the rest.
     spire: bool,
     /// The building the city is known by, standing over the downtown.
@@ -225,31 +231,72 @@ enum Landmark {
     CashRegister,
 }
 
+/// The water a ground sits on. Every one of these is drawn differently, not
+/// just tinted differently: an ocean runs to the horizon, a lake has a far bank
+/// and trees on it, a river has two banks and a bridge, and a harbour has a quay
+/// with boats moored to it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Water {
+    None,
+    Ocean,
+    Lake,
+    River,
+    Harbour,
+}
+
+/// The ground beyond the boards: what the city is built on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Ground {
+    Lawn,
+    Plaza,
+    Asphalt,
+    Dirt,
+    Sand,
+    Snow,
+}
+
+/// How a city's skyline is arranged. The tower count was always per-city; the
+/// arrangement was not, so sixteen different cities all stood their towers in
+/// the same line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Layout {
+    /// One tight knot of tall towers at one end of the far stand.
+    Cluster,
+    /// An unbroken wall of towers the whole length of the skyline.
+    Wall,
+    /// Towers all the way round: both stands and both ends.
+    Ring,
+    /// Two or three towers with a lot of sky between them.
+    Sparse,
+    /// Sheds, gantries and stacks instead of downtown.
+    Industrial,
+}
+
 fn cities() -> Vec<City> {
     fn hex(v: u32) -> Rgb {
         Rgb::hex(v)
     }
     vec![
         // North
-        City { suffix: "THE HARBOUR", landmark: Landmark::CustomHouse, blurb: "Brick rowhouses, a harbour full of masts, and the wind off the water.", towers: 3, brick: 6, palms: 0, pines: 0, stacks: 1, water: true, spire: false, sky: [hex(0x0A1428), hex(0x243A4E), hex(0x8A9AA0)] },
-        City { suffix: "FOUNDRY YARD", landmark: Landmark::Willis, blurb: "Steel over the old works: stacks, gantries and a train that never stops.", towers: 2, brick: 5, palms: 0, pines: 0, stacks: 4, water: false, spire: false, sky: [hex(0x141018), hex(0x3A2A2A), hex(0xB08A6A)] },
-        City { suffix: "ASSEMBLY GROUNDS", landmark: Landmark::Renaissance, blurb: "A factory town's field: brick, chimneys and the plant running nights.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: true, spire: false, sky: [hex(0x101820), hex(0x2E3C46), hex(0x93A3A6)] },
-        City { suffix: "NORTHWIND FIELD", landmark: Landmark::Foshay, blurb: "Glass towers joined by skybridges, and pines standing in the cold.", towers: 4, brick: 1, palms: 0, pines: 8, stacks: 0, water: true, spire: false, sky: [hex(0x081C2E), hex(0x1E3C56), hex(0xAFC4CE)] },
+        City { suffix: "THE HARBOUR", landmark: Landmark::CustomHouse, blurb: "Brick rowhouses, a harbour full of masts, and the wind off the water.", towers: 3, brick: 6, palms: 0, pines: 0, stacks: 1, water: Water::Harbour, ground: Ground::Plaza, layout: Layout::Wall, spire: false, sky: [hex(0x0A1428), hex(0x243A4E), hex(0x8A9AA0)] },
+        City { suffix: "FOUNDRY YARD", landmark: Landmark::Willis, blurb: "Steel over the old works: stacks, gantries and a train that never stops.", towers: 2, brick: 5, palms: 0, pines: 0, stacks: 4, water: Water::None, ground: Ground::Asphalt, layout: Layout::Industrial, spire: false, sky: [hex(0x141018), hex(0x3A2A2A), hex(0xB08A6A)] },
+        City { suffix: "ASSEMBLY GROUNDS", landmark: Landmark::Renaissance, blurb: "A factory town's field: brick, chimneys and the plant running nights.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: Water::River, ground: Ground::Asphalt, layout: Layout::Industrial, spire: false, sky: [hex(0x101820), hex(0x2E3C46), hex(0x93A3A6)] },
+        City { suffix: "NORTHWIND FIELD", landmark: Landmark::Foshay, blurb: "Glass towers joined by skybridges, and pines standing in the cold.", towers: 4, brick: 1, palms: 0, pines: 8, stacks: 0, water: Water::Lake, ground: Ground::Snow, layout: Layout::Cluster, spire: false, sky: [hex(0x081C2E), hex(0x1E3C56), hex(0xAFC4CE)] },
         // South
-        City { suffix: "FIREFLY PARK", landmark: Landmark::Pencil, blurb: "A warm night, glass towers, and the trees full of light.", towers: 4, brick: 2, palms: 0, pines: 6, stacks: 0, water: false, spire: false, sky: [hex(0x1A1030), hex(0x3E2A5E), hex(0xC79A8A)] },
-        City { suffix: "RIPTIDE SHORES", landmark: Landmark::Freedom, blurb: "Pastel hotels, palms over the walk, and the ocean past the boards.", towers: 3, brick: 1, palms: 10, pines: 0, stacks: 0, water: true, spire: false, sky: [hex(0x123C5E), hex(0x3E8FB0), hex(0xF6E9C9)] },
-        City { suffix: "RUSTLER RANCH", landmark: Landmark::Reunion, blurb: "Stockyards and derricks: low brick, tall steel, and a lot of sky.", towers: 3, brick: 5, palms: 0, pines: 0, stacks: 2, water: false, spire: false, sky: [hex(0x2E1A2E), hex(0x6E3E36), hex(0xE0A878)] },
-        City { suffix: "BRASS HALL", landmark: Landmark::TwinSpires, blurb: "Neon down the street, a lit spire over it, and music in the walls.", towers: 3, brick: 4, palms: 0, pines: 0, stacks: 1, water: true, spire: true, sky: [hex(0x181026), hex(0x3A2448), hex(0xC98E6A)] },
+        City { suffix: "FIREFLY PARK", landmark: Landmark::Pencil, blurb: "A warm night, glass towers, and the trees full of light.", towers: 4, brick: 2, palms: 0, pines: 6, stacks: 0, water: Water::None, ground: Ground::Lawn, layout: Layout::Cluster, spire: false, sky: [hex(0x1A1030), hex(0x3E2A5E), hex(0xC79A8A)] },
+        City { suffix: "RIPTIDE SHORES", landmark: Landmark::Freedom, blurb: "Pastel hotels, palms over the walk, and the ocean past the boards.", towers: 3, brick: 1, palms: 10, pines: 0, stacks: 0, water: Water::Ocean, ground: Ground::Sand, layout: Layout::Wall, spire: false, sky: [hex(0x123C5E), hex(0x3E8FB0), hex(0xF6E9C9)] },
+        City { suffix: "RUSTLER RANCH", landmark: Landmark::Reunion, blurb: "Stockyards and derricks: low brick, tall steel, and a lot of sky.", towers: 3, brick: 5, palms: 0, pines: 0, stacks: 2, water: Water::None, ground: Ground::Dirt, layout: Layout::Wall, spire: false, sky: [hex(0x2E1A2E), hex(0x6E3E36), hex(0xE0A878)] },
+        City { suffix: "BRASS HALL", landmark: Landmark::TwinSpires, blurb: "Neon down the street, a lit spire over it, and music in the walls.", towers: 3, brick: 4, palms: 0, pines: 0, stacks: 1, water: Water::River, ground: Ground::Plaza, layout: Layout::Wall, spire: true, sky: [hex(0x181026), hex(0x3A2448), hex(0xC98E6A)] },
         // East
-        City { suffix: "BEACON HEIGHTS", landmark: Landmark::Empire, blurb: "The city at night: a wall of windows and a light on top of it.", towers: 6, brick: 2, palms: 0, pines: 0, stacks: 0, water: true, spire: true, sky: [hex(0x080E22), hex(0x1A2A4E), hex(0x8E9AB6)] },
-        City { suffix: "ANVIL WORKS", landmark: Landmark::CityHallTower, blurb: "Brick, iron and a foundry glow: the oldest ground in the league.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: true, spire: false, sky: [hex(0x0E1218), hex(0x2A2E34), hex(0x9AA0A6)] },
-        City { suffix: "MONUMENT GROUNDS", landmark: Landmark::Obelisk, blurb: "Marble and glass, a lit obelisk, and the capital behind the stand.", towers: 3, brick: 2, palms: 0, pines: 4, stacks: 0, water: true, spire: true, sky: [hex(0x0A1626), hex(0x22364E), hex(0xB6BCC2)] },
-        City { suffix: "AVIATOR FIELD", landmark: Landmark::Crown, blurb: "Hangars and a control tower, with the city lights on the horizon.", towers: 3, brick: 3, palms: 0, pines: 5, stacks: 1, water: false, spire: false, sky: [hex(0x0C1A2E), hex(0x24405C), hex(0xA6B4BC)] },
+        City { suffix: "BEACON HEIGHTS", landmark: Landmark::Empire, blurb: "The city at night: a wall of windows and a light on top of it.", towers: 6, brick: 2, palms: 0, pines: 0, stacks: 0, water: Water::Harbour, ground: Ground::Plaza, layout: Layout::Cluster, spire: true, sky: [hex(0x080E22), hex(0x1A2A4E), hex(0x8E9AB6)] },
+        City { suffix: "ANVIL WORKS", landmark: Landmark::CityHallTower, blurb: "Brick, iron and a foundry glow: the oldest ground in the league.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: Water::River, ground: Ground::Asphalt, layout: Layout::Wall, spire: false, sky: [hex(0x0E1218), hex(0x2A2E34), hex(0x9AA0A6)] },
+        City { suffix: "MONUMENT GROUNDS", landmark: Landmark::Obelisk, blurb: "Marble and glass, a lit obelisk, and the capital behind the stand.", towers: 3, brick: 2, palms: 0, pines: 4, stacks: 0, water: Water::Lake, ground: Ground::Plaza, layout: Layout::Ring, spire: true, sky: [hex(0x0A1626), hex(0x22364E), hex(0xB6BCC2)] },
+        City { suffix: "AVIATOR FIELD", landmark: Landmark::Crown, blurb: "Hangars and a control tower, with the city lights on the horizon.", towers: 3, brick: 3, palms: 0, pines: 5, stacks: 1, water: Water::None, ground: Ground::Lawn, layout: Layout::Sparse, spire: false, sky: [hex(0x0C1A2E), hex(0x24405C), hex(0xA6B4BC)] },
         // West
-        City { suffix: "COMET BOWL", landmark: Landmark::PyramidHall, blurb: "Palms, hills and a city that runs all the way to the ridge.", towers: 5, brick: 1, palms: 8, pines: 0, stacks: 0, water: false, spire: false, sky: [hex(0x140E2A), hex(0x4A2E5E), hex(0xE0A070)] },
-        City { suffix: "SANDSTORM MESA", landmark: Landmark::Butte, blurb: "The desert at dusk: mesas, cactus and one bright strip of sky.", towers: 1, brick: 1, palms: 2, pines: 0, stacks: 0, water: false, spire: false, sky: [hex(0x2A1A38), hex(0x8A4A46), hex(0xE8B478)] },
-        City { suffix: "RAINMAKER FIELD", landmark: Landmark::Needle, blurb: "Pines, water and glass: the rain comes in off the sound.", towers: 4, brick: 1, palms: 0, pines: 9, stacks: 0, water: true, spire: false, sky: [hex(0x0C1A20), hex(0x223C44), hex(0x8AA4A8)] },
-        City { suffix: "ALTITUDE PARK", landmark: Landmark::CashRegister, blurb: "The mountains stand over the stand, and the ball carries up here.", towers: 2, brick: 1, palms: 0, pines: 8, stacks: 0, water: false, spire: false, sky: [hex(0x0A1A30), hex(0x244260), hex(0xC8D2DC)] },
+        City { suffix: "COMET BOWL", landmark: Landmark::PyramidHall, blurb: "Palms, hills and a city that runs all the way to the ridge.", towers: 5, brick: 1, palms: 8, pines: 0, stacks: 0, water: Water::Ocean, ground: Ground::Lawn, layout: Layout::Ring, spire: false, sky: [hex(0x140E2A), hex(0x4A2E5E), hex(0xE0A070)] },
+        City { suffix: "SANDSTORM MESA", landmark: Landmark::Butte, blurb: "The desert at dusk: mesas, cactus and one bright strip of sky.", towers: 1, brick: 1, palms: 2, pines: 0, stacks: 0, water: Water::None, ground: Ground::Dirt, layout: Layout::Sparse, spire: false, sky: [hex(0x2A1A38), hex(0x8A4A46), hex(0xE8B478)] },
+        City { suffix: "RAINMAKER FIELD", landmark: Landmark::Needle, blurb: "Pines, water and glass: the rain comes in off the sound.", towers: 4, brick: 1, palms: 0, pines: 9, stacks: 0, water: Water::Harbour, ground: Ground::Lawn, layout: Layout::Cluster, spire: false, sky: [hex(0x0C1A20), hex(0x223C44), hex(0x8AA4A8)] },
+        City { suffix: "ALTITUDE PARK", landmark: Landmark::CashRegister, blurb: "The mountains stand over the stand, and the ball carries up here.", towers: 2, brick: 1, palms: 0, pines: 8, stacks: 0, water: Water::None, ground: Ground::Snow, layout: Layout::Ring, spire: false, sky: [hex(0x0A1A30), hex(0x244260), hex(0xC8D2DC)] },
     ]
 }
 
@@ -259,6 +306,225 @@ fn cities() -> Vec<City> {
 
 
 /// A tower with windows on the face turned toward the field.
+/// The water a ground sits on, drawn as what it is. Four kinds, four pictures:
+/// an ocean with no far shore, a lake with a treed bank across it, a river with
+/// two banks and a bridge, and a harbour with a quay and masts in it.
+fn water(mesh: &mut Mesh, kind: Water, rand: &mut dyn FnMut() -> f32) {
+    match kind {
+        Water::None => {}
+        Water::Ocean => {
+            water_plane(mesh, -300.0, 400.0, -320.0, -40.0, Rgb::hex(0x1E4E66));
+            // Surf along the near edge, so it reads as a shore and not a car park.
+            mesh.quad_shaded(
+                Vec3::new(-300.0, -40.0, 0.021),
+                Vec3::new(400.0, -40.0, 0.021),
+                Vec3::new(400.0, -37.4, 0.021),
+                Vec3::new(-300.0, -37.4, 0.021),
+                Rgb::hex(0xC8DCE0),
+                1.0,
+            );
+        }
+        Water::Lake => {
+            water_plane(mesh, -46.0, 176.0, -168.0, -42.0, Rgb::hex(0x24506A).lerp(Rgb::hex(0x2E5A3A), 0.22));
+            // A far bank with trees on it. A lake is bounded, and that far shore
+            // is the whole difference between it and the sea.
+            mesh.quad_shaded(
+                Vec3::new(-46.0, -188.0, 0.008),
+                Vec3::new(176.0, -188.0, 0.008),
+                Vec3::new(176.0, -168.0, 0.008),
+                Vec3::new(-46.0, -168.0, 0.008),
+                Rgb::hex(0x27331F),
+                1.0,
+            );
+            let mut x = -40.0;
+            while x < 172.0 {
+                let h = 3.0 + rand() * 3.5;
+                mesh.tri(
+                    Vec3::new(x, -169.5, 0.0),
+                    Vec3::new(x + 4.5, -169.5, 0.0),
+                    Vec3::new(x + 2.2, -169.5, h),
+                    Rgb::hex(0x1E2A1A),
+                );
+                x += 5.0 + rand() * 5.0;
+            }
+        }
+        Water::River => {
+            water_plane(mesh, -300.0, 400.0, -84.0, -54.0, Rgb::hex(0x2A5468));
+            for y in [-54.0f32, -84.0] {
+                mesh.quad_shaded(
+                    Vec3::new(-300.0, y, 0.022),
+                    Vec3::new(400.0, y, 0.022),
+                    Vec3::new(400.0, y - 1.6, 0.022),
+                    Vec3::new(-300.0, y - 1.6, 0.022),
+                    Rgb::hex(0x4A4A44),
+                    1.0,
+                );
+            }
+            // A humpback bridge across it: a river has one, a lake does not.
+            let bx = 46.0;
+            mesh.quad_shaded(
+                Vec3::new(bx, -86.0, 0.3),
+                Vec3::new(bx + 7.0, -86.0, 0.3),
+                Vec3::new(bx + 7.0, -52.0, 0.3),
+                Vec3::new(bx, -52.0, 0.3),
+                Rgb::hex(0x5A5A54),
+                1.0,
+            );
+            for x in [bx, bx + 7.0] {
+                mesh.box_shaded(
+                    Vec3::new(x, -69.0, 1.9),
+                    Vec3::new(0.5, 0.5, 1.9),
+                    0.0,
+                    Rgb::hex(0x3A3A36),
+                    1.0,
+                );
+            }
+        }
+        Water::Harbour => {
+            water_plane(mesh, -40.0, 150.0, -92.0, -42.0, Rgb::hex(0x1A4A62));
+            // The quay along the near edge, then docks running out into the water
+            // with a boat alongside each one and her mast standing up over it.
+            mesh.box_shaded(
+                Vec3::new(55.0, -42.0, 0.6),
+                Vec3::new(95.0, 1.4, 0.6),
+                0.0,
+                Rgb::hex(0x55554E),
+                1.0,
+            );
+            for i in 0..4 {
+                let x = 4.0 + i as f32 * 30.0;
+                mesh.box_shaded(
+                    Vec3::new(x, -62.0, 0.5),
+                    Vec3::new(1.2, 16.0, 0.5),
+                    0.0,
+                    Rgb::hex(0x4A453C),
+                    1.0,
+                );
+                mesh.box_shaded(
+                    Vec3::new(x + 3.6, -60.0, 0.9),
+                    Vec3::new(2.0, 5.0, 0.9),
+                    0.0,
+                    Rgb::hex(0x8A8378),
+                    1.0,
+                );
+                mesh.cylinder(
+                    Vec3::new(x + 3.6, -60.0, 1.8),
+                    Vec3::new(x + 3.6, -60.0, 13.0),
+                    0.16,
+                    0.1,
+                    5,
+                    Rgb::hex(0xD8D2C0),
+                );
+            }
+        }
+    }
+}
+
+/// The ground beyond the boards: what the city is built on. The field texture
+/// only reaches the boards, so without this the town stands in a void.
+fn ground(mesh: &mut Mesh, kind: Ground, rand: &mut dyn FnMut() -> f32) {
+    let (base, edge) = match kind {
+        Ground::Lawn => (Rgb::hex(0x24331F), Rgb::hex(0x2B3A23)),
+        Ground::Plaza => (Rgb::hex(0x4A4A46), Rgb::hex(0x54544E)),
+        Ground::Asphalt => (Rgb::hex(0x26262A), Rgb::hex(0x2E2E33)),
+        Ground::Dirt => (Rgb::hex(0x5E4432), Rgb::hex(0x6A4E3A)),
+        Ground::Sand => (Rgb::hex(0x8A7A5E), Rgb::hex(0x93836A)),
+        Ground::Snow => (Rgb::hex(0x8E9AA6), Rgb::hex(0x9AA6B2)),
+    };
+    for (x0, x1, y0, y1) in [
+        (-300.0, 400.0, 31.0, 320.0),
+        (-300.0, 400.0, -320.0, -31.0),
+        (-300.0, -20.0, -31.0, 31.0),
+        (121.0, 400.0, -31.0, 31.0),
+    ] {
+        mesh.quad_shaded(
+            Vec3::new(x0, y0, -0.05),
+            Vec3::new(x1, y0, -0.05),
+            Vec3::new(x1, y1, -0.05),
+            Vec3::new(x0, y1, -0.05),
+            base,
+            1.0,
+        );
+    }
+    // Patches of the second tone, so the ground past the boards is not one flat
+    // colour under the sky.
+    for _ in 0..14 {
+        let x = -60.0 + rand() * 220.0;
+        let y = if rand() < 0.5 { -(36.0 + rand() * 30.0) } else { 36.0 + rand() * 30.0 };
+        let w = 4.0 + rand() * 10.0;
+        let d = 3.0 + rand() * 8.0;
+        mesh.quad_shaded(
+            Vec3::new(x, y, -0.04),
+            Vec3::new(x + w, y, -0.04),
+            Vec3::new(x + w, y + d, -0.04),
+            Vec3::new(x, y + d, -0.04),
+            edge,
+            1.0,
+        );
+    }
+}
+
+/// A canopy over one stand: a roof on columns, open at the sides and open above
+/// the field. This is what the practice and the final were supposed to be all
+/// along -- the old ones walled the whole site in and built a ceiling over the
+/// field, which from the broadcast lens reads as a warehouse with a field in it.
+/// `side` is -1 for the stand across from the lens, +1 for the near one.
+fn canopy(
+    mesh: &mut Mesh,
+    x0: f32,
+    x1: f32,
+    side: f32,
+    y_in: f32,
+    deck: Rgb,
+    fascia: Rgb,
+    column: Rgb,
+) {
+    let y_out = y_in + 16.4;
+    let z_in = 12.8;
+    let z_out = 18.6;
+    let mut x = x0;
+    while x < x1 {
+        let tone = if ((x - x0) / 8.0) as i32 % 2 == 0 { deck } else { deck.scale(1.10) };
+        mesh.quad_shaded(
+            Vec3::new(x, side * y_in, z_in),
+            Vec3::new(x + 8.0, side * y_in, z_in),
+            Vec3::new(x + 8.0, side * y_out, z_out),
+            Vec3::new(x, side * y_out, z_out),
+            tone,
+            1.0,
+        );
+        x += 8.0;
+    }
+    // The fascia along the open edge: the band a canopy shows the field.
+    mesh.quad_shaded(
+        Vec3::new(x0, side * y_in, z_in - 1.4),
+        Vec3::new(x1, side * y_in, z_in - 1.4),
+        Vec3::new(x1, side * y_in, z_in),
+        Vec3::new(x0, side * y_in, z_in),
+        fascia,
+        1.0,
+    );
+    // Columns down the back, standing on the top of the stand.
+    let mut x = x0 + 4.0;
+    while x < x1 {
+        mesh.box_shaded(
+            Vec3::new(x, side * (y_out - 1.2), 13.8),
+            Vec3::new(0.35, 0.35, 4.8),
+            0.0,
+            column,
+            1.0,
+        );
+        x += 16.0;
+    }
+    mesh.box_shaded(
+        Vec3::new((x0 + x1) * 0.5, side * (y_out - 0.9), z_out - 0.3),
+        Vec3::new((x1 - x0) * 0.5, 0.3, 0.3),
+        0.0,
+        column,
+        1.0,
+    );
+}
+
 fn tower(mesh: &mut Mesh, at: Vec3, half: Vec3, face: f32, color: Rgb, rand: &mut dyn FnMut() -> f32) {
     mesh.box_shaded(at, half, 0.0, color, 1.0);
     // A roof lip, so the boxes do not all end on the same hard line.
@@ -400,7 +666,7 @@ fn rock(mesh: &mut Mesh, at: Vec3, size: f32, color: Rgb, rand: &mut dyn FnMut()
     );
 }
 
-fn water(mesh: &mut Mesh, x0: f32, x1: f32, y0: f32, y1: f32, color: Rgb) {
+fn water_plane(mesh: &mut Mesh, x0: f32, x1: f32, y0: f32, y1: f32, color: Rgb) {
     mesh.quad_shaded(
         Vec3::new(x0, y0, 0.01),
         Vec3::new(x1, y0, 0.01),
@@ -824,127 +1090,32 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     }
 }
 
-/// A wall of tall windows: a sill below, a head above, and three courses of the
-/// night outside between them, with a mullion on each bay and a transom on each
-/// course line. The wall runs along x when `along_x`, and along y when not.
-fn window_band(
-    mesh: &mut Mesh,
-    along_x: bool,
-    at: f32,
-    from: f32,
-    to: f32,
-    z_sill: f32,
-    z_head: f32,
-) {
-    // The night outside, brighter than the wall it sits in, so the band reads
-    // as glass from the far end of the building and not as a painted stripe.
-    let night = [
-        Rgb::hex(0x35485C),
-        Rgb::hex(0x4E6E86),
-        Rgb::hex(0x7496AE),
-    ];
-    let frame = Rgb::hex(0x1E242C);
-    let p = |s: f32, z: f32| {
-        if along_x {
-            Vec3::new(s, at, z)
-        } else {
-            Vec3::new(at, s, z)
-        }
-    };
-    let courses = night.len() as f32;
-    // The glass, in courses: darkest at the floor, opening up toward the roof.
-    for (i, tone) in night.iter().enumerate() {
-        let za = z_sill + (z_head - z_sill) * i as f32 / courses;
-        let zb = z_sill + (z_head - z_sill) * (i as f32 + 1.0) / courses;
-        mesh.quad_shaded(p(from, za), p(to, za), p(to, zb), p(from, zb), *tone, 1.0);
-    }
-    let len = (to - from).abs();
-    // A mullion on each bay, and a transom on each course line.
-    let bays = (len / 9.0).round().max(1.0);
-    for i in 0..=bays as usize {
-        let s = from + (to - from) * i as f32 / bays;
-        let half = if along_x {
-            Vec3::new(0.3, 0.2, (z_head - z_sill) * 0.5)
-        } else {
-            Vec3::new(0.2, 0.3, (z_head - z_sill) * 0.5)
-        };
-        mesh.box_shaded(p(s, (z_sill + z_head) * 0.5), half, 0.0, frame, 1.0);
-    }
-    for i in 0..=night.len() {
-        let z = z_sill + (z_head - z_sill) * i as f32 / courses;
-        let half = if along_x {
-            Vec3::new(len * 0.5, 0.2, 0.16)
-        } else {
-            Vec3::new(0.2, len * 0.5, 0.16)
-        };
-        mesh.box_shaded(p((from + to) * 0.5, z), half, 0.0, frame, 1.0);
-    }
-}
 
-/// The practice with the roof on: four walls and a ceiling over the whole site,
-/// nothing in the seats, and a band of big windows down both sides and through
-/// both ends — the kind of glass a modern indoor stadium has, tall enough to
-/// show the night rather than a slit of it. The lens sits under the roof, so the
-/// ceiling is above the camera rather than in front of it.
+
 fn closed_practice(mesh: &mut Mesh) {
-    let steel = Rgb::hex(0x39424E);
-    let wall = Rgb::hex(0x2A323C);
-    let x0 = -30.0f32;
-    let x1 = 130.0f32;
-    let y = 34.0f32;
-    let z_top = 46.0f32;
-    // The ceiling, in panels, so it reads as a roof rather than a flat plate.
-    let mut x = x0;
-    while x < x1 {
-        let tone = if ((x - x0) / 10.0) as i32 % 2 == 0 { steel } else { steel.scale(1.12) };
-        mesh.quad_shaded(
-            Vec3::new(x, -y, z_top),
-            Vec3::new(x + 10.0, -y, z_top),
-            Vec3::new(x + 10.0, y, z_top),
-            Vec3::new(x, y, z_top),
-            tone,
-            1.0,
-        );
-        // A beam on the underside of each seam.
-        mesh.box_shaded(
-            Vec3::new(x, 0.0, z_top - 0.35),
-            Vec3::new(0.3, y, 0.35),
-            0.0,
-            Rgb::hex(0x1E242C),
-            1.0,
-        );
-        x += 10.0;
-    }
-    // Walls from the top of the bowl to the roof, on all four sides, with the
-    // window band through the middle of them. The ends get the taller glass.
-    let z_sill = 12.0f32;
-    let z_head = 40.0f32;
-    for side in [-1.0f32, 1.0] {
-        window_band(mesh, true, side * y, x0, x1, z_sill, z_head);
-        for (z0, z1) in [(9.0f32, z_sill), (z_head, z_top)] {
-            mesh.quad_shaded(
-                Vec3::new(x0, side * y, z0),
-                Vec3::new(x1, side * y, z0),
-                Vec3::new(x1, side * y, z1),
-                Vec3::new(x0, side * y, z1),
-                wall,
-                1.0,
-            );
-        }
-    }
-    for (x, flip) in [(x0, 1.0f32), (x1, -1.0)] {
-        window_band(mesh, false, x, -y, y, 6.0, z_head);
-        for (z0, z1) in [(3.0f32, 6.0), (z_head, z_top)] {
-            mesh.quad_shaded(
-                Vec3::new(x, -y, z0),
-                Vec3::new(x, y, z0),
-                Vec3::new(x, y, z1),
-                Vec3::new(x, -y, z1),
-                wall.scale(if flip > 0.0 { 1.0 } else { 0.9 }),
-                1.0,
-            );
-        }
-    }
+    // Canopies over the two stands and open sky over the field. The ends are open
+    // too: it is a covered ground, not a building with a field inside it.
+    canopy(
+        mesh,
+        -18.0,
+        118.0,
+        -1.0,
+        HALF_WIDTH + 4.6,
+        Rgb::hex(0x3E4652),
+        Rgb::hex(0x2A323C),
+        Rgb::hex(0x232A33),
+    );
+    // The near stand's canopy starts further back, clear of the broadcast lens.
+    canopy(
+        mesh,
+        -18.0,
+        118.0,
+        1.0,
+        HALF_WIDTH + 13.0,
+        Rgb::hex(0x39414D),
+        Rgb::hex(0x272E37),
+        Rgb::hex(0x202730),
+    );
 }
 
 /// A low block with window courses: the downtown between the towers, the kind
@@ -1259,24 +1430,101 @@ fn landmark(
 }
 
 fn city_scenery(city: City, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
-    if city.water {
-        water(mesh, -30.0, 130.0, -78.0, -40.0, Rgb::hex(0x1E4E66));
-    }
-    // The far side: the city, seen over the stand.
-    let mut x = -34.0;
-    for i in 0..city.towers {
-        let w = 3.0 + rand() * 4.0;
-        let h = 9.0 + rand() * 15.0 + i as f32 * 1.4;
-        let y = -(44.0 + rand() * 16.0);
-        tower(
-            mesh,
-            Vec3::new(x, y, 0.0) + Vec3::new(0.0, 0.0, h * 0.5),
-            Vec3::new(w, 3.0 + rand() * 2.0, h * 0.5),
-            1.0,
-            teams[0].primary.lerp(Rgb::hex(0x2A3440), 0.45),
-            rand,
-        );
-        x += w * 2.0 + 2.0 + rand() * 4.0;
+    ground(mesh, city.ground, rand);
+    water(mesh, city.water, rand);
+    // Where the towers stand is the city's own shape. The counts were always
+    // per-city; the arrangement was not, so sixteen cities all looked like the
+    // same skyline in a different colour.
+    let tint = teams[0].primary.lerp(Rgb::hex(0x2A3440), 0.45);
+    match city.layout {
+        Layout::Wall => {
+            let n = city.towers.max(3) as usize;
+            for i in 0..n {
+                let w = 3.0 + rand() * 3.0;
+                let h = 11.0 + rand() * 13.0;
+                let x = -30.0 + i as f32 * (146.0 / n as f32);
+                tower(
+                    mesh,
+                    Vec3::new(x, -(46.0 + rand() * 4.0), h * 0.5),
+                    Vec3::new(w, 3.6, h * 0.5),
+                    1.0,
+                    tint,
+                    rand,
+                );
+            }
+        }
+        Layout::Cluster => {
+            let n = city.towers.max(3) as usize;
+            for i in 0..n {
+                let w = 3.0 + rand() * 4.0;
+                let h = 15.0 + rand() * 17.0;
+                let x = 14.0 + i as f32 * (6.0 + rand() * 3.0);
+                tower(
+                    mesh,
+                    Vec3::new(x, -(44.0 + rand() * 9.0), h * 0.5),
+                    Vec3::new(w, 3.0 + rand() * 2.0, h * 0.5),
+                    1.0,
+                    tint,
+                    rand,
+                );
+            }
+        }
+        Layout::Ring => {
+            let n = city.towers.max(4) as usize;
+            for i in 0..n {
+                let h = 12.0 + rand() * 14.0;
+                let w = 3.0 + rand() * 4.0;
+                let half = Vec3::new(w, 3.0, h * 0.5);
+                match i % 4 {
+                    0 => tower(mesh, Vec3::new(-34.0, -20.0 + i as f32 * 9.0, h * 0.5), half, -1.0, tint, rand),
+                    1 => tower(mesh, Vec3::new(122.0 + rand() * 8.0, -20.0 + i as f32 * 8.0, h * 0.5), half, 1.0, tint, rand),
+                    2 => tower(mesh, Vec3::new(-20.0 + i as f32 * 16.0, -(48.0 + rand() * 6.0), h * 0.5), half, 1.0, tint, rand),
+                    _ => tower(mesh, Vec3::new(-20.0 + i as f32 * 16.0, 48.0 + rand() * 6.0, h * 0.5), half, -1.0, tint, rand),
+                }
+            }
+        }
+        Layout::Sparse => {
+            for i in 0..2 {
+                let w = 4.0 + rand() * 3.0;
+                let h = 8.0 + rand() * 6.0;
+                let x = -20.0 + i as f32 * 78.0 + rand() * 18.0;
+                tower(
+                    mesh,
+                    Vec3::new(x, -(58.0 + rand() * 16.0), h * 0.5),
+                    Vec3::new(w, 3.4, h * 0.5),
+                    1.0,
+                    tint,
+                    rand,
+                );
+            }
+        }
+        Layout::Industrial => {
+            // Sheds with sawtooth roofs instead of downtown: the works the brick
+            // and the stacks are already standing in.
+            let mut x = -34.0;
+            while x < 140.0 {
+                let w = 8.0 + rand() * 8.0;
+                let y = -(52.0 + rand() * 8.0);
+                mesh.box_shaded(
+                    Vec3::new(x + w * 0.5, y, 3.0),
+                    Vec3::new(w * 0.5, 8.0, 3.0),
+                    0.0,
+                    tint.scale(0.75),
+                    1.0,
+                );
+                let mut t = x;
+                while t < x + w {
+                    mesh.tri(
+                        Vec3::new(t, y + 8.0, 6.0),
+                        Vec3::new(t + 3.0, y + 8.0, 6.0),
+                        Vec3::new(t + 3.0, y + 8.0, 8.2),
+                        tint.scale(0.6),
+                    );
+                    t += 3.0;
+                }
+                x += w + 6.0 + rand() * 8.0;
+            }
+        }
     }
     if city.spire {
         let at = Vec3::new(138.0, 12.0, 0.0);
@@ -1787,7 +2035,7 @@ fn beach(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
         Rgb::hex(0xB49A6A),
         1.0,
     );
-    water(mesh, -220.0, 340.0, -180.0, -SHORE, Rgb::hex(0x1E8AA8));
+    water_plane(mesh, -220.0, 340.0, -180.0, -SHORE, Rgb::hex(0x1E8AA8));
     // Breakers: three white lines out from the beach.
     for (i, y) in [-34.0f32, -44.0, -58.0].iter().enumerate() {
         let w = 0.8 - i as f32 * 0.2;
@@ -1984,72 +2232,30 @@ fn championship(teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn FnMut() -> f3
     championship_roof(mesh, teams);
 }
 
-/// The roof on the final: a ceiling over the whole site, walls up from the top of
-/// both stands, and the two clubs' colours running round the building. The lens
-/// sits under it, so it is above the camera rather than in front of it.
 fn championship_roof(mesh: &mut Mesh, teams: &[Team; 2]) {
-    let x0 = -30.0f32;
-    let x1 = 130.0f32;
-    let y = 34.0f32;
-    let z_top = 46.0f32;
     let gold = Rgb::hex(0xE8C46A);
-    let dim = Rgb::hex(0x1A1420);
-    let panel = Rgb::hex(0x241B2E);
-    let mut x = x0;
-    while x < x1 {
-        let tone = if ((x - x0) / 10.0) as i32 % 2 == 0 { dim } else { panel };
-        mesh.quad_shaded(
-            Vec3::new(x, -y, z_top),
-            Vec3::new(x + 10.0, -y, z_top),
-            Vec3::new(x + 10.0, y, z_top),
-            Vec3::new(x, y, z_top),
-            tone,
-            1.0,
-        );
-        mesh.box_shaded(
-            Vec3::new(x, 0.0, z_top - 0.35),
-            Vec3::new(0.3, y, 0.35),
-            0.0,
-            Rgb::hex(0x120E18),
-            1.0,
-        );
-        x += 10.0;
-    }
-    // Both sidelines, painted end to end in the two clubs' colours.
-    for side in [-1.0f32, 1.0] {
-        for (from, to, color) in [
-            (x0, 50.0f32, teams[0].primary),
-            (50.0f32, x1, teams[1].primary),
-        ] {
-            mesh.quad_shaded(
-                Vec3::new(from, side * y, 9.0),
-                Vec3::new(to, side * y, 9.0),
-                Vec3::new(to, side * y, z_top),
-                Vec3::new(from, side * y, z_top),
-                color,
-                1.0,
-            );
-        }
-        mesh.quad_shaded(
-            Vec3::new(x0, side * y, 8.4),
-            Vec3::new(x1, side * y, 8.4),
-            Vec3::new(x1, side * y, 9.0),
-            Vec3::new(x0, side * y, 9.0),
-            gold,
-            1.0,
-        );
-    }
-    // And both ends, so the ground is a closed room.
-    for x in [x0, x1] {
-        mesh.quad_shaded(
-            Vec3::new(x, -y, 9.0),
-            Vec3::new(x, y, 9.0),
-            Vec3::new(x, y, z_top),
-            Vec3::new(x, -y, z_top),
-            panel,
-            1.0,
-        );
-    }
+    // The final is played under canopies too, in both clubs' colours, with the
+    // field open to the night above it.
+    canopy(
+        mesh,
+        -20.0,
+        120.0,
+        -1.0,
+        HALF_WIDTH + 4.6,
+        teams[0].primary.lerp(Rgb::hex(0x2A2030), 0.35),
+        gold,
+        Rgb::hex(0x241B2E),
+    );
+    canopy(
+        mesh,
+        -20.0,
+        120.0,
+        1.0,
+        HALF_WIDTH + 13.0,
+        teams[1].primary.lerp(Rgb::hex(0x2A2030), 0.35),
+        gold,
+        Rgb::hex(0x241B2E),
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -2233,5 +2439,108 @@ mod tests {
                 b.stand_triangles()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod venue_tests {
+    use super::*;
+
+    fn teams() -> [Team; 2] {
+        let c = nopads_core::team::league_teams();
+        [c[0].clone(), c[1].clone()]
+    }
+
+    fn build(kind: Kind) -> Mesh {
+        let mut mesh = Mesh::new();
+        let mut n = 0.0f32;
+        let mut rand = move || {
+            n += 1.0;
+            (n * 0.618_034).fract()
+        };
+        let venue = match kind {
+            Kind::Home(k) => Venue { index: HOME_START + k },
+            other => Venue {
+                index: match other {
+                    Kind::Practice => 0,
+                    Kind::ClosedPractice => 1,
+                    Kind::Underwater => 18,
+                    Kind::Outback => 19,
+                    Kind::Beach => 20,
+                    Kind::Championship => 21,
+                    Kind::Home(_) => unreachable!(),
+                },
+            },
+        };
+        scenery(venue, &teams(), &mut mesh, &mut rand);
+        mesh
+    }
+
+    /// The practice and the final are covered grounds, not buildings: the seats
+    /// are under a canopy and the field itself is open to the sky. The versions
+    /// that shipped before this walled the whole site in and put a ceiling over
+    /// the middle of the field, which is what the report was about.
+    #[test]
+    fn nothing_is_roofed_over_the_field() {
+        for kind in [Kind::ClosedPractice, Kind::Championship] {
+            let mesh = build(kind);
+            let over = mesh
+                .tris
+                .iter()
+                .filter(|t| {
+                    // A roof is a large face. The final's confetti hangs over
+                    // the field too, and a 0.35-yard scrap of paper is not a
+                    // ceiling.
+                    let wide = (t.a.x - t.b.x).abs().max((t.a.y - t.b.y).abs()) > 2.0
+                        || (t.b.x - t.c.x).abs().max((t.b.y - t.c.y).abs()) > 2.0
+                        || (t.c.x - t.a.x).abs().max((t.c.y - t.a.y).abs()) > 2.0;
+                    wide && [t.a, t.b, t.c].iter().all(|p| {
+                        (-10.0..=130.0).contains(&p.x) && p.y.abs() < HALF_WIDTH && p.z > 12.2
+                    })
+                })
+                .count();
+            assert_eq!(
+                over, 0,
+                "{kind:?} still has {over} triangles roofed over the field"
+            );
+        }
+    }
+
+    /// ...and the canopy really is there, over the stand and not over the play.
+    #[test]
+    fn the_practice_ground_is_covered_over_the_stands() {
+        let mesh = build(Kind::ClosedPractice);
+        let roof = mesh
+            .tris
+            .iter()
+            .filter(|t| {
+                [t.a, t.b, t.c]
+                    .iter()
+                    .all(|p| p.y.abs() > HALF_WIDTH && p.z > 12.5)
+            })
+            .count();
+        assert!(roof > 40, "the covered practice has only {roof} roof triangles");
+    }
+
+    /// Every city has its own water, its own ground and its own skyline shape.
+    /// They used to differ only in colour and in how many towers a counter felt
+    /// like, which is why a harbour and a lake looked like the same place.
+    #[test]
+    fn no_two_city_grounds_are_built_the_same_way() {
+        let cities = cities();
+        assert_eq!(cities.len(), 16, "the league has sixteen home grounds");
+        let mut seen = std::collections::HashSet::new();
+        for c in &cities {
+            let key = (c.water, c.ground, c.layout);
+            assert!(
+                seen.insert(key),
+                "{} is the same ground as another city ({key:?})",
+                c.suffix
+            );
+        }
+        let waters: std::collections::HashSet<_> = cities.iter().map(|c| c.water).collect();
+        let layouts: std::collections::HashSet<_> = cities.iter().map(|c| c.layout).collect();
+        assert!(waters.len() >= 4, "only {} kinds of water in the league", waters.len());
+        assert!(layouts.len() >= 4, "only {} skyline shapes in the league", layouts.len());
     }
 }

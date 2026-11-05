@@ -187,7 +187,7 @@ fn a_human_snap_is_booked_by_the_game() {
 }
 
 #[test]
-fn a_soft_throw_comes_down_short_of_the_man() {
+fn the_button_shapes_the_arc_and_the_arm_sets_the_range() {
     let teams = league_teams();
     let book = playbook();
     let defs = defensive_playbook();
@@ -200,7 +200,7 @@ fn a_soft_throw_comes_down_short_of_the_man() {
         sim.step(1.0 / 60.0);
     }
 
-    // The deepest man, so there is room to test an underthrow.
+    // The deepest man, so the throw has room to be a real one.
     let targets = sim.eligible_targets();
     let deep = targets
         .iter()
@@ -214,21 +214,46 @@ fn a_soft_throw_comes_down_short_of_the_man() {
         })
         .expect("eligible receivers");
 
-    let soft = sim.throw_plan(sim.qb, deep, 0.05);
-    let hard = sim.throw_plan(sim.qb, deep, 1.0);
+    // How far he can throw is his arm. The button must not change the plan at
+    // all any more -- that is the whole revamp: the old meter threw the ball
+    // shorter the softer it was pressed, which is not how a pass works.
+    let tap = sim.throw_plan(sim.qb, deep, 0.0);
+    let rope = sim.throw_plan(sim.qb, deep, 1.0);
+    assert!(
+        (tap.reach - rope.reach).abs() < 0.01,
+        "the button still changes how far he can throw ({:.2} vs {:.2})",
+        tap.reach,
+        rope.reach
+    );
+    assert!(
+        tap.landing.dist(rope.landing) < 0.01,
+        "the button still aims the ball short of the man"
+    );
 
-    assert!(soft.reach < hard.reach, "a tap threw further than a rope");
+    // And what the button *does* set is the arc: a tap is a line drive, a held
+    // button is the lob that comes down over a linebacker.
+    let flight = |s: &nopads_core::sim::PlaySim| {
+        s.ball
+            .flight
+            .as_ref()
+            .map(|f| (f.peak, f.speed))
+            .expect("a pass in the air")
+    };
+    sim.throw_to_with(sim.qb, Some(deep), 0.18);
+    let (flat_peak, flat_speed) = flight(&sim);
+    sim.throw_to_with(sim.qb, Some(deep), 1.0);
+    let (lob_peak, lob_speed) = flight(&sim);
     assert!(
-        soft.distance > soft.reach + 1.0,
-        "no receiver was deep enough to underthrow: {:?}",
-        soft
+        lob_peak > flat_peak * 1.6,
+        "holding it did not loft the ball ({flat_peak:.2} ft -> {lob_peak:.2} ft)"
     );
+    assert!(flat_speed > lob_speed, "the lob was not the slower ball");
+    // Both came off the same arm, so the button can only cost the lob a little
+    // speed. It must not be the thing deciding the arm.
     assert!(
-        soft.landing.dist(sim.qb_pos()) < hard.landing.dist(sim.qb_pos()) - 2.0,
-        "the soft throw did not come down short"
+        (flat_speed - lob_speed).abs() < 6.0,
+        "the button, not the arm, set the speed ({flat_speed:.1} vs {lob_speed:.1})"
     );
-    // A full-weight throw gets there, which is what the meter is for.
-    assert!(hard.distance <= hard.reach + 0.01, "a full arm should reach him");
 }
 
 #[test]

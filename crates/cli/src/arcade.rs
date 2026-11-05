@@ -58,9 +58,6 @@ const DEAD_BALL_SKIP: Duration = Duration::from_millis(520);
 const CHARGE_TIME: f32 = 1.05;
 /// Even a short hold throws the ball; it just does not throw it far.
 const MIN_POWER: f32 = 0.18;
-/// A press shorter than this is not a throw at all: it is a pump fake. Tap the
-/// same receiver twice and the quarterback pumps twice.
-const PUMP_TAP: f32 = 0.16;
 /// How long the picture holds while an interception turns it round.
 const TURNAROUND: Duration = Duration::from_millis(700);
 /// How many cards an audible shows at once over the field.
@@ -2900,7 +2897,8 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
 
         // Holding a receiver's button winds the pass up. The ball goes to the man
         // the button names, led by the sim rather than by the stick, so the only
-        // thing being decided here is how hard it gets there.
+        // thing being decided here is how high it comes down: a tap is a line
+        // drive, a long hold is the lob over the middle. The arm sets the speed.
         if let Some((slot, held_for)) = self.charge {
             if slot >= self.targets.len() {
                 self.charge = None;
@@ -2918,14 +2916,11 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
         let mut release: Option<(usize, f32)> = None;
         if let Some((slot, held_for)) = self.charge {
             if !held[slot] {
-                if held_for < PUMP_TAP {
-                    // A tap is not a throw: the arm comes forward and the ball
-                    // stays in his hand. Tap twice and he pumps twice.
-                    sim.pump_fake();
-                } else {
-                    let power = (held_for / CHARGE_TIME).clamp(MIN_POWER, 1.0);
-                    release = Some((self.targets[slot].1, power));
-                }
+                // A tap is now the lowest pass in the game -- hips and knees --
+                // rather than a pump fake, which is what the user asked for. The
+                // hold sets the arc from there.
+                let power = (held_for / CHARGE_TIME).clamp(MIN_POWER, 1.0);
+                release = Some((self.targets[slot].1, power));
                 self.charge = None;
             }
         }
