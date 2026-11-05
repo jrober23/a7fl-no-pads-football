@@ -34,12 +34,14 @@ pub enum Kind {
     Outback,
     /// The ocean down one side, a hotel down the other.
     Beach,
+    /// A ground built on the deck of a yacht, under way.
+    Yacht,
     /// The league's final: both clubs in both end zones.
     Championship,
 }
 
 /// How many grounds the picker offers.
-pub const COUNT: usize = 22;
+pub const COUNT: usize = 23;
 
 const HOME_START: usize = 2;
 
@@ -65,6 +67,7 @@ impl Venue {
             18 => Kind::Underwater,
             19 => Kind::Outback,
             20 => Kind::Beach,
+            21 => Kind::Yacht,
             _ => Kind::Championship,
         }
     }
@@ -81,6 +84,7 @@ impl Venue {
             Kind::Underwater => "THE DEEP".to_string(),
             Kind::Outback => "THE BACK OF BEYOND".to_string(),
             Kind::Beach => "THE STRAND".to_string(),
+            Kind::Yacht => "THE YACHT".to_string(),
             Kind::Championship => "THE CHAMPIONSHIP".to_string(),
         }
     }
@@ -97,6 +101,7 @@ impl Venue {
             Kind::Underwater => "A CLEAR DOME ON THE SEA BED".to_string(),
             Kind::Outback => "RED DIRT, NO NEIGHBOURS".to_string(),
             Kind::Beach => "OCEAN ONE SIDE, HOTEL THE OTHER".to_string(),
+            Kind::Yacht => "AT SEA, UNDER WAY".to_string(),
             Kind::Championship => "BOTH END ZONES, BOTH CLUBS".to_string(),
         }
     }
@@ -110,6 +115,7 @@ impl Venue {
             Kind::Underwater => "A clear dome on the sand: coral heads, kelp standing in the current, and the fish swimming past.",
             Kind::Outback => "A field cut into the red earth, with the mesas on the horizon.",
             Kind::Beach => "Breakers down one sideline, a hotel down the other, palms over both.",
+            Kind::Yacht => "A ground on the deck of a yacht: teak under the stands, the sea below the hull, and the bow ahead of the end zone.",
             Kind::Championship => "The final: both clubs painted into both end zones.",
         }
     }
@@ -132,6 +138,7 @@ impl Venue {
             Kind::Underwater => [Rgb::hex(0x02121C), Rgb::hex(0x0B5570), Rgb::hex(0x2FA8C0)],
             Kind::Outback => [Rgb::hex(0x3E7FB5), Rgb::hex(0xD9A66B), Rgb::hex(0xE8C08A)],
             Kind::Beach => [Rgb::hex(0x1E7FC4), Rgb::hex(0x63B6DE), Rgb::hex(0xD8F0F6)],
+            Kind::Yacht => [Rgb::hex(0x0B2B4A), Rgb::hex(0x2A7FB0), Rgb::hex(0xBFE2EE)],
             Kind::Championship => [Rgb::hex(0x120A2A), Rgb::hex(0x3B1E63), Rgb::hex(0xD9A441)],
         }
     }
@@ -163,6 +170,12 @@ impl Venue {
             Kind::Beach => {
                 light.ambient = 0.56;
                 light.fog_density = 0.009;
+            }
+            Kind::Yacht => {
+                light.ambient = 0.58;
+                light.fog_density = 0.007;
+                light.bounce = Vec3::new(0.0, 0.0, -1.0).normalize_or_zero();
+                light.bounce_strength = 0.12;
             }
             Kind::Championship => {
                 light.ambient = 0.50;
@@ -728,6 +741,7 @@ pub fn scenery(venue: Venue, teams: &[Team; 2], mesh: &mut Mesh, rand: &mut dyn 
         Kind::Underwater => underwater(mesh, rand),
         Kind::Outback => outback(mesh, rand),
         Kind::Beach => beach(mesh, rand),
+        Kind::Yacht => yacht(mesh, rand),
         Kind::Championship => championship(teams, mesh, rand),
     }
 }
@@ -2009,6 +2023,295 @@ fn outback(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     }
 }
 
+/// A ground built on the deck of a yacht, under way.
+///
+/// The bowl is the broadcast's and the seats are full; what changes is
+/// everything outside it. Teak under the stands, a white bulwark and a rail
+/// round the edge, the sea eight yards down, a deckhouse astern and a bow that
+/// comes to a point ahead of the far end zone.
+fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
+    /// Where the painted ground stops: every deck plank starts exactly here.
+    const DECK: f32 = HALF_WIDTH + 6.0;
+    /// Half the beam. The stands are inside it and the rail is on it.
+    const EDGE: f32 = HALF_WIDTH + 30.0;
+    /// The waterline, eight yards below the deck.
+    const SEA: f32 = -8.0;
+    /// Where the foredeck ends and the bow begins.
+    const BOW: f32 = 176.0;
+
+    // The sea. One plane a long way down, so the deck is plainly a height above
+    // it, with long highlight streaks so it reads as water and not a blue card.
+    mesh.quad_shaded(
+        Vec3::new(-620.0, -620.0, SEA),
+        Vec3::new(920.0, -620.0, SEA),
+        Vec3::new(920.0, 620.0, SEA),
+        Vec3::new(-620.0, 620.0, SEA),
+        Rgb::hex(0x0E5A78),
+        1.0,
+    );
+    let mut y = -620.0;
+    while y < 620.0 {
+        let t = (y + 620.0) / 1240.0;
+        mesh.quad_shaded(
+            Vec3::new(-620.0, y, SEA + 0.05),
+            Vec3::new(920.0, y, SEA + 0.05),
+            Vec3::new(920.0, y + 0.55, SEA + 0.05),
+            Vec3::new(-620.0, y + 0.55, SEA + 0.05),
+            Rgb::hex(0x0E5A78).lerp(Rgb::WHITE, 0.08 + 0.14 * t),
+            1.0,
+        );
+        y += 3.1;
+    }
+    // The wake: two white lines astern, opening out behind the transom.
+    for side in [-1.0f32, 1.0] {
+        mesh.quad_shaded(
+            Vec3::new(-EDGE - 2.0, side * (EDGE - 6.0), SEA + 0.12),
+            Vec3::new(-460.0, side * (EDGE + 44.0), SEA + 0.12),
+            Vec3::new(-460.0, side * (EDGE + 50.0), SEA + 0.12),
+            Vec3::new(-EDGE - 2.0, side * (EDGE - 1.0), SEA + 0.12),
+            Rgb::hex(0xD6EDF2),
+            1.0,
+        );
+    }
+
+    // The deck. Four bands round the field, every one of them starting where the
+    // painted ground stops, so there is no strip of sky between turf and boat.
+    let bands = [
+        (-EDGE, BOW, DECK, EDGE),
+        (-EDGE, BOW, -EDGE, -DECK),
+        (crate::fieldtex::TEX_X1, BOW, -DECK, DECK),
+        (-EDGE, crate::fieldtex::TEX_X0, -DECK, DECK),
+    ];
+    for (x0, x1, y0, y1) in bands {
+        mesh.quad_shaded(
+            Vec3::new(x0, y0, 0.004),
+            Vec3::new(x1, y0, 0.004),
+            Vec3::new(x1, y1, 0.004),
+            Vec3::new(x0, y1, 0.004),
+            Rgb::hex(0xB08152),
+            1.0,
+        );
+        // Plank seams across the band, so it is laid timber and not paint.
+        let mut seam = y0 + 1.2;
+        while seam < y1 - 0.1 {
+            mesh.quad_shaded(
+                Vec3::new(x0, seam, 0.006),
+                Vec3::new(x1, seam, 0.006),
+                Vec3::new(x1, seam + 0.07, 0.006),
+                Vec3::new(x0, seam + 0.07, 0.006),
+                Rgb::hex(0x8A6039),
+                1.0,
+            );
+            seam += 1.3;
+        }
+    }
+
+    // The bow: the deck tapers to a point ahead of the foredeck.
+    mesh.quad_shaded(
+        Vec3::new(BOW, -EDGE, 0.004),
+        Vec3::new(BOW + 30.0, -1.2, 0.004),
+        Vec3::new(BOW + 30.0, 1.2, 0.004),
+        Vec3::new(BOW, EDGE, 0.004),
+        Rgb::hex(0xB08152),
+        1.0,
+    );
+    // Her sides, and the bow closing on the point, in white down to the water.
+    for side in [-1.0f32, 1.0] {
+        mesh.quad_shaded(
+            Vec3::new(-EDGE - 1.6, side * (EDGE + 1.6), 1.85),
+            Vec3::new(BOW, side * (EDGE + 1.6), 1.85),
+            Vec3::new(BOW, side * (EDGE + 1.6), SEA),
+            Vec3::new(-EDGE - 1.6, side * (EDGE + 1.6), SEA),
+            Rgb::hex(0xE9EAE2),
+            1.0,
+        );
+        mesh.quad_shaded(
+            Vec3::new(BOW, side * (EDGE + 1.6), 1.85),
+            Vec3::new(BOW + 30.0, side * 1.2, 1.85),
+            Vec3::new(BOW + 30.0, side * 1.2, SEA),
+            Vec3::new(BOW, side * (EDGE + 1.6), SEA),
+            Rgb::hex(0xF2F2EC),
+            1.0,
+        );
+    }
+    // The transom, closing the stern.
+    mesh.quad_shaded(
+        Vec3::new(-EDGE - 1.6, -EDGE - 1.6, 1.85),
+        Vec3::new(-EDGE - 1.6, EDGE + 1.6, 1.85),
+        Vec3::new(-EDGE - 1.6, EDGE + 1.6, SEA),
+        Vec3::new(-EDGE - 1.6, -EDGE - 1.6, SEA),
+        Rgb::hex(0xE9EAE2),
+        1.0,
+    );
+
+    // The bulwark: a white wall round the deck with a dark boot-top along it, so
+    // the boat has an inside and nobody walks off the edge by accident.
+    let mid_x = (BOW - EDGE) * 0.5;
+    let long_half = (BOW + EDGE) * 0.5;
+    for side in [-1.0f32, 1.0] {
+        mesh.box_shaded(
+            Vec3::new(mid_x, side * (EDGE + 0.8), 0.92),
+            Vec3::new(long_half, 0.8, 0.92),
+            0.0,
+            Rgb::hex(0xF2F2EC),
+            1.0,
+        );
+        mesh.box_shaded(
+            Vec3::new(mid_x, side * (EDGE + 0.8), 1.9),
+            Vec3::new(long_half, 0.88, 0.06),
+            0.0,
+            Rgb::hex(0x1E3A52),
+            1.0,
+        );
+    }
+    for x in [-EDGE - 0.8f32, BOW + 0.8] {
+        mesh.box_shaded(
+            Vec3::new(x, 0.0, 0.92),
+            Vec3::new(0.8, EDGE + 1.6, 0.92),
+            0.0,
+            Rgb::hex(0xF2F2EC),
+            1.0,
+        );
+    }
+
+    // A rail along the top of it: stanchions and a varnished top rail.
+    for side in [-1.0f32, 1.0] {
+        let mut x = -EDGE;
+        while x < BOW {
+            mesh.box_shaded(
+                Vec3::new(x, side * (EDGE + 0.8), 2.55),
+                Vec3::new(0.06, 0.06, 0.62),
+                0.0,
+                Rgb::hex(0xD8D8CE),
+                1.0,
+            );
+            x += 4.0;
+        }
+        mesh.quad_shaded(
+            Vec3::new(-EDGE, side * (EDGE + 0.8), 3.14),
+            Vec3::new(BOW, side * (EDGE + 0.8), 3.14),
+            Vec3::new(BOW, side * (EDGE + 0.8), 3.26),
+            Vec3::new(-EDGE, side * (EDGE + 0.8), 3.26),
+            Rgb::hex(0x8A5A2E),
+            1.0,
+        );
+    }
+
+    // The deckhouse astern: two white tiers with a band of lit glass facing the
+    // field, a dark funnel and a radar mast. Kept behind the end line, so it is
+    // scenery and not something the shot down the field has to look through.
+    for (tier, &(x, h, half_y)) in [(-78.0f32, 7.0f32, 22.0f32), (-74.0, 4.4, 15.0)]
+        .iter()
+        .enumerate()
+    {
+        let z0 = if tier == 0 { 1.9 } else { 8.9 };
+        mesh.box_shaded(
+            Vec3::new(x, 0.0, z0 + h * 0.5),
+            Vec3::new(7.0, half_y, h * 0.5),
+            0.0,
+            Rgb::hex(0xF2F2EC),
+            1.0,
+        );
+        // Glass along the face turned toward the field (+x).
+        let mut gy = -half_y + 1.4;
+        while gy < half_y - 1.0 {
+            mesh.quad_shaded(
+                Vec3::new(x + 7.1, gy, z0 + h * 0.30),
+                Vec3::new(x + 7.1, gy + 1.7, z0 + h * 0.30),
+                Vec3::new(x + 7.1, gy + 1.7, z0 + h * 0.72),
+                Vec3::new(x + 7.1, gy, z0 + h * 0.72),
+                Rgb::hex(0x2C5A72),
+                1.0,
+            );
+            gy += 2.6;
+        }
+    }
+    mesh.box_shaded(
+        Vec3::new(-84.0, 0.0, 15.4),
+        Vec3::new(1.5, 1.5, 2.4),
+        0.0,
+        Rgb::hex(0x1E3A52),
+        1.0,
+    );
+    mesh.box_shaded(
+        Vec3::new(-70.0, 0.0, 15.0),
+        Vec3::new(0.35, 9.0, 0.35),
+        0.0,
+        Rgb::hex(0xD8D8CE),
+        1.0,
+    );
+    mesh.box_shaded(
+        Vec3::new(-70.0, 0.0, 18.2),
+        Vec3::new(0.2, 7.0, 0.2),
+        0.0,
+        Rgb::hex(0xD8D8CE),
+        1.0,
+    );
+    // A flag at the masthead, and bunting from the mast to the bow.
+    mesh.quad_shaded(
+        Vec3::new(-70.2, 0.0, 19.6),
+        Vec3::new(-70.2, 5.0, 19.4),
+        Vec3::new(-70.2, 5.0, 18.6),
+        Vec3::new(-70.2, 0.0, 18.6),
+        Rgb::hex(0xD9463C),
+        1.0,
+    );
+    bunting(
+        mesh,
+        -60.0,
+        150.0,
+        EDGE - 4.0,
+        3.4,
+        [Rgb::hex(0xF2C14E), Rgb::hex(0x2C7FB8), Rgb::hex(0xF2F2EC)],
+    );
+
+    // Tenders stowed along the starboard rail.
+    for i in 0..4 {
+        let x = -30.0 + i as f32 * 40.0;
+        mesh.box_shaded(
+            Vec3::new(x, -EDGE + 4.0, 3.4),
+            Vec3::new(3.0, 1.1, 0.8),
+            0.0,
+            Rgb::hex(0xE86A2C),
+            1.0,
+        );
+    }
+
+    // Other boats on the water, far enough off to be horizon and not traffic.
+    for i in 0..7 {
+        let x = -180.0 + i as f32 * 52.0 + rand() * 12.0;
+        let y = if i % 2 == 0 { -300.0 } else { 320.0 } + rand() * 40.0;
+        let h = 5.0 + rand() * 9.0;
+        mesh.tri(
+            Vec3::new(x, y, SEA + 0.1),
+            Vec3::new(x + 6.0, y, SEA + 0.1),
+            Vec3::new(x + 3.0, y, SEA + 0.1 + h),
+            Rgb::hex(0xF6F6F0),
+        );
+        mesh.box_shaded(
+            Vec3::new(x + 3.0, y, SEA + h * 0.5),
+            Vec3::new(0.12, 0.12, h * 0.5),
+            0.0,
+            Rgb::hex(0xD8D8CE),
+            1.0,
+        );
+    }
+
+    // Gulls over the bow, so the sky is not empty either.
+    for _ in 0..5 {
+        let x = 120.0 + rand() * 90.0;
+        let y = -40.0 + rand() * 80.0;
+        let z = 16.0 + rand() * 14.0;
+        let w = 1.2 + rand() * 0.8;
+        mesh.tri(
+            Vec3::new(x, y, z),
+            Vec3::new(x + w, y + w * 0.5, z + 0.4),
+            Vec3::new(x + w * 0.9, y, z),
+            Rgb::hex(0x2A2E33),
+        );
+    }
+}
+
 fn beach(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     // The ground under the whole picture: the sea on one side of the boards, sand
     // on the other, and both carried past the ends. The sand used to start sixteen
@@ -2470,7 +2773,8 @@ mod venue_tests {
                     Kind::Underwater => 18,
                     Kind::Outback => 19,
                     Kind::Beach => 20,
-                    Kind::Championship => 21,
+                    Kind::Yacht => 21,
+                    Kind::Championship => 22,
                     Kind::Home(_) => unreachable!(),
                 },
             },
@@ -2550,6 +2854,41 @@ mod venue_tests {
     /// Nothing a ground draws may lie on top of the painted ground. The turf and
     /// the apron belong to the field texture; a second flat plane over them is
     /// the "two things deciding which one to render" the sidelines had.
+    /// The yacht has to be a boat and not a field with a blue skirt: water under
+    /// the hull, deck outside the stands, a bow ahead of the far end, and a rail
+    /// round the whole thing so there is an edge to fall off.
+    #[test]
+    fn the_yacht_is_a_boat_on_the_water() {
+        let mesh = build(Kind::Yacht);
+        let deep = mesh
+            .tris
+            .iter()
+            .filter(|t| t.a.z < -4.0 && t.b.z < -4.0 && t.c.z < -4.0)
+            .count();
+        assert!(deep > 50, "no sea under the hull: {deep} triangles below it");
+        let outboard = mesh
+            .tris
+            .iter()
+            .filter(|t| [t.a, t.b, t.c].iter().all(|p| p.z < 0.1 && p.y.abs() > HALF_WIDTH + 12.0))
+            .count();
+        assert!(
+            outboard > 20,
+            "nothing outside the stands: {outboard} deck triangles outboard"
+        );
+        let ahead = mesh
+            .tris
+            .iter()
+            .filter(|t| [t.a, t.b, t.c].iter().all(|p| p.x > crate::fieldtex::TEX_X1 + 2.0))
+            .count();
+        assert!(ahead > 10, "no bow past the far end: {ahead} triangles");
+        let rail = mesh
+            .tris
+            .iter()
+            .filter(|t| [t.a, t.b, t.c].iter().all(|p| p.z > 2.0))
+            .count();
+        assert!(rail > 10, "no rail round the deck: {rail} triangles");
+    }
+
     #[test]
     fn no_ground_plane_lies_on_top_of_the_painted_ground() {
         let edge = HALF_WIDTH + 6.0;
@@ -2557,6 +2896,7 @@ mod venue_tests {
             Kind::Practice,
             Kind::ClosedPractice,
             Kind::Beach,
+            Kind::Yacht,
             Kind::Championship,
             Kind::Home(0),
             Kind::Home(5),

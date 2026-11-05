@@ -6,7 +6,7 @@
 //! label. A defense is not called that way. The front is chosen first, the coverage
 //! comes with it, and the line technique belongs to the front. This draws the same
 //! kind of picture the offensive sheet does, from the same `DefCall` data the snap
-//! is played with, so a card can never advertise a defence the game does not run.
+//! is played with, so a card can never advertise a defense the game does not run.
 
 use nopads_core::math::{Rgb, Vec2};
 use nopads_core::playbook::{def_calls_in, defender_positions, DefCall, DefFront, DefRole};

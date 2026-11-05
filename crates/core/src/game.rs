@@ -174,7 +174,7 @@ pub struct GameState {
     pub no_timeouts_for_leader: bool,
     pub home_attack_dir: i8,
     /// How the other sideline plays: the coordinator's calls and how hard the
-    /// defence goes for the ball.
+    /// defense goes for the ball.
     pub difficulty: Difficulty,
 }
 

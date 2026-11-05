@@ -1038,7 +1038,7 @@ impl<'a> ThrowOffSim<'a> {
             }
         }
         self.steer(returner, target, speed, dt);
-        // The end of a dive is the end of the return, the same as it is on offence.
+        // The end of a dive is the end of the return, the same as it is on offense.
         if let Some(kind) = self.moves.step(dt) {
             if kind.commits() {
                 let spot = self.players[returner].pos.x;

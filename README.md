@@ -407,7 +407,7 @@ game is played in, rather than one framing at the line and another on the kickof
 Every one of them anchors on the ball: wherever it goes, that is what the picture is
 about, and the aim lags a few frames behind it the way a heavy lens does instead of
 snapping from spot to spot. That is what keeps a long run in the frame — the shot used
-to be pinned to the line of scrimmage, so a runner who got past the defence walked out
+to be pinned to the line of scrimmage, so a runner who got past the defense walked out
 of the corner of a picture still framing the snap. When a pass is in the air the shot
 leans a quarter of the way toward where the ball is going, so the pan starts on the
 release rather than at the catch.
@@ -460,7 +460,7 @@ grass, heavier, with a bigger bar at the end of each one.
 
 The line of scrimmage is painted blue and the first-down marker yellow: the line you
 have to reach is the bright one, and the line the ball is already on is not. Let go and the picture drops back behind the ball and the drawing goes
-with it — the call is not left lying open for the defence to read.
+with it — the call is not left lying open for the defense to read.
 
 The line is live otherwise. You may walk a defender anywhere before the snap,
 including across it; a hand on an offensive player while you are across is
@@ -668,7 +668,7 @@ controller still works (the keyboard and the window do not depend on it).
 The setup card carries three levels. **Easy** is the game as it shipped: the
 other sideline calls a sensible mix and plays what is in front of it. **Normal**
 throws on early downs and pushes the ball downfield instead of grinding for the
-sticks, and is quicker to go for it on fourth down. **Hard** adds a defence that
+sticks, and is quicker to go for it on fourth down. **Hard** adds a defense that
 hunts the ball: it presses and plays man on third down, and it goes for the strip,
 so a hard side takes the ball away more often, on the ground and in the air. The
 level is remembered in `settings.cfg`, so the card opens on the last one played.
@@ -722,7 +722,7 @@ The rule set follows the 7 on 7 no-pads rulebook rather than the NFL's:
   from anywhere on its own side of the field rather than snap a long fourth down.
   Hard will go for it instead when it is behind late enough that it has to have the
   ball, and otherwise decides on down and distance.
-- **The preview button works on defence too.** Hold it at the line and the picture
+- **The preview button works on defense too.** Hold it at the line and the picture
   lifts over your own call: man cover gets a line to his man, zones get the ground
   they own, and the rushers get their track.
 - **Conversions are chosen, not kicked.** 1 point from the 5 or 2 points from the

@@ -25,10 +25,16 @@ use crate::team::{Attributes, Team};
 /// How close a defender's hands have to be to a man to get hold of him. It was
 /// nearly a yard of daylight, and the picture showed the gap: a runner was stopped
 /// by a man he was plainly not touching yet.
+/// How wide a man is across the shoulders. Two of these is where two men touch,
+/// and that is what contact means here: the separation pass used to hold every
+/// pair half a yard apart at their centres whatever they were doing, which reads
+/// as a force field between them rather than as a shoulder.
+pub const BODY_RADIUS: f32 = 0.31;
+
 /// How close a defender has to be to lay a hand on the carrier.
 ///
 /// This is body to body: the men are held 0.55 apart by the separation pass, so
-/// anything at or under that never fires at all, and the whole offence stops
+/// anything at or under that never fires at all, and the whole offense stops
 /// ending its plays. 0.60 is the floor the running game is tuned against, and it is a contact
 /// distance: at that gap the two men are touching, so the wrap is made by hands
 /// that are actually on him rather than by a defender standing in his air.
@@ -42,10 +48,15 @@ pub const CATCH_WEIGHT: f32 = 0.55;
 pub const CATCH_FLOOR: f32 = 0.06;
 /// Yards from the landing spot inside which a defender's coverage rating bites.
 pub const COVERAGE_AREA: f32 = 3.0;
-/// How much room the wrap itself is given once it has started: the two men close
-/// to arm's length and the tackler rides him down from there. The radius grows
-/// from [`TACKLE_RADIUS`] to this the moment the hands are on him.
+/// How much further a lunge reaches than a man on his feet, because his arms are
+/// already out in front of him when he arrives.
 pub const ARM_REACH: f32 = 0.44;
+
+/// How close the two men in a wrap are held: shoulders inside a hand's width,
+/// hands on the chest. It was [`ARM_REACH`], which put one body inside the other
+/// -- one man made of two -- and then the separation pass pushed them back apart
+/// every frame, which is the judder the wrap had.
+pub const HOLD_DISTANCE: f32 = BODY_RADIUS * 2.0 + 0.08;
 /// How far a diving defender throws himself at the man with the ball.
 pub const DIVE_LUNGE: f32 = 2.20;
 /// Hands up inside this many yards of the carrier, hands at his sides past
@@ -127,7 +138,7 @@ pub const RETURN_GRACE: f32 = 1.7;
 /// 0.55 of a yard beyond the sideline; a man used to be allowed a yard and a
 /// half of run-off, which walked him through the boards and into the front row.
 pub const BODY_APRON: f32 = 0.2;
-/// How long a CPU offense waits at the line when a human is on defence: long
+/// How long a CPU offense waits at the line when a human is on defense: long
 /// enough to walk a man up, check to another call, and get set.
 pub const PRESNAP_WAIT: f32 = 2.6;
 /// How long a dummy count takes to sell at the line.
@@ -484,7 +495,7 @@ fn fumble_chance(
     0.012
         + (1.0 - carrier.break_tackle_factor()) * 0.022
         + (1.0 - carrier.awareness_factor()) * 0.012
-        // A hard defence goes for the ball on the way in.
+        // A hard defense goes for the ball on the way in.
         + difficulty
         + hit.map(|h| h.fumble_bonus(defender)).unwrap_or(0.0)
 }
@@ -554,7 +565,7 @@ pub struct PlaySim<'a> {
     /// out from under him.
     awaiting_snap: bool,
     /// Where every man stood when the formation was set. The pre-snap shuffle is
-    /// an offset from these, so a long look at the defence cannot walk the whole
+    /// an offset from these, so a long look at the defense cannot walk the whole
     /// formation down the field.
     presnap: Vec<Vec2>,
     /// Furthest downfield the ball has been this snap, and how long it has been
@@ -1140,7 +1151,7 @@ impl<'a> PlaySim<'a> {
             // Quick pre-snap shuffle so the broadcast shot has life. It is an
             // offset from where the formation was set, not a nudge applied every
             // frame: with the snap waiting on a button the old version walked the
-            // whole offense sideways while the player read the defence.
+            // whole offense sideways while the player read the defense.
             self.advance_shift(dt);
             self.dummy_t = (self.dummy_t - dt).max(0.0);
             for i in 0..14 {
@@ -1398,7 +1409,7 @@ impl<'a> PlaySim<'a> {
     /// whistled the moment it happens rather than at the snap.
     fn check_presnap_encroachment(&mut self) {
         let Some(d) = self.human_defender else { return };
-        // You cannot foul from your own side of the ball, and the defence lines
+        // You cannot foul from your own side of the ball, and the defense lines
         // up beyond the line: standing over it on his side is not being across.
         if (self.players[d].pos.x - self.los) * self.dirf() >= -0.12 {
             return;
@@ -1412,7 +1423,7 @@ impl<'a> PlaySim<'a> {
     }
 
     /// The play clock ran out before the ball was snapped. Five yards on the
-    /// offence and the down is played again: nothing happened, so nothing after
+    /// offense and the down is played again: nothing happened, so nothing after
     /// the count counts.
     fn call_delay_of_game(&mut self) {
         if self.result.is_some() {
@@ -1454,9 +1465,9 @@ impl<'a> PlaySim<'a> {
         );
     }
 
-    /// Book the foul: five yards, replay the down, and no snap. The defence is
+    /// Book the foul: five yards, replay the down, and no snap. The defense is
     /// the offending side even though the rulebook's default for the word is the
-    /// offence jumping early, so the side is set here rather than read off it.
+    /// offense jumping early, so the side is set here rather than read off it.
     fn call_encroachment(&mut self, d: usize) {
         let name = self.name_of(d);
         let spot = self.players[d].pos.x;
@@ -1485,8 +1496,8 @@ impl<'a> PlaySim<'a> {
             if p.down {
                 continue;
             }
-            // The defence lines up beyond the line as a matter of course, so it is
-            // offside when it is on the offence's side of it. The offence is the
+            // The defense lines up beyond the line as a matter of course, so it is
+            // offside when it is on the offense's side of it. The offense is the
             // other way round.
             let along = (p.pos.x - self.los) * self.dirf();
             let over = if i < 7 { along > SNAP_OFFSIDE } else { along < -SNAP_OFFSIDE };
@@ -2273,7 +2284,7 @@ impl<'a> PlaySim<'a> {
                             // a runner covers two and a half yards in that time,
                             // so aimed at where he was a chase dive always lands
                             // behind him -- which is why it worked at the line
-                            // of scrimmage and not once he was past the defence.
+                            // of scrimmage and not once he was past the defense.
                             .map(|c| {
                                 self.players[c].pos + self.players[c].vel * (DIVE_WINDOW * 0.6)
                             })
@@ -2482,7 +2493,8 @@ impl<'a> PlaySim<'a> {
                 FIELD_HALF_WIDTH + BODY_APRON,
             );
         }
-        // Simple separation so bodies never merge.
+        // Bodies cannot occupy the same ground: they come apart at the shoulders,
+        // and a pair in a wrap is held outside this by `HOLD_DISTANCE`.
         for a in 0..14 {
             for b in (a + 1)..14 {
                 if self.players[a].down || self.players[b].down {
@@ -2490,8 +2502,11 @@ impl<'a> PlaySim<'a> {
                 }
                 let delta = self.players[b].pos - self.players[a].pos;
                 let d = delta.length();
-                if d < 0.55 && d > 1e-4 {
-                    let push = delta.normalize_or_zero() * (0.55 - d) * 0.5;
+                // Shoulder to shoulder, not half a yard of daylight: a pair comes
+                // apart at twice the body radius and not before.
+                let touch = BODY_RADIUS * 2.0;
+                if d < touch && d > 1e-4 {
+                    let push = delta.normalize_or_zero() * (touch - d) * 0.5;
                     self.players[a].pos -= push;
                     self.players[b].pos += push;
                 }
@@ -2530,7 +2545,7 @@ impl<'a> PlaySim<'a> {
     fn resolve_blocks(&mut self, dt: f32) {
         // Hands out in front belong to blockers: the two linemen on every play, and
         // the backs and receivers on a run -- not the man carrying it, who is
-        // running, and not the defence, who are the ones being blocked.
+        // running, and not the defense, who are the ones being blocked.
         let run = self.play.family.is_run();
         for i in 0..7 {
             if self.players[i].down || self.players[i].stun > 0.0 {
@@ -2562,9 +2577,14 @@ impl<'a> PlaySim<'a> {
             // nobody could see him touch. Only the last of it, though: dragging a
             // man a full yard off his spot every frame took the pocket with it.
             let gap = self.players[d].pos.dist(self.players[i].pos);
-            if gap > 0.9 && gap < 1.5 {
+            // Hands on him. The old step-in stopped at 0.9 and only started at
+            // 1.5, so a blocker past that held off at the end of an invisible
+            // rope; now he keeps walking in until his hands are on the man's
+            // chest and stays there, which is what a block looks like.
+            let hands_on = BODY_RADIUS * 2.0 + 0.18;
+            if gap > hands_on {
                 let to = (self.players[d].pos - self.players[i].pos).normalize_or_zero();
-                let close = (gap - 0.9).min(0.6) * (dt * 9.0).min(1.0);
+                let close = (gap - hands_on).min(0.55) * (dt * 9.0).min(1.0);
                 self.players[i].pos += to * close;
             }
 
@@ -2872,11 +2892,11 @@ impl<'a> PlaySim<'a> {
         // lunge is his arrival, and the wrap closes from wherever it puts him.
         let diving = self.players[tackler].dive_t > 0.0;
         let gap = self.players[tackler].pos.dist(self.players[carrier].pos);
-        if !diving && gap > ARM_REACH {
+        if !diving && gap > HOLD_DISTANCE {
             let toward = (self.players[tackler].pos - self.players[carrier].pos)
                 .normalize_or_zero();
             self.players[tackler].pos =
-                self.players[carrier].pos + toward * ARM_REACH;
+                self.players[carrier].pos + toward * HOLD_DISTANCE;
         }
         // He goes down away from the hit, not through it. A man hit square in the
         // chest turns off the contact; the figure falls along its own facing, so
@@ -2927,11 +2947,42 @@ impl<'a> PlaySim<'a> {
         // exact spot put two bodies inside each other, which renders as one man
         // made of both of them.
         let away = (spot - self.players[w.tackler].pos).normalize_or_zero();
-        let contact = spot - away * ARM_REACH;
+        let contact = spot - away * HOLD_DISTANCE;
         let d = &mut self.players[w.tackler];
         d.pos = d.pos.lerp(contact, (dt * 7.0).min(1.0));
         if away.length() > 0.01 {
             d.heading = away.y.atan2(away.x);
+        }
+        // Whoever else has arrived gets a hand on him too. Three men driving at
+        // one point end up inside each other and read as a blob; each takes his
+        // own side of the body instead, so a pile looks like men holding a man.
+        let front = away.angle();
+        let mut helpers: Vec<usize> = (7..14)
+            .filter(|&q| {
+                q != w.tackler
+                    && q != w.carrier
+                    && !self.players[q].down
+                    && self.players[q].stun <= 0.0
+                    && self.players[q].pos.dist(spot) < 3.0
+            })
+            .collect();
+        helpers.sort_by(|a, b| {
+            let da = self.players[*a].pos.dist(spot);
+            let db = self.players[*b].pos.dist(spot);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        helpers.truncate(3);
+        let count = (helpers.len() + 1) as f32;
+        for (k, q) in helpers.iter().enumerate() {
+            let side = if k % 2 == 0 { 1.0 } else { -1.0 };
+            let ring = (k / 2 + 1) as f32;
+            let angle = front + side * ring * (std::f32::consts::TAU / count);
+            let want = spot + Vec2::new(angle.cos(), angle.sin()) * HOLD_DISTANCE;
+            let him = &mut self.players[*q];
+            him.pos = him.pos.lerp(want, (dt * 6.0).min(1.0));
+            him.heading = (spot.y - him.pos.y).atan2(spot.x - him.pos.x);
+            him.wrap = p;
+            him.tackle_arms = 1.0;
         }
         if p < 1.0 {
             self.wrap = Some(w);
@@ -3261,7 +3312,7 @@ impl<'a> PlaySim<'a> {
         let space = ((separation - 0.9) * 0.11).clamp(-0.18, 0.22);
         let accuracy_penalty =
             ((self.players[receiver].pos.dist(landing) - 1.0).max(0.0) * 0.35).min(0.5);
-        // A short throw is on him before the defence can close.
+        // A short throw is on him before the defense can close.
         let short_bonus = if (self.los - landing.x).abs() < 10.0 { 0.10 } else { 0.0 };
         clamp(
             CATCH_BASE + (hands - coverage) * CATCH_WEIGHT + space - accuracy_penalty
@@ -3538,10 +3589,10 @@ impl<'a> PlaySim<'a> {
         }
     }
 
-    /// Bark a hard count at the line to draw the defence across it.
+    /// Bark a hard count at the line to draw the defense across it.
     ///
     /// The gamble is the whole point: a man who bites is five yards and a replay
-    /// of the down, and a defence that sits still has seen the count for nothing.
+    /// of the down, and a defense that sits still has seen the count for nothing.
     pub fn dummy_audible(&mut self) {
         if self.phase != Phase::PreSnap || self.dummy_t > 0.0 {
             return;
@@ -3567,7 +3618,7 @@ impl<'a> PlaySim<'a> {
             });
         let Some(d) = bait else { return };
         // A hard count draws a jump about a third of the time; the rest of the
-        // time the defence just looks back at him.
+        // time the defense just looks back at him.
         if !self.rng.chance(0.34) {
             return;
         }
@@ -3577,12 +3628,12 @@ impl<'a> PlaySim<'a> {
         self.dummy_t = 0.0;
     }
 
-    /// Check the defence to another call at the line. Only legal before the snap.
+    /// Check the defense to another call at the line. Only legal before the snap.
     pub fn call_defense(&mut self, def: DefCall) {
         if self.phase != Phase::PreSnap {
             return;
         }
-        // The offence keeps the ground it is standing on: it is the defence that
+        // The offense keeps the ground it is standing on: it is the defense that
         // is being re-lined, and moving the men across the ball would be a jump.
         let off: Vec<Vec2> = self.players[..7].iter().map(|p| p.pos).collect();
         let name = def.name;
@@ -3596,7 +3647,7 @@ impl<'a> PlaySim<'a> {
         self.capture_presnap();
         self.events.push(SimEvent {
             t: self.t,
-            text: format!("Defence checks to {name}"),
+            text: format!("Defense checks to {name}"),
         });
     }
 
@@ -3645,8 +3696,8 @@ impl<'a> PlaySim<'a> {
     /// player could not steer was the one who could make the tackle.
     pub fn nearest_defender_to_carrier(&self) -> Option<usize> {
         let carrier = self.carrier?;
-        // Only the offence carrying the ball: after a turnover the ball is the
-        // defence's, and the pad belongs to the man running it back.
+        // Only the offense carrying the ball: after a turnover the ball is the
+        // defense's, and the pad belongs to the man running it back.
         if self.players[carrier].side != Side::Offense {
             return None;
         }
@@ -3707,7 +3758,7 @@ impl<'a> PlaySim<'a> {
             return;
         }
         self.play = play;
-        // An audible changes what the offence is doing. The defence is standing
+        // An audible changes what the offense is doing. The defense is standing
         // where it is standing: re-drawing their alignment turned every defender
         // round on his mark, which read as the other team resetting at the line.
         let def_was: Vec<(Vec2, f32)> = (7..14)
@@ -3796,7 +3847,7 @@ impl<'a> PlaySim<'a> {
         let upfield = Vec2::new(self.dirf(), 0.0);
         let up_angle = upfield.y.atan2(upfield.x);
         let mut done = true;
-        // Only the offence walks. The defence keeps its ground, its footing and
+        // Only the offense walks. The defense keeps its ground, its footing and
         // its eyes: turning seven defenders round on the spot every time the
         // player flipped a call read as the other team resetting at the line.
         for i in 0..7 {
@@ -3850,7 +3901,7 @@ impl<'a> PlaySim<'a> {
     /// A defender took the ball away. He has it, and the play is not over: the
     /// offense becomes the chase, and the defense can run it back for six.
     fn start_return(&mut self, d: usize, spot: f32, thrower: usize, air_yards: f32) {
-        // A try is over the moment the defence has it. There is no return to run:
+        // A try is over the moment the defense has it. There is no return to run:
         // the ball changed hands, the try failed, and the play is dead where he
         // took it rather than run back for points the try never counts.
         if self.setup.is_try {
@@ -3956,7 +4007,7 @@ impl<'a> PlaySim<'a> {
             self.finish_return(spot, false);
             return;
         }
-        // The end of a dive is the end of the return, the same as it is on offence.
+        // The end of a dive is the end of the return, the same as it is on offense.
         if let Some(kind) = self.carrier_moves.step(dt) {
             if kind.commits() {
                 let name = self.name_of(r);
@@ -4183,7 +4234,7 @@ mod tests {
         // The best cover man in the league at his hip.
         let best = (7..14)
             .max_by_key(|i| sim.attrs(*i).coverage)
-            .expect("a defence");
+            .expect("a defense");
         sim.players[best].pos = Vec2::new(landing.x + 0.4, landing.y);
         let covered = sim.catch_chance(receiver, landing);
         assert!(
@@ -4194,7 +4245,7 @@ mod tests {
         // took the ball away, not the fact that somebody was standing there.
         let worst = (7..14)
             .min_by_key(|i| sim.attrs(*i).coverage)
-            .expect("a defence");
+            .expect("a defense");
         sim.players[worst].pos = Vec2::new(landing.x + 0.4, landing.y);
         sim.players[best].pos = Vec2::new(landing.x - 20.0, landing.y);
         let by_scrub = sim.catch_chance(receiver, landing);
@@ -4891,12 +4942,12 @@ mod tests {
         for i in 0..7 {
             assert!(
                 (sim.players[i].pos - off_before[i]).length() < 0.05,
-                "the offence was re-lined by a defensive check"
+                "the offense was re-lined by a defensive check"
             );
         }
         assert!(
             (7..14).any(|i| sim.players[i].pos.dist(def_before[i - 7]) > 0.2),
-            "the defence did not move to the new call"
+            "the defense did not move to the new call"
         );
     }
 
@@ -5209,9 +5260,12 @@ mod tests {
         sim.players[7].pos = sim.players[carrier].pos + Vec2::new(TACKLE_RADIUS - 0.02, 0.0);
         sim.start_wrap(carrier, 7, PlayOutcome::Run, spot, "a wrap".to_string(), 0, false);
         let gap = sim.players[7].pos.dist(sim.players[carrier].pos);
+        // Hands length: outside the man's body and inside his arms. Snapped to
+        // 0.44 it was inside the carrier and the separation pass shoved him back
+        // out every frame, which is what made the pair judder.
         assert!(
-            gap <= ARM_REACH + 0.01,
-            "the wrap started {gap:.2} yards away, so he glides in"
+            (BODY_RADIUS * 2.0..=HOLD_DISTANCE + 0.01).contains(&gap),
+            "the wrap started {gap:.2} yards away: inside him, or a glide in"
         );
     }
 
@@ -5241,8 +5295,8 @@ mod tests {
         assert!(sim.wrap.is_some(), "no tackle was attempted from the radius");
         let gap = sim.players[carrier].pos.dist(sim.players[7].pos);
         assert!(
-            gap <= ARM_REACH + 0.05,
-            "the wrap started with the tackler {gap:.2} yards away, so he glides in"
+            (BODY_RADIUS * 2.0..=HOLD_DISTANCE + 0.05).contains(&gap),
+            "the wrap started with the tackler {gap:.2} yards away: inside him, or a glide in"
         );
     }
 
@@ -5298,6 +5352,139 @@ mod tests {
 
     /// A defender in the air's path is not scenery. He either knocks it down or
     /// takes it away, and the picture says which.
+    /// Run a handoff, then park a defender on the carrier's hip until the arms
+    /// go on. Every test below is about what the picture shows from there.
+    /// Take a run play to the moment the arms go on the carrier. The sim is the
+    /// caller's, so the teams and the play call outlive it.
+    fn to_the_wrap(sim: &mut PlaySim<'_>) -> usize {
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+        guard = 0;
+        while sim.wrap.is_none() && sim.result.is_none() && guard < 300 {
+            sim.players[7].pos = sim.players[carrier].pos + Vec2::new(0.25, 0.0);
+            sim.players[7].stun = 0.0;
+            sim.players[7].down = false;
+            sim.players[7].tackle_cooldown = 0.0;
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert!(sim.wrap.is_some(), "no tackle was ever attempted");
+        carrier
+    }
+
+    /// Held at hands length. The tackler used to be snapped to 0.44 yards, which
+    /// is inside the carrier's body, and the separation pass shoved him back out
+    /// again on the next frame: the pair juddered and read as two men in one
+    /// shirt. A hold is a shoulder's width apart with the hands on the chest.
+    #[test]
+    fn a_tackle_holds_his_man_at_hands_length() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 3));
+        let carrier = to_the_wrap(&mut sim);
+        for _ in 0..12 {
+            sim.step(1.0 / 60.0);
+            let gap = sim.players[7].pos.dist(sim.players[carrier].pos);
+            assert!(
+                (0.60..=0.85).contains(&gap),
+                "the tackler held him at {gap:.2} yards"
+            );
+        }
+    }
+
+    /// A second and a third man on the same body take their own side of it.
+    /// Converging on one point put them inside each other, which is the blob the
+    /// report called telekinesis: nobody could see a hand on anybody.
+    #[test]
+    fn the_second_and_third_man_get_their_own_side_of_him() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 5));
+        let carrier = to_the_wrap(&mut sim);
+        // Both of them arriving from the same side is the ordinary case: a
+        // pursuit converges, it does not space itself out.
+        sim.players[8].pos = sim.players[carrier].pos + Vec2::new(0.4, 1.4);
+        sim.players[9].pos = sim.players[carrier].pos + Vec2::new(1.2, 1.2);
+        for _ in 0..20 {
+            if sim.result.is_some() {
+                break;
+            }
+            sim.players[8].stun = 0.0;
+            sim.players[9].stun = 0.0;
+            sim.step(1.0 / 60.0);
+        }
+        let a = sim.players[8].pos - sim.players[carrier].pos;
+        let b = sim.players[9].pos - sim.players[carrier].pos;
+        assert!(
+            a.length() < 1.05 && b.length() < 1.05,
+            "they never got to him: {:.2} and {:.2} yards off",
+            a.length(),
+            b.length()
+        );
+        assert!(
+            a.normalize_or_zero().dot(b.normalize_or_zero()) < 0.4,
+            "both piled on the same side of him"
+        );
+    }
+
+    /// A blocker blocks with his hands on the man, not from the end of a zone.
+    /// He used to engage at 1.9 yards and only close from inside 1.5, so a lineman
+    /// could be holding a man off and never touch him.
+    #[test]
+    fn a_blocker_walks_in_until_his_hands_are_on_the_man() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 7));
+        let mut pair = None;
+        for _ in 0..240 {
+            sim.step(1.0 / 60.0);
+            for i in 0..7 {
+                if let Some(d) = sim.players[i].engaged {
+                    pair = Some((i, d));
+                    break;
+                }
+            }
+            if pair.is_some() {
+                break;
+            }
+        }
+        let (i, d) = pair.expect("nobody ever got a hand on a rusher");
+        // Park everyone else off the field so the blocker has one man to deal
+        // with, then set that man a yard and a half away: inside the reach his
+        // hands give him, and outside the 1.5 yards the old step-in started at.
+        for q in 7..14 {
+            if q != d {
+                sim.players[q].pos = Vec2::new(sim.players[q].pos.x, 70.0);
+            }
+        }
+        let away = (sim.players[d].pos - sim.players[i].pos).normalize_or_zero();
+        sim.players[d].pos = sim.players[i].pos + away * 1.7;
+        let mut closest: f32 = 1.7;
+        for _ in 0..40 {
+            if sim.result.is_some() {
+                break;
+            }
+            sim.step(1.0 / 60.0);
+            closest = closest.min(sim.players[i].pos.dist(sim.players[d].pos));
+        }
+        // Hands on the chest, a shoulder's width apart. He used to hold off at
+        // the end of a zone: engaged from 1.9 yards and never closing from 1.7.
+        assert!(
+            closest < 1.05,
+            "a blocker held a man at {closest:.2} yards with nobody touching anybody"
+        );
+    }
+
     #[test]
     fn a_defender_in_the_way_gets_a_hand_on_the_ball() {
         let (off, def_) = teams();

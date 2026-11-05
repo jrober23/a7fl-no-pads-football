@@ -1,6 +1,6 @@
 //!
 //! These tests drive a real run play to the handoff and then work the buttons,
-//! because the point of a move is what the defence does about it.
+//! because the point of a move is what the defense does about it.
 
 use nopads_core::sim::{DefControl, DIVE_LUNGE, DIVE_WINDOW, TACKLE_RADIUS};
 
@@ -266,7 +266,7 @@ fn holding_the_dive_button_is_one_lunge() {
     let teams = league_teams();
     let mut sim = to_the_handoff(&teams[0], &teams[1], 41).expect("a run play");
     let carrier = sim.carrier.expect("the handoff");
-    // Twenty yards behind him, with the rest of the defence parked off the
+    // Twenty yards behind him, with the rest of the defense parked off the
     // field: this is the open-field chase the button is for.
     sim.players[7].pos = sim.players[carrier].pos - Vec2::new(20.0, 0.0);
     sim.players[7].stun = 0.0;

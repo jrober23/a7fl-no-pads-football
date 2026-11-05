@@ -1011,7 +1011,7 @@ impl DefCall {
 
     /// What each of the seven is being asked to do, in the words on the card.
     /// Derived from the same front, coverage and blitz list the snap is played
-    /// with, so the sheet cannot describe a defence the game does not run.
+    /// with, so the sheet cannot describe a defense the game does not run.
     pub fn assignment(&self, role: DefRole) -> &'static str {
         if self.blitzers.contains(&role) {
             return "BLITZ";

@@ -1019,7 +1019,7 @@ fn team_from_spec(spec: Club) -> Team {
     };
 
     // A couple of men a side wear the balaclava: two of the seven who take the
-    // field on offence and one on defence, chosen per club from the men who
+    // field on offense and one on defense, chosen per club from the men who
     // actually start. Everybody used to wear one, which made a team read as a
     // single masked unit; two a side reads as a few individuals instead. Picked
     // once, here, so a replay shows the same faces.
@@ -1052,8 +1052,8 @@ mod balaclava_tests {
                     .filter(|&&i| team.roster[i].balaclava)
                     .count()
             };
-            assert_eq!(masked(&off.players), 2, "{} offence", team.abbr);
-            assert_eq!(masked(&def.players), 1, "{} defence", team.abbr);
+            assert_eq!(masked(&off.players), 2, "{} offense", team.abbr);
+            assert_eq!(masked(&def.players), 1, "{} defense", team.abbr);
         }
     }
 }

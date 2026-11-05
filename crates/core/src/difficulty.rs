@@ -2,7 +2,7 @@
 //!
 //! Easy is the game the league shipped with: the coordinator calls a sensible mix
 //! and plays what is in front of him. Normal leans on moving the ball downfield
-//! and finishing drives. Hard is Normal with a defence that hunts the ball: it
+//! and finishing drives. Hard is Normal with a defense that hunts the ball: it
 //! presses, it jumps routes, and it goes for the strip on the tackle.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -185,6 +185,10 @@ pub struct Pose {
     /// the geometry -- because both are described in the same six numbers per
     /// limb. `None` keeps the keyed cycle.
     pub limbs: Option<LimbAngles>,
+    /// 0..1 through a lunge at the man with the ball. The body goes over its
+    /// toes the way the carrier's dive does, and the arms go out in front of it,
+    /// elbows locked, so the hands arrive before the chest.
+    pub dive: f32,
 }
 
 /// One man's limbs in the figure's own vocabulary.
@@ -1462,6 +1466,15 @@ pub fn build_mesh_into(
             swing += (1.25 - swing) * wrap;
             flex += (1.20 - flex) * wrap;
         }
+        if pose.dive > 0.0 {
+            // A lunge is a reach, not a hold. The wrap above folds the elbows
+            // because both hands are on a body; a man throwing himself at the
+            // ball carrier puts both arms out in front and locks them, so the
+            // contact is made at the hands and not at the chest.
+            let d = pose.dive.clamp(0.0, 1.0);
+            swing += (1.52 - swing) * d;
+            flex += (0.05 - flex) * d;
+        }
 
         // A blocker's hands are out in front of him, and they go where the man he
         // is on goes: the hand on that side follows to 45 degrees and the sim turns
@@ -1668,6 +1681,17 @@ pub fn build_mesh_into(
         let e = fall * fall * (3.0 - 2.0 * fall);
         pitch_mesh(mesh, SOLE, e * 1.42);
         raise_to_turf(mesh);
+    }
+
+    if pose.dive > 0.001 {
+        // The same throw of the body the carrier's dive has, seen from the other
+        // side of the ball -- off the turf in the middle of the lunge, flat on it
+        // at the end, with nothing curled round the ball because there is none.
+        let d = pose.dive.clamp(0.0, 1.0);
+        let e = d * d * (3.0 - 2.0 * d);
+        pitch_mesh(mesh, SOLE, e * 1.30);
+        raise_to_turf(mesh);
+        lift_mesh(mesh, 0.16 * (std::f32::consts::PI * d).sin());
     }
 
     if let Some(kind) = pose.motion {

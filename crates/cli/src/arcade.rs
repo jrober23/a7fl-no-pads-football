@@ -108,8 +108,8 @@ fn runner_moves(input: &Input, mut act: impl FnMut(Kind, f32)) {
     }
 }
 
-/// The right stick on defence is the hit stick: up goes over the nameplate, down
-/// goes under it. It is the same stick that is the carrier's body on offence, so
+/// The right stick on defense is the hit stick: up goes over the nameplate, down
+/// goes under it. It is the same stick that is the carrier's body on offense, so
 /// this is only ever read for a man in coverage, and a tackle with the stick left
 /// alone is the ordinary wrap-up.
 fn hit_stick(input: &Input) -> Option<Hit> {
@@ -520,7 +520,7 @@ impl Arcade {
                     // Pick the try, then go back round: a conversion is a snap
                     // like any other, so it gets called and played, not rolled.
                     // Whose try it is decides who picks it: once the player can
-                    // play defence, the other lot scoring is his business to stop,
+                    // play defense, the other lot scoring is his business to stop,
                     // not his to call.
                     let mine = self.my_team.unwrap_or(self.game.possession);
                     let two = if self.game.possession == mine {
@@ -533,7 +533,7 @@ impl Arcade {
                 Action::CallPlay { fourth_down } => {
                     let mine = self.my_team.unwrap_or(self.game.possession);
                     if self.game.possession != mine {
-                        // Their ball. Call a defence, then go and play one of the
+                        // Their ball. Call a defense, then go and play one of the
                         // seven instead of watching the coordinator do it.
                         if let Some(def) = self.def_sheet() {
                             self.run_defense_snap(def);
@@ -581,8 +581,8 @@ impl Arcade {
                 team.display_upper(),
                 String::new(),
                 format!("OVERALL   {}", r.overall),
-                format!("OFFENCE   {}", r.offense),
-                format!("DEFENCE   {}", r.defense),
+                format!("OFFENSE   {}", r.offense),
+                format!("DEFENSE   {}", r.defense),
                 String::new(),
                 if r.offense >= r.defense + 6 {
                     "THEY WILL THROW IT"
@@ -1293,7 +1293,7 @@ impl Arcade {
         }
     }
 
-    /// Their ball: call a defence, then put the pad on one of the seven.
+    /// Their ball: call a defense, then put the pad on one of the seven.
     fn run_defense_snap(&mut self, def: DefCall) {
         let play = self.cpu_offense();
         let header = self.header();
@@ -1378,7 +1378,7 @@ impl Arcade {
         book[rng.index(book.len())].clone()
     }
 
-    /// What the computer runs at a player who is playing defence: down and distance
+    /// What the computer runs at a player who is playing defense: down and distance
     /// first, then a coin toss, so a third and long is not a draw play.
     fn cpu_offense(&self) -> Play {
         let situation = ai::Situation::from_game(&self.game);
@@ -3345,7 +3345,7 @@ fn defense_popup(
 
 /// Run one snap with the pad on a defender. The offense is the computer's, and
 /// when the snap starts nobody is steering it.
-/// Their ball: call a defence, then put the pad on one of the seven.
+/// Their ball: call a defense, then put the pad on one of the seven.
 struct DefenseSnap<'a> {
     header: &'a str,
     defbook: &'a [DefCall],
@@ -3365,12 +3365,12 @@ impl<'p> SnapCaller<PlaySim<'p>> for DefenseSnap<'_> {
         {
             let sim = &mut *screen.sim;
             // The preview button is the same one the offense holds: it lifts the
-            // shot over the whole field, and while it is down the defence's
+            // shot over the whole field, and while it is down the defense's
             // assignments are on the grass instead of the offense's routes.
             sim.set_preview(sim.phase == Phase::PreSnap && input.held.preview);
         }
 
-        // RB checks the defence at the line: three calls at a time over the
+        // RB checks the defense at the line: three calls at a time over the
         // picture, so the look being checked out of stays on the field.
         if screen.sim.phase == Phase::PreSnap && input.pressed.shoulder {
             // A check stays in the front that is on the field: it is a call, not

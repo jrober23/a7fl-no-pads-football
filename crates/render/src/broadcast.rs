@@ -67,6 +67,8 @@ struct RenderPlayer {
     /// 0..1 through a tackle, for the two men in it: one wrapping, one going down.
     wrap: f32,
     tackled: f32,
+    /// 0..1 through a lunge at the man with the ball, for the pose.
+    dive: f32,
     celebrate: f32,
     /// The move this man is in the middle of, if he is the carrier, and how far
     /// through it he is.
@@ -94,7 +96,7 @@ const AIR_LEAD: f32 = 0.24;
 ///
 /// Football is shot with the ball as the anchor. Every mode used to build its own
 /// aim out of a mix of the line of scrimmage and the play's action point, so a run
-/// that got past the defence walked out of the frame while the camera stayed on a
+/// that got past the defense walked out of the frame while the camera stayed on a
 /// line the ball had left behind. One tracked point, shared by all of them, makes
 /// the picture follow the play.
 #[derive(Clone, Copy, Debug, Default)]
@@ -442,6 +444,11 @@ impl Broadcast {
                     arms_up: p.drive,
                     down: p.down,
                 wrap: p.wrap.max(p.tackle_arms * 0.55),
+                dive: if p.dive_t > 0.0 {
+                    (1.0 - p.dive_t / nopads_core::sim::DIVE_WINDOW).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                },
                 tackled: p.tackled,
                     celebrate: p.celebrate,
                     motion: if mine { motion.kind() } else { None },
@@ -611,6 +618,7 @@ impl Broadcast {
                 arms_up: 0.0,
                 down: p.down,
                 wrap: p.wrap,
+                dive: 0.0,
                 tackled: p.tackled,
                 celebrate: 0.0,
                 // The returner is a runner: a spin, a hurdle or a dive he asked for
@@ -839,6 +847,11 @@ impl Broadcast {
                 arms_up: p.drive,
                 down: p.down,
                 wrap: p.wrap.max(p.tackle_arms * 0.55),
+                dive: if p.dive_t > 0.0 {
+                    (1.0 - p.dive_t / nopads_core::sim::DIVE_WINDOW).clamp(0.0, 1.0)
+                } else {
+                    0.0
+                },
                 tackled: p.tackled,
                 celebrate: p.celebrate,
                 motion: if mine { motion.kind() } else { None },
@@ -1266,6 +1279,7 @@ impl Broadcast {
             arms_up: p.arms_up,
             down: p.down,
             wrapping: p.wrap,
+            dive: p.dive,
             tackled: p.tackled,
             celebrating: p.celebrate,
             strafe: 0.0,
@@ -2675,6 +2689,7 @@ mod tests {
             arms_up: 0.0,
             down: false,
             wrap: 0.0,
+            dive: 0.0,
             tackled: 0.0,
             celebrate: 0.0,
             motion: None,
@@ -2759,6 +2774,7 @@ mod tests {
             arms_up: 0.0,
             down: false,
             wrap: 0.0,
+            dive: 0.0,
             tackled: 0.0,
             celebrate,
             motion: None,
