@@ -100,6 +100,9 @@ const AIR_LEAD: f32 = 0.24;
 #[derive(Clone, Copy, Debug, Default)]
 struct Focus {
     spot: Option<Vec2>,
+    /// The sim clock at the last frame this was stepped, so the follow is
+    /// measured in seconds instead of in frames.
+    last_t: Option<f32>,
 }
 
 impl Focus {
@@ -107,6 +110,36 @@ impl Focus {
         self.track_with(ball, FOLLOW)
     }
 
+    /// The follow, stepped by real time rather than once per frame.
+    ///
+    /// `rate` is the fraction of the gap a 60-fps frame closes. Applied once per
+    /// frame it made the lens slower the slower the frames ran, so a runner had
+    /// to be tracked harder on a struggling machine than on a fast one -- and
+    /// the frame after a hitch pulled him back in one jump, which is a cut in
+    /// everything but name.
+    fn track_with_clock(&mut self, ball: Vec2, rate: f32, now: f32) -> Vec2 {
+        // A long gap is a hitch, not a licence to teleport: six frames' worth of
+        // correction at most keeps a stutter from throwing the picture.
+        let dt = match self.last_t {
+            Some(prev) => (now - prev).clamp(0.0, 0.10),
+            None => 0.0,
+        };
+        self.last_t = Some(now);
+        let stepped = if dt <= 0.0 {
+            rate
+        } else {
+            1.0 - (1.0 - rate).powf(dt * 60.0)
+        };
+        let spot = match self.spot {
+            // The first frame after a cut starts on the ball, not halfway to it.
+            None => ball,
+            Some(prev) => prev + (ball - prev) * stepped,
+        };
+        self.spot = Some(spot);
+        spot
+    }
+
+    #[allow(dead_code)]
     fn track_with(&mut self, ball: Vec2, rate: f32) -> Vec2 {
         let spot = match self.spot {
             // The first frame after a cut starts on the ball, not halfway to it.
@@ -824,7 +857,7 @@ impl Broadcast {
         // is the story, wherever the play itself ended up.
         let focus = match self.pin {
             Some(at) => at,
-            None => self.focus.track_with(anchor, rate),
+            None => self.focus.track_with_clock(anchor, rate, sim.t),
         };
         // An interception turns the play round: the picture has to face the way
         // the man with the ball is running, not the way the ball was snapped.
@@ -2370,6 +2403,34 @@ mod tests {
             "the throw-off shot stays put: {:.1} -> {:.1}",
             near.pos.x,
             far.pos.x
+        );
+    }
+
+    /// The lens has to close the same fraction of its gap per second whatever the
+    /// frame rate. Stepped once per frame it did not: at twenty frames a second
+    /// the same runner trailed three times further behind the picture, and the
+    /// frame after a hitch pulled him back in one jump.
+    #[test]
+    fn the_lens_follows_a_runner_the_same_at_any_frame_rate() {
+        let teams = league_teams();
+        let mut fast = Broadcast::new(320, 180, [teams[0].clone(), teams[1].clone()]);
+        let mut slow = Broadcast::new(320, 180, [teams[0].clone(), teams[1].clone()]);
+        let speed = 8.5f32;
+        for i in 0..=60 {
+            let t = i as f32 / 60.0;
+            fast.focus
+                .track_with_clock(Vec2::new(speed * t, 0.0), FOLLOW, t);
+        }
+        for i in 0..=20 {
+            let t = i as f32 / 20.0;
+            slow.focus
+                .track_with_clock(Vec2::new(speed * t, 0.0), FOLLOW, t);
+        }
+        let lag = |b: &Broadcast| speed - b.focus.spot.expect("the lens took no spot").x;
+        let (a, c) = (lag(&fast), lag(&slow));
+        assert!(
+            (a - c).abs() < 0.25,
+            "the lens trails {a:.2} yards at 60 fps but {c:.2} at 20"
         );
     }
 
