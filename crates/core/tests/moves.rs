@@ -1,7 +1,8 @@
-//! Ball-carrier moves: the spin, the hurdle, the dive and the slide.
 //!
 //! These tests drive a real run play to the handoff and then work the buttons,
 //! because the point of a move is what the defence does about it.
+
+use nopads_core::sim::{DIVE_LUNGE, DIVE_WINDOW, TACKLE_RADIUS};
 
 use nopads_core::math::Vec2;
 use nopads_core::moves::{Kind, HURDLE_TIME};
@@ -240,4 +241,22 @@ fn the_face_buttons_are_passes_in_the_pocket_and_moves_once_he_runs() {
     );
     run.request_move(Kind::Spin);
     assert_eq!(run.carrier_move().kind(), Some(Kind::Spin));
+}
+
+/// A wrap has to be a hand's width away at most: the men are separated by the
+/// body gap, so a tackle starting wider than that is a tackle nobody's arms could
+/// have made, and it reads as the runner being pulled down by the air around him.
+#[test]
+fn a_tackle_is_made_by_contact_and_a_dive_by_a_lunge() {
+    assert!(
+        TACKLE_RADIUS <= 0.74,
+        "a wrap still starts {TACKLE_RADIUS} yards out"
+    );
+    // The lunge front-loads its ground: it covers `2 * DIVE_LUNGE / DIVE_WINDOW`
+    // in its first third. Under a sprint is a stumble, not a dive.
+    let launch = 2.0 * DIVE_LUNGE / DIVE_WINDOW;
+    assert!(
+        launch > 8.5,
+        "a dive leaves the ground at {launch:.1} yd/s, slower than a run"
+    );
 }

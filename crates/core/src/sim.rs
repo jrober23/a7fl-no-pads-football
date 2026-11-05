@@ -29,21 +29,22 @@ use crate::team::{Attributes, Team};
 ///
 /// This is body to body: the men are held 0.55 apart by the separation pass, so
 /// anything at or under that never fires at all, and the whole offence stops
-/// ending its plays. 0.75 is the floor the running game is tuned against, and
-/// nobody — the man on the pad included — reaches further than it.
-pub const TACKLE_RADIUS: f32 = 0.75;
+/// ending its plays. 0.60 is the floor the running game is tuned against, and it is a contact
+/// distance: at that gap the two men are touching, so the wrap is made by hands
+/// that are actually on him rather than by a defender standing in his air.
+pub const TACKLE_RADIUS: f32 = 0.74;
 /// How much room the wrap itself is given once it has started: the two men close
 /// to arm's length and the tackler rides him down from there. The radius grows
 /// from [`TACKLE_RADIUS`] to this the moment the hands are on him.
 pub const ARM_REACH: f32 = 0.44;
 /// How far a diving defender throws himself at the man with the ball.
-pub const DIVE_LUNGE: f32 = 1.05;
+pub const DIVE_LUNGE: f32 = 2.20;
 /// Hands up inside this many yards of the carrier, hands at his sides past
 /// [`PRESS_FAR`]: a defender working to get to the ball is reaching for him.
 pub const PRESS_AT: f32 = 1.2;
 pub const PRESS_FAR: f32 = 3.2;
 /// How long a dive keeps the longer reach, in seconds.
-pub const DIVE_WINDOW: f32 = 0.45;
+pub const DIVE_WINDOW: f32 = 0.30;
 
 /// How long the wrap takes: the arms go on him, the feet drive, and the two of
 /// them go to the turf. Contact is not the end of the play. A tackle that
@@ -61,7 +62,7 @@ pub const RECOVER_RADIUS: f32 = 1.15;
 /// a man standing in the way, and the pocket depends on the reach. What was wrong
 /// was not the distance he could start from but that he never closed it: see the
 /// step-in in `resolve_blocks`.
-const BLOCK_REACH: f32 = 1.9;
+const BLOCK_REACH: f32 = 1.90;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
@@ -2196,15 +2197,21 @@ impl<'a> PlaySim<'a> {
                     if ctl.dive && self.players[i].dive_t <= 0.0 {
                         self.players[i].dive_t = DIVE_WINDOW;
                         self.players[i].dive_fly = 0.0;
-                        if let Some(c) = carrier {
-                            let to = self.players[c].pos - self.players[i].pos;
-                            // The line he leaves his feet on. Nothing moves here:
-                            // the yard of ground a dive buys is covered over the
-                            // next half second, in the movement below. Adding a
-                            // whole yard to his position in one frame is what made
-                            // a dive look like a teleport onto the carrier.
-                            self.players[i].dive_aim = to.normalize_or_zero();
-                        }
+                        // He throws himself at the man with the ball, or at the
+                        // ball if nobody has it yet. Leaving the aim at whatever
+                        // the last dive left it as meant a press with no carrier
+                        // sent him nowhere at all, which reads as the button doing
+                        // nothing.
+                        let aim_at = carrier
+                            .map(|c| self.players[c].pos)
+                            .or(self.ball.flight.as_ref().map(|f| f.to))
+                            .unwrap_or(self.ball.pos);
+                        let to = aim_at - self.players[i].pos;
+                        // The line he leaves his feet on. Nothing moves here: the
+                        // ground a dive buys is covered over the next third of a
+                        // second, in the movement below. Adding it to his position
+                        // in one frame is what made a dive look like a teleport.
+                        self.players[i].dive_aim = to.normalize_or_zero();
                     }
                     if self.players[i].dive_t > 0.0 {
                         // In the air his legs are not taking orders. The body is
