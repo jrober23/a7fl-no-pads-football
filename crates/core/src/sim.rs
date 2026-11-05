@@ -55,6 +55,11 @@ pub const PRESS_FAR: f32 = 3.2;
 /// How long a dive keeps the longer reach, in seconds.
 pub const DIVE_WINDOW: f32 = 0.30;
 
+/// How long he is on the ground after a lunge. A dive is a commitment: he does
+/// not land on his hands and immediately run again, and without this he kept the
+/// speed of the lunge and slid away across the field.
+pub const DIVE_RECOVERY: f32 = 0.30;
+
 /// How long the wrap takes: the arms go on him, the feet drive, and the two of
 /// them go to the turf. Contact is not the end of the play. A tackle that
 /// resolved on the frame the defender arrived was a teleport with a sound effect:
@@ -320,6 +325,10 @@ pub struct SimPlayer {
     /// button keeps him diving; this is what makes the chain continuous instead
     /// of restarting the curve at zero every window.
     pub dive_base: f32,
+    /// Whether the button has been let go since his last lunge. A dive is one
+    /// press and one lunge; held down it chained, and a defender chaining lunges
+    /// at a runner who has already moved is a body careening about the field.
+    pub dive_armed: bool,
     /// 0..1: how much his hands are up, working to get to the man with the ball.
     pub tackle_arms: f32,
     pub engaged: Option<usize>,
@@ -653,6 +662,7 @@ impl<'a> PlaySim<'a> {
                 dive_aim: Vec2::ZERO,
                 dive_fly: 0.0,
                 dive_base: 0.0,
+                dive_armed: true,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -694,6 +704,7 @@ impl<'a> PlaySim<'a> {
                 dive_aim: Vec2::ZERO,
                 dive_fly: 0.0,
                 dive_base: 0.0,
+                dive_armed: true,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -1084,7 +1095,19 @@ impl<'a> PlaySim<'a> {
         let carried = self.carrier.map(|c| (c, self.players[c].pos));
         for (i, p) in self.players.iter_mut().enumerate() {
             p.tackle_cooldown = (p.tackle_cooldown - dt).max(0.0);
-            p.dive_t = (p.dive_t - dt).max(0.0);
+            if p.dive_t > 0.0 {
+                p.dive_t = (p.dive_t - dt).max(0.0);
+                if p.dive_t <= 0.0 {
+                    // He has landed. A lunge is the whole of the movement: keep
+                    // the speed it was carrying and he skates on across the
+                    // field after his hands are already on the ground, so he is
+                    // put on it and stays there for a moment.
+                    p.vel = Vec2::ZERO;
+                    p.stun = p.stun.max(DIVE_RECOVERY);
+                    p.dive_base = 0.0;
+                    p.dive_fly = 0.0;
+                }
+            }
             p.tackle_arms = match carried {
                 Some((c, at)) if i >= 7 && i != c && !p.down && p.stun <= 0.0 => {
                     let far = (PRESS_FAR - p.pos.dist(at)) / (PRESS_FAR - PRESS_AT);
@@ -2226,10 +2249,12 @@ impl<'a> PlaySim<'a> {
                     if !ctl.dive {
                         // Letting go lets the lungs fill: the next press is a
                         // fresh lunge from a standstill, not a continuation.
+                        self.players[i].dive_armed = true;
                         self.players[i].dive_base = 0.0;
                         self.players[i].dive_fly = 0.0;
                     }
-                    if ctl.dive && self.players[i].dive_t <= 0.0 {
+                    if ctl.dive && self.players[i].dive_armed && self.players[i].dive_t <= 0.0 {
+                        self.players[i].dive_armed = false;
                         self.players[i].dive_base = self.players[i].dive_fly;
                         // Start the window one frame in. On its first frame a
                         // lunge has flown nothing, so starting at the full window

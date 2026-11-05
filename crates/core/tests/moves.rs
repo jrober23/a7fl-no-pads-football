@@ -262,13 +262,12 @@ fn a_tackle_is_made_by_contact_and_a_dive_by_a_lunge() {
 }
 
 #[test]
-fn a_held_dive_button_keeps_him_going() {
+fn holding_the_dive_button_is_one_lunge() {
     let teams = league_teams();
     let mut sim = to_the_handoff(&teams[0], &teams[1], 41).expect("a run play");
     let carrier = sim.carrier.expect("the handoff");
     // Twenty yards behind him, with the rest of the defence parked off the
-    // field: this is the open-field chase the button is for, and nothing here
-    // can end the play or knock him down while it is being measured.
+    // field: this is the open-field chase the button is for.
     sim.players[7].pos = sim.players[carrier].pos - Vec2::new(20.0, 0.0);
     sim.players[7].stun = 0.0;
     sim.players[7].down = false;
@@ -278,40 +277,69 @@ fn a_held_dive_button_keeps_him_going() {
     }
     sim.set_human_defender(Some(7));
     let mut diving = 0;
-    let mut min_step = f32::MAX;
     let mut total = 0.0;
-    let mut frames = 0;
+    let mut last = sim.players[7].pos;
     for _ in 0..60 {
-        if sim.result.is_some() || sim.players[7].down || sim.players[7].stun > 0.0 {
+        if sim.result.is_some() {
             break;
         }
-        // A pad reports the button every frame it is held, not once.
         sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
-        let was_diving = sim.players[7].dive_t > 0.0;
-        let before = sim.players[7].pos;
+        sim.step(1.0 / 60.0);
+        if sim.players[7].dive_t > 0.0 {
+            diving += 1;
+        }
+        total += (sim.players[7].pos - last).length();
+        last = sim.players[7].pos;
+    }
+    // One window is eighteen frames. Held down it used to chain them, and a man
+    // lunge-lunge-lunging at a runner who has moved is a body sliding about the
+    // screen rather than a tackle.
+    assert!(
+        (10..=22).contains(&diving),
+        "a held button kept him diving for {diving} frames"
+    );
+    assert!(
+        // One lunge plus the step he takes while getting up. A chained second
+        // was six or seven yards, so anything past a lunge and a half is the
+        // button reloading itself.
+        total >= DIVE_LUNGE * 1.1 && total <= DIVE_LUNGE * 1.9,
+        "a held button carried him {total:.2} yards"
+    );
+}
+
+#[test]
+fn a_lunge_does_not_skate_on_after_he_lands() {
+    let teams = league_teams();
+    let mut sim = to_the_handoff(&teams[0], &teams[1], 41).expect("a run play");
+    let carrier = sim.carrier.expect("the handoff");
+    sim.players[7].pos = sim.players[carrier].pos - Vec2::new(14.0, 0.0);
+    sim.players[7].stun = 0.0;
+    sim.players[7].down = false;
+    sim.players[7].dive_t = 0.0;
+    sim.set_human_defender(Some(7));
+
+    // One press, then let go: held down it would chain and he would never land.
+    sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+    sim.step(1.0 / 60.0);
+    assert!(sim.players[7].dive_t > 0.0, "the lunge never started");
+    sim.set_def_control(Some(DefControl::default()));
+    let mut frames = 0;
+    while sim.players[7].dive_t > 0.0 && frames < 40 {
         sim.step(1.0 / 60.0);
         frames += 1;
-        let step = (sim.players[7].pos - before).length();
-        if was_diving {
-            diving += 1;
-            min_step = min_step.min(step);
-            total += step;
-        }
     }
-    // One lunge is a third of a second. Holding the button for a second has to
-    // be more than one lunge, or it is dead in his hand the moment he leaves
-    // his feet -- which is what the report described.
+    assert!(frames > 0 && frames < 40, "the lunge never ended");
+
+    // He is on his hands and knees. Ten frames later he is in the same place:
+    // no lunge speed left over to skate away on.
+    let landed = sim.players[7].pos;
+    for _ in 0..10 {
+        sim.set_def_control(Some(DefControl::default()));
+        sim.step(1.0 / 60.0);
+    }
+    let drift = (sim.players[7].pos - landed).length();
     assert!(
-        diving >= 24,
-        "held down, he was in the air for {diving} frames of {frames}: one lunge, not a chain"
-    );
-    assert!(
-        total >= 1.9 * DIVE_LUNGE,
-        "a second of holding covered only {total:.2} yards"
-    );
-    // And the seam between two lunges must not be a dead frame.
-    assert!(
-        min_step > 0.001,
-        "he stopped dead mid-dive ({min_step:.4} yards in a frame)"
+        drift < 0.5,
+        "he slid {drift:.2} yards across the field after the lunge ended"
     );
 }

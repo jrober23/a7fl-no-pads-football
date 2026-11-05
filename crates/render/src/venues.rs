@@ -432,10 +432,12 @@ fn ground(mesh: &mut Mesh, kind: Ground, rand: &mut dyn FnMut() -> f32) {
         Ground::Snow => (Rgb::hex(0x8E9AA6), Rgb::hex(0x9AA6B2)),
     };
     for (x0, x1, y0, y1) in [
-        (-300.0, 400.0, 31.0, 320.0),
-        (-300.0, 400.0, -320.0, -31.0),
-        (-300.0, -20.0, -31.0, 31.0),
-        (121.0, 400.0, -31.0, 31.0),
+        // Butted exactly against the painted ground, which reaches six yards
+        // past the boards and from TEX_X0 to TEX_X1.
+        (-300.0, 400.0, HALF_WIDTH + 6.0, 320.0),
+        (-300.0, 400.0, -320.0, -(HALF_WIDTH + 6.0)),
+        (-300.0, crate::fieldtex::TEX_X0, -(HALF_WIDTH + 6.0), HALF_WIDTH + 6.0),
+        (crate::fieldtex::TEX_X1, 400.0, -(HALF_WIDTH + 6.0), HALF_WIDTH + 6.0),
     ] {
         mesh.quad_shaded(
             Vec3::new(x0, y0, -0.05),
@@ -921,10 +923,10 @@ fn practice_scenery(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     // sky. It is laid outside the boards, in four bands around the field.
     let lawn = Rgb::hex(0x24331F);
     for (x0, x1, y0, y1) in [
-        (-520.0, 600.0, 26.5, 520.0),
-        (-520.0, 600.0, -520.0, -26.5),
-        (-520.0, -14.5, -26.5, 26.5),
-        (114.5, 600.0, -26.5, 26.5),
+        (-520.0, 600.0, HALF_WIDTH + 6.0, 520.0),
+        (-520.0, 600.0, -520.0, -(HALF_WIDTH + 6.0)),
+        (-520.0, crate::fieldtex::TEX_X0, -(HALF_WIDTH + 6.0), HALF_WIDTH + 6.0),
+        (crate::fieldtex::TEX_X1, 600.0, -(HALF_WIDTH + 6.0), HALF_WIDTH + 6.0),
     ] {
         mesh.quad_shaded(
             Vec3::new(x0, y0, 0.002),
@@ -2013,20 +2015,18 @@ fn beach(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     // yards out from the boards and stop at the end of the resort, so there was a
     // bare strip against the boards on the hotel side and nothing at all past the
     // end zone — the shot down the field ended on a hole in the world.
-    const NEAR: f32 = 17.6;
+    // The painted ground runs to six yards outside the boards. Everything here
+    // has to start exactly where it stops: the old numbers started the sand
+    // seventeen yards out, which is inside the field, so the sideline had sand
+    // and turf in the same place fighting over which one to draw -- and the
+    // water, which starts at 31 under a ground that reaches 32.7, lapped over
+    // the apron as a pale blue band.
+    const NEAR: f32 = HALF_WIDTH + 6.0;
     // The water starts out past the grandstand rather than tight against the
     // boards: a bright plane at the foot of the stand read as a pool, not a sea.
-    const SHORE: f32 = 31.0;
-    mesh.quad_shaded(
-        Vec3::new(-220.0, -190.0, 0.006),
-        Vec3::new(340.0, -190.0, 0.006),
-        Vec3::new(340.0, -SHORE, 0.006),
-        Vec3::new(-220.0, -SHORE, 0.006),
-        Rgb::hex(0x1C7C96),
-        1.0,
-    );
-    // Wet sand between the boards and the water, so there is ground under the
-    // stand rather than a hole the sea shows through.
+    const SHORE: f32 = HALF_WIDTH + 20.0;
+    // Wet sand between the painted ground and the water, so there is ground
+    // under the stand rather than a hole the sea shows through.
     mesh.quad_shaded(
         Vec3::new(-220.0, -SHORE, 0.007),
         Vec3::new(340.0, -SHORE, 0.007),
@@ -2052,8 +2052,11 @@ fn beach(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     // the shot down the field as well as in the sideline shot.
     for (x0, x1, y0, y1, z) in [
         (-220.0f32, 340.0, NEAR, 190.0, 0.008f32),
-        (122.0, 340.0, -NEAR, NEAR, 0.0085),
-        (-220.0, -122.0, -NEAR, NEAR, 0.0085),
+        // The end bands start exactly where the painted ground stops. While
+        // they started at 122 and -122 the strip between was bare, and the pale
+        // sky showed through it as a blue rectangle at each end zone.
+        (crate::fieldtex::TEX_X1, 340.0, -NEAR, NEAR, 0.0085),
+        (-220.0, crate::fieldtex::TEX_X0, -NEAR, NEAR, 0.0085),
     ] {
         mesh.quad_shaded(
             Vec3::new(x0, y0, z),
@@ -2542,5 +2545,40 @@ mod venue_tests {
         let layouts: std::collections::HashSet<_> = cities.iter().map(|c| c.layout).collect();
         assert!(waters.len() >= 4, "only {} kinds of water in the league", waters.len());
         assert!(layouts.len() >= 4, "only {} skyline shapes in the league", layouts.len());
+    }
+
+    /// Nothing a ground draws may lie on top of the painted ground. The turf and
+    /// the apron belong to the field texture; a second flat plane over them is
+    /// the "two things deciding which one to render" the sidelines had.
+    #[test]
+    fn no_ground_plane_lies_on_top_of_the_painted_ground() {
+        let edge = HALF_WIDTH + 6.0;
+        for kind in [
+            Kind::Practice,
+            Kind::ClosedPractice,
+            Kind::Beach,
+            Kind::Championship,
+            Kind::Home(0),
+            Kind::Home(5),
+            Kind::Home(12),
+        ] {
+            let mesh = build(kind);
+            let intruding = mesh
+                .tris
+                .iter()
+                .filter(|t| {
+                    let flat = t.a.z < 0.06 && t.b.z < 0.06 && t.c.z < 0.06;
+                    flat && [t.a, t.b, t.c].iter().all(|p| {
+                        p.x > crate::fieldtex::TEX_X0 + 0.01
+                            && p.x < crate::fieldtex::TEX_X1 - 0.01
+                            && p.y.abs() < edge - 0.01
+                    })
+                })
+                .count();
+            assert_eq!(
+                intruding, 0,
+                "{kind:?} lays {intruding} ground triangles on the painted ground"
+            );
+        }
     }
 }

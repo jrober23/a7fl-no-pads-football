@@ -3037,11 +3037,12 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
             focus,
             badges,
             guide,
-            power: if self.run_call {
-                None
-            } else {
-                self.charge.map(|(_, t)| (t / CHARGE_TIME).clamp(0.0, 1.0))
-            },
+            // No meter in a scrimmage down. How far the ball goes is the
+            // quarterback's arm and how accurately it arrives is his accuracy;
+            // the button is the arc, so a fill bar would be telling the player
+            // to hold for power he does not get from holding. The throw-off
+            // keeps its own meter, because there the power *is* the throw.
+            power: None,
             short,
             needed,
         };
