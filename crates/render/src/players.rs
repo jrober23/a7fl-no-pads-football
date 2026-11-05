@@ -524,11 +524,29 @@ fn smooth_profile(points: &[(Vec3, f32)], per: usize) -> Vec<(Vec3, f32)> {
     out
 }
 
+/// How far a cleat's sole sits below the ankle joint it hangs from.
+const CLEAT_DROP: f32 = 0.030;
+
+/// The heel and toe of a cleat, from the ankle and the pitch of the foot.
+///
+/// Shared with the tests, because the shoe has to be hung off the ankle and not
+/// off the turf. It used to be written at a fixed height -- `z` of 0.032 whatever
+/// the ankle did -- so a foot lifted in the stride left its cleat standing on the
+/// grass below it, a black shoe with nothing in it on the wrong side of a runner.
+fn shoe_points(ankle: Vec3, pitch: f32) -> (Vec3, Vec3) {
+    let (sp, cp) = pitch.sin_cos();
+    let sole = ankle.z - CLEAT_DROP;
+    (
+        Vec3::new(ankle.x - 0.066, ankle.y, sole),
+        Vec3::new(ankle.x + 0.212 * cp, ankle.y, sole + 0.004 - 0.212 * sp * 0.35),
+    )
+}
+
 fn shoe(mesh: &mut Mesh, ankle: Vec3, pitch: f32, color: Rgb) {
     let (sp, cp) = pitch.sin_cos();
-    let heel = Vec3::new(ankle.x - 0.066, ankle.y, 0.032);
-    let mid = Vec3::new(ankle.x + 0.055 * cp, ankle.y, 0.032 - 0.055 * sp * 0.35);
-    let toe = Vec3::new(ankle.x + 0.212 * cp, ankle.y, 0.036 - 0.212 * sp * 0.35);
+    let (heel, toe) = shoe_points(ankle, pitch);
+    let sole = ankle.z - CLEAT_DROP;
+    let mid = Vec3::new(ankle.x + 0.055 * cp, ankle.y, sole - 0.055 * sp * 0.35);
     // Sole and upper are each one capped tube from heel to toe, so the shoe is a
     // shoe from any angle. Built from open cylinders, a foot pitched hard on
     // toe-off showed the inside of the sole, which is the detached-looking
@@ -1687,6 +1705,28 @@ mod tests {
                 (hip_z - SOLE - reach).abs() < 1e-4,
                 "phase {phase:.3}: body not carried by a leg"
             );
+        }
+    }
+
+    /// A cleat hangs off the ankle, not off the turf.
+    ///
+    /// The bug this holds: the sole was written at a fixed height, so a foot
+    /// lifted in the stride left its shoe standing on the grass while the sock
+    /// went up with the leg.
+    #[test]
+    fn the_cleat_travels_with_the_ankle() {
+        for pitch in [-0.28f32, 0.0, 0.30, 0.60] {
+            for lift in [0.0f32, 0.15, 0.35, 0.60] {
+                let ankle = Vec3::new(0.0, 0.0, SOLE + lift);
+                let (heel, toe) = shoe_points(ankle, pitch);
+                let low = heel.z.min(toe.z);
+                assert!(
+                    low >= ankle.z - 0.10,
+                    "pitch {pitch}: the cleat is {:.3} below its ankle at a lift of {lift}",
+                    ankle.z - low
+                );
+                assert!(low <= ankle.z - 0.01, "pitch {pitch}: the cleat is above the ankle joint");
+            }
         }
     }
 
