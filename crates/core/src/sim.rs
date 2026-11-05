@@ -2229,11 +2229,40 @@ impl<'a> PlaySim<'a> {
     // Defense
     // -----------------------------------------------------------------
 
+    /// Bodies cannot occupy the same ground. Two men come apart at the
+    /// shoulders (twice the body radius), and a pair in a wrap is held outside
+    /// this by `HOLD_DISTANCE`. Only two men both on the ground may share it:
+    /// a standing defender used to be allowed inside the man who had just been
+    /// tackled, which is the overlap that made a pile read as one body.
+    fn separate_bodies(&mut self) {
+        let touch = BODY_RADIUS * 2.0;
+        for a in 0..14 {
+            for b in (a + 1)..14 {
+                if self.players[a].down && self.players[b].down {
+                    continue;
+                }
+                let delta = self.players[b].pos - self.players[a].pos;
+                let d = delta.length();
+                if d < touch && d > 1e-4 {
+                    let push = delta.normalize_or_zero() * (touch - d) * 0.5;
+                    self.players[a].pos -= push;
+                    self.players[b].pos += push;
+                }
+            }
+        }
+    }
+
     fn update_defense(&mut self, dt: f32) {
         let carrier = self.carrier;
         let ball_landing = self.ball.flight.as_ref().map(|f| f.to);
         for i in 7..14 {
             if self.players[i].down || self.players[i].stun > 0.0 {
+                continue;
+            }
+            // A man whose hands are on the carrier in a wrap holds his side of
+            // the body. Steering him at the ball every frame walked him back
+            // through the carrier and they merged into one figure.
+            if self.wrap.is_some() && self.players[i].wrap > 0.0 {
                 continue;
             }
             // The defender on the pad answers the stick; the rest of the eleven
@@ -2493,25 +2522,8 @@ impl<'a> PlaySim<'a> {
                 FIELD_HALF_WIDTH + BODY_APRON,
             );
         }
-        // Bodies cannot occupy the same ground: they come apart at the shoulders,
-        // and a pair in a wrap is held outside this by `HOLD_DISTANCE`.
-        for a in 0..14 {
-            for b in (a + 1)..14 {
-                if self.players[a].down || self.players[b].down {
-                    continue;
-                }
-                let delta = self.players[b].pos - self.players[a].pos;
-                let d = delta.length();
-                // Shoulder to shoulder, not half a yard of daylight: a pair comes
-                // apart at twice the body radius and not before.
-                let touch = BODY_RADIUS * 2.0;
-                if d < touch && d > 1e-4 {
-                    let push = delta.normalize_or_zero() * (touch - d) * 0.5;
-                    self.players[a].pos -= push;
-                    self.players[b].pos += push;
-                }
-            }
-        }
+        self.separate_bodies();
+        self.separate_bodies();
         // A shove runs after the wall, so enforce it once more: nobody ends a
         // frame standing in the advertising boards.
         for p in self.players.iter_mut() {
@@ -2980,6 +2992,17 @@ impl<'a> PlaySim<'a> {
             let want = spot + Vec2::new(angle.cos(), angle.sin()) * HOLD_DISTANCE;
             let him = &mut self.players[*q];
             him.pos = him.pos.lerp(want, (dt * 6.0).min(1.0));
+            // A body has a width: if the lerp or the carrier's own movement put
+            // him inside it, he is seated back out at hands length.
+            let off = him.pos - spot;
+            if off.length() < HOLD_DISTANCE {
+                let dir = if off.length() > 1e-3 {
+                    off.normalize_or_zero()
+                } else {
+                    Vec2::new(angle.cos(), angle.sin())
+                };
+                him.pos = spot + dir * HOLD_DISTANCE;
+            }
             him.heading = (spot.y - him.pos.y).atan2(spot.x - him.pos.x);
             him.wrap = p;
             him.tackle_arms = 1.0;
@@ -5426,6 +5449,12 @@ mod tests {
         assert!(
             a.length() < 1.05 && b.length() < 1.05,
             "they never got to him: {:.2} and {:.2} yards off",
+            a.length(),
+            b.length()
+        );
+        assert!(
+            a.length() > BODY_RADIUS * 2.0 && b.length() > BODY_RADIUS * 2.0,
+            "a helper was standing inside him: {:.2} and {:.2} yards",
             a.length(),
             b.length()
         );

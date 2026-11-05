@@ -2088,22 +2088,40 @@ fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
             Vec3::new(x1, y0, 0.004),
             Vec3::new(x1, y1, 0.004),
             Vec3::new(x0, y1, 0.004),
-            Rgb::hex(0xB08152),
+            Rgb::hex(0x9A6A3C),
             1.0,
         );
-        // Plank seams across the band, so it is laid timber and not paint.
-        let mut seam = y0 + 1.2;
+        // Caulking between the planks. A deck without its seams is a slab of one
+        // colour, which is what made it read as sand from above.
+        let mut seam = y0 + 0.9;
         while seam < y1 - 0.1 {
             mesh.quad_shaded(
                 Vec3::new(x0, seam, 0.006),
                 Vec3::new(x1, seam, 0.006),
-                Vec3::new(x1, seam + 0.07, 0.006),
-                Vec3::new(x0, seam + 0.07, 0.006),
-                Rgb::hex(0x8A6039),
+                Vec3::new(x1, seam + 0.12, 0.006),
+                Vec3::new(x0, seam + 0.12, 0.006),
+                Rgb::hex(0x2C1D12),
                 1.0,
             );
-            seam += 1.3;
+            seam += 1.1;
         }
+    }
+    // A margin plank of pale timber where the deck meets the painted ground, so
+    // the edge of the field is a boat's margin and not a colour change.
+    for (x0, x1, y0, y1) in [
+        (-EDGE, BOW, DECK, DECK + 0.55),
+        (-EDGE, BOW, -DECK - 0.55, -DECK),
+        (crate::fieldtex::TEX_X1, crate::fieldtex::TEX_X1 + 0.55, -DECK, DECK),
+        (crate::fieldtex::TEX_X0 - 0.55, crate::fieldtex::TEX_X0, -DECK, DECK),
+    ] {
+        mesh.quad_shaded(
+            Vec3::new(x0, y0, 0.008),
+            Vec3::new(x1, y0, 0.008),
+            Vec3::new(x1, y1, 0.008),
+            Vec3::new(x0, y1, 0.008),
+            Rgb::hex(0xE9E2D2),
+            1.0,
+        );
     }
 
     // The bow: the deck tapers to a point ahead of the foredeck.
