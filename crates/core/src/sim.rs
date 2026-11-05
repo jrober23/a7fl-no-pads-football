@@ -33,6 +33,15 @@ use crate::team::{Attributes, Team};
 /// distance: at that gap the two men are touching, so the wrap is made by hands
 /// that are actually on him rather than by a defender standing in his air.
 pub const TACKLE_RADIUS: f32 = 0.74;
+
+/// The ball in the air is decided by the receiver's hands against the coverage
+/// ratings of the men around the landing spot, not by a flat completion roll.
+pub const CATCH_BASE: f32 = 0.20;
+/// How much a point of hands-minus-coverage is worth on the catch.
+pub const CATCH_WEIGHT: f32 = 0.55;
+pub const CATCH_FLOOR: f32 = 0.06;
+/// Yards from the landing spot inside which a defender's coverage rating bites.
+pub const COVERAGE_AREA: f32 = 3.0;
 /// How much room the wrap itself is given once it has started: the two men close
 /// to arm's length and the tackler rides him down from there. The radius grows
 /// from [`TACKLE_RADIUS`] to this the moment the hands are on him.
@@ -62,7 +71,7 @@ pub const RECOVER_RADIUS: f32 = 1.15;
 /// a man standing in the way, and the pocket depends on the reach. What was wrong
 /// was not the distance he could start from but that he never closed it: see the
 /// step-in in `resolve_blocks`.
-const BLOCK_REACH: f32 = 1.90;
+pub const BLOCK_REACH: f32 = 1.90;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
@@ -1702,6 +1711,7 @@ impl<'a> PlaySim<'a> {
     }
 
     fn throw_to(&mut self, qb: usize, target: Option<usize>) {
+        // The button names the man; the meter is the player's, not the sim's.
         self.throw_to_with(qb, target, 0.8);
     }
 
@@ -2588,15 +2598,10 @@ impl<'a> PlaySim<'a> {
             if self.players[d].down || self.players[d].stun > 0.0 || self.players[d].tackle_cooldown > 0.0 {
                 continue;
             }
-            // A dive is a lunge and gets its hands out further; a man on his feet
-            // has only his arms, and the man on the pad gets no bonus reach. The
-            // extra reach the pad used to carry is what pulled carriers backwards.
-            // A dive covers its ground with the body, not with the arms: the
-            // lunge is what buys the extra distance. It used to reach 1.9 times
-            // as far, which let a diving defender tackle a man a yard and a half
-            // away without ever touching him once the press stopped teleporting
-            // him into contact.
-            let reach = TACKLE_RADIUS;
+            // A diving man has his arms out in front of him, so a lunge reaches
+            // further than a wrap; a man on his feet wraps what his shoulder can.
+            let reach = TACKLE_RADIUS
+                + if self.players[d].dive_t > 0.0 { ARM_REACH } else { 0.0 };
             let dist = self.players[d].pos.dist(self.players[carrier].pos);
             if dist <= reach {
                 attempts.push((d, dist));
@@ -3175,6 +3180,54 @@ impl<'a> PlaySim<'a> {
         self.resolve_catch(&flight);
     }
 
+    /// The chance this receiver comes down with the ball at `landing`.
+    ///
+    /// His hands against the coverage by him: a lockdown corner and a fill-in
+    /// used to defend a pass identically, because the only rating the catch roll
+    /// ever read was the receiver's. Separation stays physical -- a man two yards
+    /// clear catches it against anybody -- but a covered man catches it only if
+    /// his hands are better than the man covering him.
+    pub fn catch_chance(&self, receiver: usize, landing: Vec2) -> f32 {
+        let hands = self.attrs(receiver).catch_factor();
+        let coverage = self.coverage_in_the_area(landing);
+        let separation = (7..14)
+            .filter(|d| !self.players[*d].down)
+            .map(|d| self.players[d].pos.dist(landing))
+            .fold(COVERAGE_AREA * 2.0, f32::min);
+        let space = ((separation - 0.9) * 0.11).clamp(-0.18, 0.22);
+        let accuracy_penalty =
+            ((self.players[receiver].pos.dist(landing) - 1.0).max(0.0) * 0.35).min(0.5);
+        // A short throw is on him before the defence can close.
+        let short_bonus = if (self.los - landing.x).abs() < 10.0 { 0.10 } else { 0.0 };
+        clamp(
+            CATCH_BASE + (hands - coverage) * CATCH_WEIGHT + space - accuracy_penalty
+                + short_bonus,
+            CATCH_FLOOR,
+            0.97,
+        )
+    }
+
+    /// How well the men in the area cover the landing spot, 0..1.
+    ///
+    /// The nearest man's rating is the grip, and a second man converging on the
+    /// ball tightens it. This is coverage in the area, not man-to-man: the safety
+    /// driving downhill counts, and a defender three yards away with a 40 rating
+    /// is not mistaken for a blanket.
+    pub fn coverage_in_the_area(&self, landing: Vec2) -> f32 {
+        let mut grips: Vec<f32> = (7..14)
+            .filter(|d| !self.players[*d].down)
+            .map(|d| {
+                let dist = self.players[d].pos.dist(landing);
+                let near = (1.0 - dist / COVERAGE_AREA).max(0.0);
+                self.attrs(d).coverage_factor() * near
+            })
+            .collect();
+        grips.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let first = grips.first().copied().unwrap_or(0.0);
+        let second = grips.get(1).copied().unwrap_or(0.0);
+        (first + second * 0.25).min(1.0)
+    }
+
     fn resolve_catch(&mut self, flight: &Flight) {
         let landing = flight.to;
         let target = flight.target;
@@ -3231,21 +3284,11 @@ impl<'a> PlaySim<'a> {
         }
 
         // Catch or incompletion.
+        // Catch or incompletion. This is the contest the ratings exist for: the
+        // receiver's hands against the coverage of the men around the spot, with
+        // his separation as the head start the coverage has to make up.
         if let Some(t) = target.filter(|_| !stray) {
-            let separation = contest.map(|(_, d)| d).unwrap_or(6.0);
-            let catch_factor = self.attrs(t).catch_factor();
-            let contesting = (separation < 1.4) as i32 as f32;
-            let accuracy_penalty = ((self.players[t].pos.dist(landing) - 1.0).max(0.0) * 0.35).min(0.5);
-            // Short throws are easier: less air time for the defence to close.
-            let short_bonus = if (self.los - landing.x).abs() < 10.0 { 0.10 } else { 0.0 };
-            let p = clamp(
-                0.16 + catch_factor * 0.42 + (separation * 0.05).min(0.15)
-                    - contesting * 0.30
-                    - accuracy_penalty
-                    + short_bonus,
-                0.08,
-                0.95,
-            );
+            let p = self.catch_chance(t, landing);
             if self.rng.chance(p) {
                 // Caught.
                 let receiver = t;
@@ -4057,6 +4100,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_catch_is_decided_by_hands_against_coverage_ratings() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let s = setup(45.0, 1, 10.0, 31);
+        let mut sim = PlaySim::new(&off, &def_, &book[0], &d[0], &s);
+        let receiver = 3;
+        let landing = sim.players[receiver].pos;
+        // Nobody near the spot: the ball is the receiver's to drop.
+        for i in 7..14 {
+            sim.players[i].pos = Vec2::new(landing.x - 20.0, landing.y);
+        }
+        let open = sim.catch_chance(receiver, landing);
+        // The best cover man in the league at his hip.
+        let best = (7..14)
+            .max_by_key(|i| sim.attrs(*i).coverage)
+            .expect("a defence");
+        sim.players[best].pos = Vec2::new(landing.x + 0.4, landing.y);
+        let covered = sim.catch_chance(receiver, landing);
+        assert!(
+            covered < open,
+            "coverage took nothing away: {covered} at his hip, {open} uncovered"
+        );
+        // The same hip, covered by the worst man out there: the rating is what
+        // took the ball away, not the fact that somebody was standing there.
+        let worst = (7..14)
+            .min_by_key(|i| sim.attrs(*i).coverage)
+            .expect("a defence");
+        sim.players[worst].pos = Vec2::new(landing.x + 0.4, landing.y);
+        sim.players[best].pos = Vec2::new(landing.x - 20.0, landing.y);
+        let by_scrub = sim.catch_chance(receiver, landing);
+        assert!(
+            by_scrub > covered,
+            "the cover rating never entered the catch: {by_scrub} vs {covered}"
+        );
+        assert!(
+            (CATCH_FLOOR..=0.97).contains(&covered) && (CATCH_FLOOR..=0.97).contains(&by_scrub),
+            "chance outside its bounds: {covered}, {by_scrub}"
+        );
     }
 
     #[test]
