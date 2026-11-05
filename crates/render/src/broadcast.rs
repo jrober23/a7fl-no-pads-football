@@ -2590,6 +2590,7 @@ mod tests {
             indices: Vec::new(),
             node_rest: Vec::new(),
             node_parent: Vec::new(),
+            node_names: Vec::new(),
             skin_joints: Vec::new(),
             inverse_bind: Vec::new(),
             clips: Vec::new(),
@@ -2669,6 +2670,7 @@ mod tests {
             indices: Vec::new(),
             node_rest: Vec::new(),
             node_parent: Vec::new(),
+            node_names: Vec::new(),
             skin_joints: Vec::new(),
             inverse_bind: Vec::new(),
             clips: vec![
