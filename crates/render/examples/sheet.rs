@@ -20,10 +20,12 @@ const TILE_H: usize = 640;
 fn main() {
     let teams = league_teams();
     let team = &teams[0];
+    // A sheet is for looking at a face, so take a man who is not masked.
     let player = team
         .roster
         .iter()
-        .find(|p| p.number == 2)
+        .find(|p| p.number == 2 && !p.balaclava)
+        .or_else(|| team.roster.iter().find(|p| !p.balaclava))
         .unwrap_or(&team.roster[0]);
     let uniform = &team.home;
     let pose = Pose {

@@ -1651,6 +1651,9 @@ pub fn build_mesh_into(
         skin,
         accent,
         mask: if masked { Some(jersey) } else { None },
+        // Flat features, LEGO style: painted on the skull instead of modelled
+        // into it. At broadcast distance the geometry was never visible anyway.
+        painted_face: true,
     }
     .build(mesh, detail.quality());
 
@@ -2088,7 +2091,13 @@ mod tests {
     #[test]
     fn the_head_is_a_face_and_not_a_ball() {
         let teams = nopads_core::team::league_teams();
-        let player = &teams[0].roster[0];
+        // A man under a balaclava has no face to paint, so the test asks the
+        // roster for one who is bare-headed.
+        let player = teams[0]
+            .roster
+            .iter()
+            .find(|p| !p.balaclava)
+            .unwrap_or(&teams[0].roster[0]);
         let uniform = &teams[0].home;
         let pose = Pose { run_phase: 0.3, speed: 0.0, ..Default::default() };
         let mesh = build_mesh_at(player, uniform, &pose, 0, Detail::Close);
@@ -2096,8 +2105,13 @@ mod tests {
         let h = z_max - z_min;
         let head: Vec<_> = mesh.tris.iter().filter(|t| t.a.z > z_min + h * 0.905).collect();
         assert!(head.len() > 500, "the head is only {} faces", head.len());
-        let eye_white = head.iter().filter(|t| t.color == Rgb::hex(0xEFE8DC)).count();
-        assert!(eye_white >= 6, "no eyes on the head: {eye_white} faces");
+        // The features are paint now, not geometry: a face is a sheet of texture
+        // over the front of the skull instead of a pile of eye spheres. What the
+        // test can hold him to is that the paint is there and has an atlas to
+        // come from -- the eyes themselves are texels now.
+        let painted = head.iter().filter(|t| t.tex.is_some()).count();
+        assert!(painted >= 30, "no painted face on the head: {painted} textured faces");
+        assert!(!mesh.textures.is_empty(), "a painted face with no atlas to sample");
         let smooth = head
             .iter()
             .filter(|t| (t.na - t.nb).length() > 0.01 || (t.na - t.nc).length() > 0.01)

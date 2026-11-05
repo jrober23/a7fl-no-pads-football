@@ -21,6 +21,7 @@ pub mod callsheet;
 pub mod capture;
 pub mod cloth;
 pub mod defsheet;
+pub mod face;
 pub mod fieldtex;
 pub mod font;
 pub mod hud;

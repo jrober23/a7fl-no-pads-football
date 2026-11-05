@@ -12,9 +12,13 @@
 //! Everything is in the figure's own frame: `+x` is the way he faces, `+y` his
 //! left, `+z` up. The camera is the only thing that turns.
 
+use std::sync::{Arc, Mutex, OnceLock};
+
 use nopads_core::math::{Rgb, Vec3};
 use nopads_core::team::{HairStyle, Player};
 
+use crate::face::face_texture;
+use crate::raster::Texture;
 use crate::scene::Mesh;
 
 /// Where the face is on a head of radius `hr`, as `(height fraction, half width,
@@ -71,6 +75,15 @@ pub struct Head<'a> {
     /// The balaclava, in club colour, for the one or two men a side who wear
     /// one. When it is `None` the face and hair are built instead of cloth.
     pub mask: Option<Rgb>,
+    /// Paint the features on instead of modelling them.
+    ///
+    /// A man on the field is forty pixels tall and his face is six of them. At
+    /// that size a modelled eye is under a pixel of loose geometry that still
+    /// costs a sphere, two lids and a socket to build, and it reads as a lump.
+    /// Flat features are crisp at any size, cost nothing to draw, and never turn
+    /// into a pile of beads when the camera gets close -- which is the same trade
+    /// a LEGO minifigure makes.
+    pub painted_face: bool,
 }
 
 impl<'a> Head<'a> {
@@ -199,6 +212,46 @@ impl<'a> Head<'a> {
         }
     }
 
+    /// The painted face, laid on the skull as one sheet of ink and skin.
+    ///
+    /// It goes on the surface the head already is -- sampled through `point`, so
+    /// it follows the brow and the cheek instead of floating in front of them --
+    /// at a few millimetres proud, which is enough to beat the head it sits on
+    /// and little enough that it has no thickness to catch the light.
+    fn paint_face(&self, mesh: &mut Mesh, segs: usize) {
+        let hr = self.hr();
+        let (u_lo, u_hi) = (-0.62f32, 0.62f32);
+        let (v_lo, v_hi) = (0.24f32, 0.91f32);
+        let cols = segs.max(10) / 2;
+        let rows = 10usize;
+        let first = mesh.tris.len();
+        for r in 0..rows {
+            let t0 = r as f32 / rows as f32;
+            let t1 = (r + 1) as f32 / rows as f32;
+            let v0 = v_lo + (v_hi - v_lo) * t0;
+            let v1 = v_lo + (v_hi - v_lo) * t1;
+            for c in 0..cols {
+                let s0 = c as f32 / cols as f32;
+                let s1 = (c + 1) as f32 / cols as f32;
+                let u0 = u_lo + (u_hi - u_lo) * s0;
+                let u1 = u_lo + (u_hi - u_lo) * s1;
+                let at = |u: f32, v: f32| -> (Vec3, Vec3) {
+                    let p = self.point(u, v);
+                    (p + self.outward(p) * hr * 0.006, self.skull_normal(u, v))
+                };
+                let (pa, na) = at(u0, v0);
+                let (pb, nb) = at(u1, v0);
+                let (pc, nc) = at(u1, v1);
+                let (pd, nd) = at(u0, v1);
+                let before = mesh.tris.len();
+                mesh.quad_curved(pa, na, pb, nb, pc, nc, pd, nd, Rgb::WHITE, 1.0);
+                mesh.set_quad_uv(before, [(s0, t0), (s1, t0), (s1, t1), (s0, t1)]);
+            }
+        }
+        let slot = mesh.add_texture(face_texture(self.skin));
+        mesh.texture_range(first..mesh.tris.len(), slot);
+    }
+
     pub fn build(&self, mesh: &mut Mesh, quality: u8) {
         let hr = self.hr();
         let c = self.center;
@@ -219,6 +272,9 @@ impl<'a> Head<'a> {
         let fine = quality >= 1;
         let face = quality >= 2;
         let portrait = quality >= 3;
+        if self.painted_face && face && self.mask.is_none() {
+            self.paint_face(mesh, segs);
+        }
 
         let skin = self.skin;
         let eye_white = Rgb::hex(0xEFE8DC);
@@ -374,6 +430,11 @@ impl<'a> Head<'a> {
             mesh.tube(&hem, if fine { 5 } else { 3 }, cloth, false);
         }
 
+        // A painted face has no geometry in it at all: the eyes, the nose and the
+        // mouth are painted over the skull further down. The ears, the beard and
+        // the hair stay, because those are silhouette and cloth rather than
+        // features.
+        if !self.painted_face {
         // ---------------- eyes ----------------
         let eye_v = 0.617;
         let eye_u = 0.400;
@@ -527,6 +588,7 @@ impl<'a> Head<'a> {
             }
         }
 
+        }
         // ---------------- ears ----------------
         for side in [-1.0f32, 1.0] {
             let u = if side > 0.0 {
