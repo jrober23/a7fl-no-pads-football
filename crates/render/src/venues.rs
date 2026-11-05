@@ -11,6 +11,7 @@
 use nopads_core::math::{Rgb, Vec3};
 use nopads_core::team::{clubs, Team};
 
+use crate::raster::Texture;
 use crate::scene::{Lighting, Mesh};
 
 /// Yards of field between the goal lines, and half the width of the paint. The
@@ -2029,6 +2030,101 @@ fn outback(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
 /// everything outside it. Teak under the stands, a white bulwark and a rail
 /// round the edge, the sea eight yards down, a deckhouse astern and a bow that
 /// comes to a point ahead of the far end zone.
+/// Which edge of a deck band meets the painted ground.
+#[derive(Clone, Copy)]
+enum Side {
+    LowX,
+    HighX,
+    LowY,
+    HighY,
+}
+
+/// A hash in 0..1, so a plank is a different board from the one beside it and
+/// the same board on every replay.
+fn hashf(i: i32) -> f32 {
+    let mut h = (i as u32) ^ 0x9E37_79B9;
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x85EB_CA6B);
+    h ^= h >> 13;
+    (h & 0xFFFF) as f32 / 65535.0
+}
+
+/// A band of laid teak, painted once: boards running the length of the band,
+/// caulking between them, and a pale margin plank where the band meets the
+/// painted ground.
+///
+/// The seams used to be geometry -- a quad every yard, each a tenth of a yard
+/// wide and two hundred long. The rasteriser walks a triangle's whole bounding
+/// box, so a strip like that costs a screenful of pixels however few it covers:
+/// the hundred-odd of them on this deck were most of a frame. Painted into the
+/// band they cost one sample each.
+fn teak(x0: f32, x1: f32, y0: f32, y1: f32, margin: Option<Side>) -> Texture {
+    const PX: f32 = 5.0;
+    const PITCH: f32 = 1.1;
+    const MARGIN: f32 = 0.55;
+    const CAULK: f32 = 0.18;
+    let base = Rgb::hex(0x9A6A3C);
+    let grain = Rgb::hex(0x7A4E26);
+    let seam = Rgb::hex(0x2C1D12);
+    let pale = Rgb::hex(0xE9E2D2);
+    let w = (((x1 - x0) * PX).round() as usize).max(2);
+    let h = (((y1 - y0) * PX).round() as usize).max(2);
+    let mut tex = Texture::new(w, h, base);
+    for py in 0..h {
+        let y = y0 + (py as f32 + 0.5) / PX;
+        let across = (y - y0) / PITCH;
+        let board = across.floor();
+        let local = (across - board) * PITCH;
+        let tone = 0.90 + 0.16 * hashf(board as i32);
+        let mut row = base.lerp(grain, (1.0 - tone).clamp(0.0, 1.0));
+        if local < CAULK {
+            row = seam;
+        }
+        for px in 0..w {
+            let x = x0 + (px as f32 + 0.5) / PX;
+            let in_margin = match margin {
+                Some(Side::LowY) => y - y0 < MARGIN,
+                Some(Side::HighY) => y1 - y < MARGIN,
+                Some(Side::LowX) => x - x0 < MARGIN,
+                Some(Side::HighX) => x1 - x < MARGIN,
+                None => false,
+            };
+            let c = if in_margin {
+                pale
+            } else {
+                // The grain wanders along the board, so the timber is not a card.
+                let g = (x * 1.7 + board * 2.3).sin() * 0.5 + 0.5;
+                row.lerp(grain, 0.10 * g)
+            };
+            tex.set(px as i32, py as i32, c);
+        }
+    }
+    tex
+}
+
+/// The sea, painted once. The highlight bands that make it read as water were
+/// four hundred strips laid over the plane, each a thousand yards long and half
+/// a yard wide -- a screenful of bounding box each, for a hairline of coverage.
+fn sea_texture() -> Texture {
+    const W: usize = 512;
+    const H: usize = 512;
+    let deep = Rgb::hex(0x0E5A78);
+    let mut tex = Texture::new(W, H, deep);
+    for py in 0..H {
+        let k = hashf(py as i32);
+        let t = py as f32 / H as f32;
+        let row = if k > 0.70 {
+            deep.lerp(Rgb::WHITE, 0.09 + 0.13 * k)
+        } else {
+            deep.lerp(Rgb::WHITE, 0.01 + 0.05 * t)
+        };
+        for px in 0..W {
+            tex.set(px as i32, py as i32, row);
+        }
+    }
+    tex
+}
+
 fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     /// Where the painted ground stops: every deck plank starts exactly here.
     const DECK: f32 = HALF_WIDTH + 6.0;
@@ -2039,29 +2135,37 @@ fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     /// Where the foredeck ends and the bow begins.
     const BOW: f32 = 176.0;
 
-    // The sea. One plane a long way down, so the deck is plainly a height above
-    // it, with long highlight streaks so it reads as water and not a blue card.
-    mesh.quad_shaded(
-        Vec3::new(-620.0, -620.0, SEA),
-        Vec3::new(920.0, -620.0, SEA),
-        Vec3::new(920.0, 620.0, SEA),
-        Vec3::new(-620.0, 620.0, SEA),
-        Rgb::hex(0x0E5A78),
-        1.0,
-    );
-    let mut y = -620.0;
-    while y < 620.0 {
-        let t = (y + 620.0) / 1240.0;
-        mesh.quad_shaded(
-            Vec3::new(-620.0, y, SEA + 0.05),
-            Vec3::new(920.0, y, SEA + 0.05),
-            Vec3::new(920.0, y + 0.55, SEA + 0.05),
-            Vec3::new(-620.0, y + 0.55, SEA + 0.05),
-            Rgb::hex(0x0E5A78).lerp(Rgb::WHITE, 0.08 + 0.14 * t),
-            1.0,
-        );
-        y += 3.1;
+
+    // The sea. One painted plane a long way down, so the deck is plainly a height
+    // above it, cut into cells: the fog is worked out per triangle, and one
+    // triangle the size of the sea takes a single value for the whole of it,
+    // which flattens the water to a pale card with no far side to it.
+    const SEA_X: (f32, f32) = (-620.0, 920.0);
+    const SEA_Y: (f32, f32) = (-620.0, 620.0);
+    const CELLS: (usize, usize) = (24, 16);
+    let slot = mesh.add_texture(std::sync::Arc::new(sea_texture()));
+    for i in 0..CELLS.0 {
+        for j in 0..CELLS.1 {
+            let x0 = SEA_X.0 + (SEA_X.1 - SEA_X.0) * i as f32 / CELLS.0 as f32;
+            let x1 = SEA_X.0 + (SEA_X.1 - SEA_X.0) * (i + 1) as f32 / CELLS.0 as f32;
+            let y0 = SEA_Y.0 + (SEA_Y.1 - SEA_Y.0) * j as f32 / CELLS.1 as f32;
+            let y1 = SEA_Y.0 + (SEA_Y.1 - SEA_Y.0) * (j + 1) as f32 / CELLS.1 as f32;
+            let (u0, u1) = (i as f32 / CELLS.0 as f32, (i + 1) as f32 / CELLS.0 as f32);
+            let (v0, v1) = (j as f32 / CELLS.1 as f32, (j + 1) as f32 / CELLS.1 as f32);
+            let before = mesh.tris.len();
+            mesh.quad_shaded(
+                Vec3::new(x0, y0, SEA),
+                Vec3::new(x1, y0, SEA),
+                Vec3::new(x1, y1, SEA),
+                Vec3::new(x0, y1, SEA),
+                Rgb::WHITE,
+                1.0,
+            );
+            mesh.set_quad_uv(before, [(u0, v0), (u1, v0), (u1, v1), (u0, v1)]);
+            mesh.texture_range(before..mesh.tris.len(), slot);
+        }
     }
+
     // The wake: two white lines astern, opening out behind the transom.
     for side in [-1.0f32, 1.0] {
         mesh.quad_shaded(
@@ -2076,52 +2180,26 @@ fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
 
     // The deck. Four bands round the field, every one of them starting where the
     // painted ground stops, so there is no strip of sky between turf and boat.
-    let bands = [
-        (-EDGE, BOW, DECK, EDGE),
-        (-EDGE, BOW, -EDGE, -DECK),
-        (crate::fieldtex::TEX_X1, BOW, -DECK, DECK),
-        (-EDGE, crate::fieldtex::TEX_X0, -DECK, DECK),
-    ];
-    for (x0, x1, y0, y1) in bands {
+    // Each band carries its boards, its caulking and its margin plank in one
+    // painted texture.
+    for (x0, x1, y0, y1, margin) in [
+        (-EDGE, BOW, DECK, EDGE, Some(Side::LowY)),
+        (-EDGE, BOW, -EDGE, -DECK, Some(Side::HighY)),
+        (crate::fieldtex::TEX_X1, BOW, -DECK, DECK, Some(Side::LowX)),
+        (-EDGE, crate::fieldtex::TEX_X0, -DECK, DECK, Some(Side::HighX)),
+    ] {
+        let before = mesh.tris.len();
         mesh.quad_shaded(
             Vec3::new(x0, y0, 0.004),
             Vec3::new(x1, y0, 0.004),
             Vec3::new(x1, y1, 0.004),
             Vec3::new(x0, y1, 0.004),
-            Rgb::hex(0x9A6A3C),
+            Rgb::WHITE,
             1.0,
         );
-        // Caulking between the planks. A deck without its seams is a slab of one
-        // colour, which is what made it read as sand from above.
-        let mut seam = y0 + 0.9;
-        while seam < y1 - 0.1 {
-            mesh.quad_shaded(
-                Vec3::new(x0, seam, 0.006),
-                Vec3::new(x1, seam, 0.006),
-                Vec3::new(x1, seam + 0.12, 0.006),
-                Vec3::new(x0, seam + 0.12, 0.006),
-                Rgb::hex(0x2C1D12),
-                1.0,
-            );
-            seam += 1.1;
-        }
-    }
-    // A margin plank of pale timber where the deck meets the painted ground, so
-    // the edge of the field is a boat's margin and not a colour change.
-    for (x0, x1, y0, y1) in [
-        (-EDGE, BOW, DECK, DECK + 0.55),
-        (-EDGE, BOW, -DECK - 0.55, -DECK),
-        (crate::fieldtex::TEX_X1, crate::fieldtex::TEX_X1 + 0.55, -DECK, DECK),
-        (crate::fieldtex::TEX_X0 - 0.55, crate::fieldtex::TEX_X0, -DECK, DECK),
-    ] {
-        mesh.quad_shaded(
-            Vec3::new(x0, y0, 0.008),
-            Vec3::new(x1, y0, 0.008),
-            Vec3::new(x1, y1, 0.008),
-            Vec3::new(x0, y1, 0.008),
-            Rgb::hex(0xE9E2D2),
-            1.0,
-        );
+        mesh.set_quad_uv(before, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
+        let slot = mesh.add_texture(std::sync::Arc::new(teak(x0, x1, y0, y1, margin)));
+        mesh.texture_range(before..mesh.tris.len(), slot);
     }
 
     // The bow: the deck tapers to a point ahead of the foredeck.
