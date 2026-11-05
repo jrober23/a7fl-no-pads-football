@@ -262,31 +262,37 @@ fn a_tackle_is_made_by_contact_and_a_dive_by_a_lunge() {
 }
 
 #[test]
-fn holding_the_dive_button_is_one_lunge_not_a_stall() {
+fn a_held_dive_button_does_not_re_arm_the_lunge() {
     let teams = league_teams();
     let mut sim = to_the_handoff(&teams[0], &teams[1], 41).expect("a run play");
     let carrier = sim.carrier.expect("the handoff");
-    // A chasing defender, four yards behind the man: the case where the dive
-    // used to keep re-arming and never get out of its first sliver.
+    // Four yards behind him and out of a tackle: the chase the button is for,
+    // and the one where holding it down used to reload the dive under his feet.
     sim.players[7].pos = sim.players[carrier].pos - Vec2::new(4.0, 0.0);
     sim.players[7].stun = 0.0;
     sim.players[7].dive_t = 0.0;
     sim.set_human_defender(Some(7));
-    let start = sim.players[7].pos;
     sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
-    for _ in 0..20 {
+    let mut resets = 0;
+    let mut frames = 0;
+    let mut last = sim.players[7].dive_fly;
+    for _ in 0..60 {
         if sim.result.is_some() {
             break;
         }
         sim.step(1.0 / 60.0);
+        frames += 1;
+        let now = sim.players[7].dive_fly;
+        // A re-arm puts the lunge back to its first sliver. One press travels a
+        // lunge; a button that reloads itself travels one every window.
+        if now + 1e-4 < last {
+            resets += 1;
+        }
+        last = now;
     }
-    let moved = sim.players[7].pos.dist(start);
     assert!(
-        moved > DIVE_LUNGE * 0.8,
-        "a held dive stalled after {moved:.2} of {DIVE_LUNGE:.2} yards"
+        frames >= 30,
+        "the play ended after {frames} frames, before the button was held a full second"
     );
-    assert!(
-        moved < DIVE_LUNGE + 1.5,
-        "a held dive chained into one long lunge: {moved:.2} yards"
-    );
+    assert_eq!(resets, 0, "held down, the button re-armed the lunge {resets} times");
 }
