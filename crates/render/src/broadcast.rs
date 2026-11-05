@@ -1356,18 +1356,25 @@ impl Broadcast {
     }
 
 
+
     /// The crowd for this frame: everybody bobbing on his own phase, with a few
     /// arms up. Two quads a man, doubled over so the far side of the ground is
     /// not invisible to a backface cull.
-    fn crowd_frame(&mut self) -> Mesh {
+    fn crowd_frame(&mut self, camera: &Camera) -> Mesh {
         let t = self.crowd_t;
         self.crowd_t += 1.0 / 60.0;
         let mut mesh = Mesh::new();
         mesh.tris.reserve(self.crowd.len() * 8);
         for f in &self.crowd {
-            let bob = (t * 1.7 + f.phase).sin() * 0.05;
+            // A bob under a pixel is not life, it is noise: it flips the man
+            // between neighbouring scanlines every frame, which is the shimmer
+            // that reads as flickering stands. The far half of the house stands
+            // still; the men close enough to be a couple of pixels tall move.
+            let d = (f.at - camera.pos).length();
+            let life = crowd_life(d);
+            let bob = (t * 1.7 + f.phase).sin() * 0.05 * life;
             let cheer = (t * 2.4 + f.phase).sin().max(0.0);
-            let lift = if f.arms { cheer * 0.18 } else { 0.0 };
+            let lift = if f.arms { cheer * 0.18 * life } else { 0.0 };
             let z = f.at.z + bob + lift;
             let (x, y) = (f.at.x, f.at.y);
             let w = 0.24;
@@ -1545,7 +1552,7 @@ impl Broadcast {
         // arms up. It is rebuilt every frame because placing a mesh bakes it.
         let t_ground = tg.elapsed();
         let tsc = std::time::Instant::now();
-        let crowd = self.crowd_frame();
+        let crowd = self.crowd_frame(&camera);
         let school = (!self.fish.is_empty())
             .then(|| crate::venues::school_frame(&self.fish, self.crowd_t));
         // One pass for all the scenery rather than one per mesh: each pass costs
@@ -3075,3 +3082,28 @@ fn smooth(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
+#[cfg(test)]
+mod crowd_life_tests {
+    use super::crowd_life;
+
+    #[test]
+    fn the_stands_stand_still_where_a_bob_is_under_a_pixel() {
+        assert_eq!(crowd_life(200.0), 0.0, "the far house still bobs");
+        assert!(crowd_life(60.0) > 0.0, "a man near the lens froze");
+        assert!(
+            crowd_life(10.0) > crowd_life(50.0),
+            "the bob does not fall off with distance"
+        );
+    }
+}
+
+/// How much a man in the stand moves, by how far he is from the lens.
+///
+/// The bob is a fifth of a yard. Halfway up a stand fifty yards out that is a
+/// fraction of a pixel, so it does not read as a man shifting his weight -- it
+/// flips him between two scanlines every frame, and a house of thousands doing
+/// that at once is the flickering crowd. The movement is kept where a man is
+/// tall enough on screen to have a body, and faded out before it becomes noise.
+fn crowd_life(distance: f32) -> f32 {
+    (1.0 - distance / 70.0).clamp(0.0, 1.0)
+}
