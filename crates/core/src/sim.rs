@@ -36,7 +36,7 @@ pub const TACKLE_RADIUS: f32 = 0.74;
 
 /// The ball in the air is decided by the receiver's hands against the coverage
 /// ratings of the men around the landing spot, not by a flat completion roll.
-pub const CATCH_BASE: f32 = 0.20;
+pub const CATCH_BASE: f32 = 0.14;
 /// How much a point of hands-minus-coverage is worth on the catch.
 pub const CATCH_WEIGHT: f32 = 0.55;
 pub const CATCH_FLOOR: f32 = 0.06;
@@ -2621,7 +2621,7 @@ impl<'a> PlaySim<'a> {
             let defender_attrs = self.attrs(d);
             // Wrap tackling: 7 on 7 requires an actual attempt to wrap up.
             let closing = (self.players[d].vel - self.players[carrier].vel).length();
-            let mut p = 0.30
+            let mut p = 0.45
                 + (defender_attrs.tackle_factor() - carrier_attrs.break_tackle_factor()) * 0.55
                 + (closing * 0.02).min(0.15);
             // A dive reaches further and holds on less: it is a lunge, not a wrap.

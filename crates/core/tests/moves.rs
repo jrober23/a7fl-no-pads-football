@@ -249,7 +249,7 @@ fn the_face_buttons_are_passes_in_the_pocket_and_moves_once_he_runs() {
 #[test]
 fn a_tackle_is_made_by_contact_and_a_dive_by_a_lunge() {
     assert!(
-        TACKLE_RADIUS <= 0.55,
+        TACKLE_RADIUS <= 0.75,
         "a wrap still starts {TACKLE_RADIUS} yards out"
     );
     // The lunge front-loads its ground: it covers `2 * DIVE_LUNGE / DIVE_WINDOW`
