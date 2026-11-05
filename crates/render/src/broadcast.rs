@@ -1238,6 +1238,10 @@ impl Broadcast {
             strafe: 0.0,
             motion: p.motion,
             motion_progress: p.motion_progress,
+            // The field is posed by the simulation. A clip driving these men is a
+            // separate experiment, not something a broadcast frame picks up on its
+            // own.
+            limbs: None,
         }
     }
 

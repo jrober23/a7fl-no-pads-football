@@ -40,6 +40,7 @@ fn main() {
         motion_progress: 0.0,
         wrapping: 0.0,
         tackled: 0.0,
+        limbs: None,
     };
 
     let views = [("0", 0.0f32), ("90", FRAC_PI_2), ("180", PI), ("270", 3.0 * FRAC_PI_2)];

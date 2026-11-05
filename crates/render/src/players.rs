@@ -177,6 +177,37 @@ pub struct Pose {
     pub wrapping: f32,
     /// 0..1 through a tackle he is taking: going over the hit to the turf.
     pub tackled: f32,
+    /// Angles measured off a motion-capture clip, when one is driving him.
+    ///
+    /// The figure below is posed by arithmetic: a keyed stride cycle, an arm
+    /// swing taken off the opposite leg. That is a hand-written stand-in for
+    /// motion, and it can be replaced by motion itself without changing any of
+    /// the geometry -- because both are described in the same six numbers per
+    /// limb. `None` keeps the keyed cycle.
+    pub limbs: Option<LimbAngles>,
+}
+
+/// One man's limbs in the figure's own vocabulary.
+///
+/// `RUN_LEG` and the arm swing are keyed by hand: thigh, knee, foot, then swing
+/// and elbow. A capture clip is a chain of joint rotations instead. This is the
+/// meeting point -- the clip is read once into the same angles the builder
+/// already understands, so a mocap stride drives the same legs the keyed one
+/// does and nothing downstream has to know where it came from.
+///
+/// Angles are the ones the builder documents: a thigh angle measured from
+/// straight down and positive forward, knee flexion that only folds the shin
+/// back, foot pitch positive with the toe down, and the same for the arms.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct LimbAngles {
+    /// `[thigh, knee, foot pitch]` per leg, left then right.
+    pub legs: [[f32; 3]; 2],
+    /// `[swing, elbow flex]` per arm, left then right.
+    pub arms: [[f32; 2]; 2],
+    /// How far the chest carries over the hips, positive forward.
+    pub lean: f32,
+    /// Hip height above the turf, in render units. Zero keeps the solved one.
+    pub hip: f32,
 }
 
 /// One leg through a running stride: `(phase, thigh angle, knee flexion, foot pitch)`.
@@ -963,6 +994,16 @@ pub fn build_mesh_into(
         legs[i] = angles;
         reach = reach.max(leg_reach(angles[0], angles[1], thigh_len, shin_len));
     }
+    // A clip replaces the keyed cycle outright. The stride above stays as the
+    // fallback for a man with no capture behind him, which is every man until a
+    // file of clips is handed in.
+    if let Some(l) = pose.limbs {
+        legs = l.legs;
+        reach = 0.0;
+        for a in legs {
+            reach = reach.max(leg_reach(a[0], a[1], thigh_len, shin_len));
+        }
+    }
     // The hips hang off the straightest leg, so the planted foot is exactly on
     // the turf and the swinging foot is clear of it.
     let hip_z = SOLE + reach;
@@ -1159,9 +1200,12 @@ pub fn build_mesh_into(
     // The whole upper body hangs off the hips and leans as one piece. Shoulders
     // counter-rotate against the pelvis, which is what stops a runner looking
     // like a rigid block with arms attached.
-    let lean = live * (0.08 + 0.24 * speed)
+    let mut lean = live * (0.08 + 0.24 * speed)
         + if pose.blocking { 0.34 } else { 0.0 }
         + 0.30 * pose.wrapping.clamp(0.0, 1.0);
+    if let Some(l) = pose.limbs {
+        lean = l.lean;
+    }
     let spine_dir = Vec3::new(lean.sin(), 0.0, lean.cos());
     let spine = |f: f32| pelvis + spine_dir * (torso_len * f);
     let chest_yaw = -hip_yaw * 0.7;
@@ -1430,6 +1474,13 @@ pub fn build_mesh_into(
         if pose.blocking && pose.arms_up > 0.0 {
             let up = pose.arms_up.clamp(0.0, 1.0);
             swing += (2.15 - swing) * up;
+        }
+        // Capture overrides everything above: a clip already knows where the arm
+        // is in a stride, and a carrying or blocking adjustment on top of it is
+        // two animators fighting over one shoulder.
+        if let Some(l) = pose.limbs {
+            swing = l.arms[i][0];
+            flex = l.arms[i][1];
         }
         let lateral = side * 0.05 + if pose.blocking { pose.hands } else { 0.0 };
         let up_dir = Vec3::new(swing.sin(), lateral, -swing.cos()).normalize_or_zero();

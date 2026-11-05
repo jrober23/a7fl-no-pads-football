@@ -26,6 +26,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use nopads_core::math::{Rgb, Vec3};
 use nopads_core::team::Uniform;
 
+use crate::players::LimbAngles;
 use crate::raster::Texture;
 use crate::scene::{Mesh, Tri};
 
@@ -258,6 +259,10 @@ pub struct Hero {
     /// Every node's local transform in the bind pose, in document order.
     pub node_rest: Vec<NodeXform>,
     pub node_parent: Vec<Option<usize>>,
+    /// Every node's name, in document order. A rig names its bones and a
+    /// retarget has to find them, so the names are kept rather than guessed at
+    /// from the order the skin happens to list them in.
+    pub node_names: Vec<String>,
     /// The node each skin slot names.
     pub skin_joints: Vec<usize>,
     pub inverse_bind: Vec<Affine>,
@@ -286,6 +291,13 @@ impl Hero {
 
         let (positions, normals, uvs, joints, weights, indices) = read_primitives(&doc, &read)?;
         let (node_rest, node_parent) = read_nodes(&doc)?;
+        let node_names: Vec<String> = doc
+            .get("nodes")
+            .map(|n| n.array())
+            .unwrap_or(&[])
+            .iter()
+            .map(|n| n.get("name").and_then(|s| s.as_str()).unwrap_or("").to_string())
+            .collect();
         let (skin_joints, inverse_bind) = read_skin(&doc, &read)?;
         if skin_joints.len() != inverse_bind.len() {
             return Err(format!(
@@ -308,6 +320,7 @@ impl Hero {
             indices,
             node_rest,
             node_parent,
+            node_names,
             skin_joints,
             inverse_bind,
             clips,
@@ -327,6 +340,11 @@ impl Hero {
     /// The joint matrices for a clip at `time`: world transform of the joint,
     /// times its inverse bind matrix.
     pub fn pose(&self, clip: usize, time: f32) -> Vec<Affine> {
+        self.joint_matrices(&self.clip_trs(clip, time))
+    }
+
+    /// The node transforms a clip puts the figure in, before any skinning.
+    fn clip_trs(&self, clip: usize, time: f32) -> Vec<NodeXform> {
         let mut trs = self.node_rest.clone();
         if let Some(c) = self.clips.get(clip) {
             for ch in &c.channels {
@@ -340,7 +358,103 @@ impl Hero {
                 }
             }
         }
-        self.joint_matrices(&trs)
+        trs
+    }
+
+    /// Every node's world transform for a set of local transforms.
+    fn worlds(&self, trs: &[NodeXform]) -> Vec<Affine> {
+        let local: Vec<Affine> = trs.iter().map(|t| t.affine()).collect();
+        let mut world: Vec<Option<Affine>> = vec![None; local.len()];
+        for i in 0..local.len() {
+            self.resolve(i, &local, &mut world);
+        }
+        world
+            .into_iter()
+            .map(|w| w.unwrap_or(Affine::IDENTITY))
+            .collect()
+    }
+
+    /// Where a node's origin sits, in this renderer's frame, once a clip has posed it.
+    ///
+    /// A joint's own origin rides its parent's chain, so it is placed by the skin
+    /// matrix of its slot applied to where that origin sat in the bind pose --
+    /// which is the same transform the mesh under it gets, and the only way to
+    /// land a joint and its own vertices on the same spot.
+    fn joint_at(&self, posed: &[Affine], bind: &[Affine], name: &str) -> Option<Vec3> {
+        let node = self.node_names.iter().position(|n| n == name)?;
+        let slot = self.skin_joints.iter().position(|j| *j == node)?;
+        let m = posed.get(node)?.mul(self.inverse_bind[slot]);
+        let p = m.point(bind.get(node)?.t);
+        Some(to_scene([p.x, p.y, p.z]))
+    }
+
+    /// The angles a clip holds the figure at, in the figure's own vocabulary.
+    ///
+    /// This is the retarget. A capture clip is a chain of joint rotations; the
+    /// procedural man is posed by six numbers a limb. Sampling the one into the
+    /// other is what lets the clips drive the players the game already draws,
+    /// instead of replacing them with an imported body that is the same man
+    /// fourteen times.
+    pub fn limb_angles(&self, clip: usize, time: f32) -> Option<LimbAngles> {
+        let posed = self.worlds(&self.clip_trs(clip, time));
+        let bind = self.worlds(&self.node_rest);
+        let at = |name: &str| self.joint_at(&posed, &bind, name);
+
+        let hips = at("mixamorig:Hips")?;
+        // An angle in the sagittal plane, measured from straight down and
+        // positive forward -- the sign the builder documents for a thigh.
+        let down_forward = |v: Vec3| v.x.atan2(-v.z);
+        let mut out = LimbAngles::default();
+        for (i, (up, low, foot, toe)) in [
+            (
+                "mixamorig:LeftUpLeg",
+                "mixamorig:LeftLeg",
+                "mixamorig:LeftFoot",
+                "mixamorig:LeftToeBase",
+            ),
+            (
+                "mixamorig:RightUpLeg",
+                "mixamorig:RightLeg",
+                "mixamorig:RightFoot",
+                "mixamorig:RightToeBase",
+            ),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let hip = at(up)?;
+            let knee = at(low)?;
+            let ankle = at(foot)?;
+            let ball = at(toe)?;
+            let thigh = down_forward(knee - hip);
+            let shin = down_forward(ankle - knee);
+            // Only ever folds backward: a capture frame cannot hyperextend a
+            // knee, and a clip that samples slightly past straight would.
+            let flex = (thigh - shin).max(0.0);
+            let foot_v = ball - ankle;
+            out.legs[i] = [thigh, flex, (-foot_v.z).atan2(foot_v.x)];
+        }
+        for (i, (arm, fore, hand)) in [
+            ("mixamorig:LeftArm", "mixamorig:LeftForeArm", "mixamorig:LeftHand"),
+            ("mixamorig:RightArm", "mixamorig:RightForeArm", "mixamorig:RightHand"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            let shoulder = at(arm)?;
+            let elbow = at(fore)?;
+            let wrist = at(hand)?;
+            let swing = down_forward(elbow - shoulder);
+            let lower = down_forward(wrist - elbow);
+            // The builder adds a fixed 0.12 of wrist carry on top of swing and
+            // flex, so the measurement takes it back off.
+            out.arms[i] = [swing, (lower - swing - 0.12).max(0.0)];
+        }
+        let neck = at("mixamorig:Neck")?;
+        let spine = neck - hips;
+        out.lean = spine.x.atan2(spine.z.max(1e-3));
+        out.hip = hips.z;
+        Some(out)
     }
 
     /// The bind pose: the figure as the artist left it, with no clip applied.

@@ -29,3 +29,7 @@ required-features = ["authored"]
 [[example]]
 name = "field"
 required-features = ["authored"]
+
+[[example]]
+name = "clip_run"
+required-features = ["authored"]
