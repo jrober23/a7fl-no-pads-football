@@ -11,7 +11,7 @@ use crate::field::{self, FIELD_LENGTH};
 use crate::math::{clamp, Rng};
 use crate::playbook::{DefCall, Play};
 use crate::rules::{
-    enforce, penalty_sentence, CONVERSION_ONE_POINT_YARDS, CONVERSION_TWO_POINT_YARDS, DOWNS,
+    enforce, penalty_sentence, FoulTeam, CONVERSION_ONE_POINT_YARDS, CONVERSION_TWO_POINT_YARDS, DOWNS,
     MERCY_LEAD_TOUCHDOWNS, MERCY_LEAD_TOUCHDOWNS_EARLY, OVERTIME_FIRST_DOWNS_ALLOWED,
     OVERTIME_SPOT_YARD_LINE,
     PLAY_CLOCK_SECONDS, QUARTER_SECONDS, SAFETY_THROW_OFF_YARD_LINE, THROW_OFF_SPOT_YARD_LINE,
@@ -633,14 +633,19 @@ impl GameState {
         self.drive.time += between;
 
         if let Some(call) = result.penalty.clone() {
-            if result.touchdown || result.safety {
-                // The play already put points on the board and a flag does not take
-                // them off again: the foul is noted and declined.
-                self.commentary.push(format!(
-                    "{} on the play, declined - the score stands.",
-                    call.kind.label()
-                ));
+            // Who gained by the play? A flag cannot take points off the board on
+            // its own: the side that scored decides, and it always keeps them. A
+            // foul by the defense is therefore declined, while a foul by the
+            // scoring side is accepted and takes the score with it.
+            let scoring = if result.touchdown {
+                Some(touchdown_scorer(result.turnover, offense, defense))
+            } else if result.safety {
+                Some(defense)
             } else {
+                None
+            };
+            let offending = if call.against == FoulTeam::Offense { offense } else { defense };
+            if scoring.is_none() || scoring == Some(offending) {
                 let enf = enforce(&call, prev_spot, dir, result.end_spot, prev_down, prev_to_go);
                 self.box_score.add_penalty(offense, enf.yards.round() as u32);
                 record.penalty_yards = enf.yards.round() as u32;
@@ -658,8 +663,11 @@ impl GameState {
                 self.advance_clock(result.elapsed, true);
                 return;
             }
+            self.commentary.push(format!(
+                "{} on the play, declined - the score stands.",
+                call.kind.label()
+            ));
         }
-
         let new_spot = if result.touchdown {
             field::opponent_goal_side(dir)
         } else if result.safety {
@@ -1225,6 +1233,69 @@ mod tests {
     fn new_game(seed: u64) -> GameState {
         let t = league_teams();
         GameState::new(t[0].clone(), t[1].clone(), seed)
+    }
+
+    /// A real snap from a simulated game, dressed up as a touchdown so the
+    /// settling logic can be exercised without waiting for the dice to put a
+    /// score and a flag on the same play.
+    fn a_touchdown_with_a_flag(
+        seed: u64,
+        kind: crate::rules::PenaltyKind,
+    ) -> (GameState, ScrimmageRecord) {
+        let mut src = new_game(seed);
+        src.simulate_game();
+        let mut rec = src
+            .log
+            .iter()
+            .find_map(|r| match r {
+                PlayRecord::Scrimmage(s) if !s.is_try => Some(s.clone()),
+                _ => None,
+            })
+            .expect("a scrimmage play");
+        let spot = rec.setup.los;
+        rec.down = 1;
+        rec.to_go = 10.0;
+        rec.quarter = 1;
+        rec.result.touchdown = true;
+        rec.result.safety = false;
+        rec.result.turnover = false;
+        rec.result.yards = 40.0;
+        rec.result.end_spot = crate::field::opponent_goal_side(rec.setup.direction);
+        rec.result.penalty = Some(crate::rules::PenaltyCall::new(kind, spot));
+        (new_game(seed), rec)
+    }
+
+    #[test]
+    fn a_foul_by_the_scoring_side_takes_the_touchdown_off_the_board() {
+        let (mut g, mut rec) = a_touchdown_with_a_flag(23, crate::rules::PenaltyKind::Holding);
+        let before = g.score;
+        g.apply_scrimmage(&mut rec);
+        assert_eq!(
+            g.score, before,
+            "a hold cannot be washed out by the touchdown: {:?}",
+            g.commentary
+        );
+        assert!(rec.penalty_yards > 0, "the yardage was never walked off");
+        assert!(
+            !g.commentary.iter().any(|c| c.contains("declined")),
+            "the defense would not decline: {:?}",
+            g.commentary
+        );
+    }
+
+    #[test]
+    fn a_foul_by_the_defense_is_declined_and_the_touchdown_stands() {
+        let (mut g, mut rec) =
+            a_touchdown_with_a_flag(23, crate::rules::PenaltyKind::OffsideDefense);
+        let offense = rec.setup.offense_team;
+        let before = g.score;
+        g.apply_scrimmage(&mut rec);
+        assert_eq!(g.score[offense], before[offense] + 6, "{:?}", g.commentary);
+        assert!(
+            g.commentary.iter().any(|c| c.contains("declined")),
+            "{:?}",
+            g.commentary
+        );
     }
 
     #[test]
