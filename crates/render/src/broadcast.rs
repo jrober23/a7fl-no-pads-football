@@ -1881,16 +1881,12 @@ fn build_stadium(teams: &[Team; 2], venue: crate::venues::Venue) -> Mesh {
     let bowl = matches!(venue.kind(), crate::venues::Kind::Championship);
     let sides: &[f32] = if bowl { &[-1.0, 1.0] } else { &[-1.0] };
 
-    // Run-off apron: the strip of ground between the paint and the wall.
-    for side in [-1.0f32, 1.0] {
-        mesh.quad(
-            Vec3::new(x0, side * FIELD_HALF_WIDTH, 0.004),
-            Vec3::new(x1, side * FIELD_HALF_WIDTH, 0.004),
-            Vec3::new(x1, side * (FIELD_HALF_WIDTH + 4.8), 0.004),
-            Vec3::new(x0, side * (FIELD_HALF_WIDTH + 4.8), 0.004),
-            Rgb::hex(0x35503C),
-        );
-    }
+    // The run-off apron is painted into the turf texture, out to the boards.
+    // It used to be laid over the turf as well, as a quad four millimetres above
+    // it in a different green: the same strip drawn twice by two paths that
+    // disagree on its colour, so from above -- the play preview and the sky
+    // camera -- the strip speckled between two greens and its edge crawled. One
+    // painter, and the ground is only drawn once.
 
     // Advertising boards along both sidelines, with a white rail on top.
     let mut x = x0;
@@ -3106,4 +3102,23 @@ mod crowd_life_tests {
 /// tall enough on screen to have a body, and faded out before it becomes noise.
 fn crowd_life(distance: f32) -> f32 {
     (1.0 - distance / 70.0).clamp(0.0, 1.0)
+}
+
+#[cfg(test)]
+mod apron_tests {
+    use nopads_core::field::FIELD_HALF_WIDTH;
+
+    /// The run-off is the texture's job. If the painted apron ever stops short
+    /// of the boards, that strip of ground is drawn by nobody and the field
+    /// looks unfinished at the edge -- which is why a bare quad was added back
+    /// over it once before.
+    #[test]
+    fn the_painted_apron_reaches_the_boards() {
+        let (_x0, _x1, y0, y1) = crate::fieldtex::coverage();
+        assert!(
+            y0 <= -(FIELD_HALF_WIDTH + 4.8) && y1 >= FIELD_HALF_WIDTH + 4.8,
+            "the painted apron is {y0:.1}..{y1:.1}, short of the boards at {}",
+            FIELD_HALF_WIDTH + 4.8
+        );
+    }
 }

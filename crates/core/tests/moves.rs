@@ -2,7 +2,7 @@
 //! These tests drive a real run play to the handoff and then work the buttons,
 //! because the point of a move is what the defence does about it.
 
-use nopads_core::sim::{DIVE_LUNGE, DIVE_WINDOW, TACKLE_RADIUS};
+use nopads_core::sim::{DefControl, DIVE_LUNGE, DIVE_WINDOW, TACKLE_RADIUS};
 
 use nopads_core::math::Vec2;
 use nopads_core::moves::{Kind, HURDLE_TIME};
@@ -258,5 +258,35 @@ fn a_tackle_is_made_by_contact_and_a_dive_by_a_lunge() {
     assert!(
         launch > 8.5,
         "a dive leaves the ground at {launch:.1} yd/s, slower than a run"
+    );
+}
+
+#[test]
+fn holding_the_dive_button_is_one_lunge_not_a_stall() {
+    let teams = league_teams();
+    let mut sim = to_the_handoff(&teams[0], &teams[1], 41).expect("a run play");
+    let carrier = sim.carrier.expect("the handoff");
+    // A chasing defender, four yards behind the man: the case where the dive
+    // used to keep re-arming and never get out of its first sliver.
+    sim.players[7].pos = sim.players[carrier].pos - Vec2::new(4.0, 0.0);
+    sim.players[7].stun = 0.0;
+    sim.players[7].dive_t = 0.0;
+    sim.set_human_defender(Some(7));
+    let start = sim.players[7].pos;
+    sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+    for _ in 0..20 {
+        if sim.result.is_some() {
+            break;
+        }
+        sim.step(1.0 / 60.0);
+    }
+    let moved = sim.players[7].pos.dist(start);
+    assert!(
+        moved > DIVE_LUNGE * 0.8,
+        "a held dive stalled after {moved:.2} of {DIVE_LUNGE:.2} yards"
+    );
+    assert!(
+        moved < DIVE_LUNGE + 1.5,
+        "a held dive chained into one long lunge: {moved:.2} yards"
     );
 }

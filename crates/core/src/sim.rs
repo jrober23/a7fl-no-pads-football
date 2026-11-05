@@ -315,6 +315,8 @@ pub struct SimPlayer {
     pub dive_aim: Vec2,
     /// How much of the lunge he has already covered this dive.
     pub dive_fly: f32,
+    /// Whether the dive button has been let go since his last dive.
+    pub dive_armed: bool,
     /// 0..1: how much his hands are up, working to get to the man with the ball.
     pub tackle_arms: f32,
     pub engaged: Option<usize>,
@@ -647,6 +649,7 @@ impl<'a> PlaySim<'a> {
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
                 dive_fly: 0.0,
+                dive_armed: true,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -687,6 +690,7 @@ impl<'a> PlaySim<'a> {
                 dive_t: 0.0,
                 dive_aim: Vec2::ZERO,
                 dive_fly: 0.0,
+                dive_armed: true,
                 tackle_arms: 0.0,
                 engaged: None,
                 hands: 0.0,
@@ -2204,7 +2208,16 @@ impl<'a> PlaySim<'a> {
                     // A dive throws the body at the man with the ball: a yard of
                     // ground his legs could not cover, and a longer reach for the
                     // tackle worked out below.
-                    if ctl.dive && self.players[i].dive_t <= 0.0 {
+                    // A dive is a press, not a hold. Held down it re-armed the
+                    // moment the window closed, and every re-arm put the lunge
+                    // back to its first sliver: chasing a runner with the button
+                    // down left him piling up at the line instead of going
+                    // anywhere. Letting go is what loads the next one.
+                    if !ctl.dive {
+                        self.players[i].dive_armed = true;
+                    }
+                    if ctl.dive && self.players[i].dive_armed && self.players[i].dive_t <= 0.0 {
+                        self.players[i].dive_armed = false;
                         self.players[i].dive_t = DIVE_WINDOW;
                         self.players[i].dive_fly = 0.0;
                         // He throws himself at the man with the ball, or at the
@@ -2213,7 +2226,14 @@ impl<'a> PlaySim<'a> {
                         // sent him nowhere at all, which reads as the button doing
                         // nothing.
                         let aim_at = carrier
-                            .map(|c| self.players[c].pos)
+                            // Lead him. The lunge takes a third of a second and
+                            // a runner covers two and a half yards in that time,
+                            // so aimed at where he was a chase dive always lands
+                            // behind him -- which is why it worked at the line
+                            // of scrimmage and not once he was past the defence.
+                            .map(|c| {
+                                self.players[c].pos + self.players[c].vel * (DIVE_WINDOW * 0.6)
+                            })
                             .or(self.ball.flight.as_ref().map(|f| f.to))
                             .unwrap_or(self.ball.pos);
                         let to = aim_at - self.players[i].pos;

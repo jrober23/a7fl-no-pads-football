@@ -15,8 +15,8 @@ use crate::raster::{Frame, Texture};
 
 pub const TEX_X0: f32 = -15.0;
 pub const TEX_X1: f32 = 115.0;
-pub const TEX_Y0: f32 = -22.0;
-pub const TEX_Y1: f32 = 22.0;
+pub const TEX_Y0: f32 = -(FIELD_HALF_WIDTH + 6.0);
+pub const TEX_Y1: f32 = FIELD_HALF_WIDTH + 6.0;
 pub const PX_PER_YARD: f32 = 16.0;
 
 pub const TURF_LIGHT: Rgb = Rgb::hex(0x3A7C41);
@@ -35,6 +35,11 @@ fn tx(yards: f32) -> i32 {
     (yards * PX_PER_YARD).round() as i32
 }
 
+/// The painted ground reaches well past the boards and under the front of the
+/// stand. It used to stop at 22 yards, a third of a yard short of the boards,
+/// and a bare quad was laid over the gap to hide it -- which is the strip that
+/// speckled from above and left the edge of the field looking unfinished.
+///
 /// Build the field texture. `left_team` paints the left end zone, `right_team`
 /// the right one.
 pub fn build_field_texture(left_team: &Team, right_team: &Team) -> Texture {
