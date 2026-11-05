@@ -1547,16 +1547,18 @@ fn underwater(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     ];
     for _ in 0..46 {
         let side = if rand() < 0.5 { -1.0f32 } else { 1.0 };
-        let at = Vec3::new(-150.0 + rand() * 340.0, side * (36.0 + rand() * 40.0), floor);
+        // Kept well back from the touchline and low: coral at six to thirteen
+        // units tall stood between the replay lens and the men it was following.
+        let at = Vec3::new(-150.0 + rand() * 340.0, side * (48.0 + rand() * 42.0), floor);
         let color = Rgb::hex(corals[(rand() * corals.len() as f32) as usize % corals.len()]);
-        coral(mesh, at, 6.0 + rand() * 7.0, color, rand);
+        coral(mesh, at, 2.5 + rand() * 3.0, color, rand);
     }
     for _ in 0..18 {
         let end = if rand() < 0.5 { -1.0f32 } else { 1.0 };
         let x = if end < 0.0 { -130.0 + rand() * 70.0 } else { 162.0 + rand() * 90.0 };
         let at = Vec3::new(x, -90.0 + rand() * 180.0, floor);
         let color = Rgb::hex(corals[(rand() * corals.len() as f32) as usize % corals.len()]);
-        coral(mesh, at, 6.0 + rand() * 7.0, color, rand);
+        coral(mesh, at, 2.5 + rand() * 3.0, color, rand);
     }
     // Kelp standing off the sand, and a few rocks between the heads.
     for _ in 0..44 {

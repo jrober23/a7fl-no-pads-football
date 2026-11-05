@@ -732,9 +732,15 @@ impl Arcade {
         if !self.view.show(&mut frame, &lines) {
             return false;
         }
+        let start = Instant::now();
         loop {
             let input = self.wait(Duration::from_millis(24));
             if input.pressed.a || input.pressed.start {
+                break;
+            }
+            // A presentation must not be able to freeze the game: if no press
+            // ever arrives, the half starts anyway.
+            if start.elapsed() >= Duration::from_secs(20) {
                 break;
             }
         }

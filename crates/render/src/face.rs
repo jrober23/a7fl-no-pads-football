@@ -69,51 +69,59 @@ fn paint(skin: Rgb) -> Texture {
         }
     }
 
-    // The nose is a shadow and a highlight down the middle. Painted, it still
+    // The nose: shadow down one side, light down the other. Painted, it still
     // reads as a nose from the front, which is the only angle this face is for.
-    for y in 20..40 {
-        for x in 29..35 { tex.set(x, y, shadow); }
+    for y in 14..40 {
+        for x in 27..31 { tex.set(x, y, shadow); }
+        for x in 31..35 { tex.set(x, y, skin.scale(1.05)); }
     }
-    for x in 30..34 { tex.set(x, 40, skin); }
+    for x in 25..37 { tex.set(x, 41, shadow); }
 
-    // Eyes: an almond of white, an iris, a pupil, and a lid line over the top.
-    for (cx, _side) in [(21i32, -1.0f32), (43, 1.0)] {
-        for dy in -3i32..=3 {
-            // Rounded ends, so an eye is an eye and not a slot.
-            let wide = if dy.abs() == 3 { 3 } else { 5 };
+    // The features are drawn big on purpose. A man is forty pixels tall on the
+    // field and his whole face is six across, so a tasteful eye is no eye at all:
+    // the reference here is a minifigure, not a portrait.
+    for (cx, tilt) in [(19i32, 1.0f32), (45, -1.0)] {
+        // Eye: a wide almond, filled, with the corners carried further out than
+        // the lid so the eye has a shape rather than being a bead.
+        for dy in -4i32..=4 {
+            let wide = 8 - dy.abs();
             for dx in -wide..=wide {
-                let d = (dx as f32 / wide as f32).powi(2) + (dy as f32 / 3.0f32).powi(2);
+                let d = (dx as f32 / wide as f32).powi(2) + (dy as f32 / 4.2).powi(2);
                 if d <= 1.0 {
-                    tex.set(cx + dx, 38 + dy, white);
+                    tex.set(cx + dx, 36 + dy, white);
                 }
             }
         }
-        for dy in -2i32..=2 {
-            for dx in -2i32..=2 {
-                if dx * dx + dy * dy <= 5 { tex.set(cx + dx, 38 + dy, iris); }
+        for dy in -3i32..=3 {
+            for dx in -3i32..=3 {
+                if dx * dx + dy * dy <= 8 { tex.set(cx + dx, 36 + dy, iris); }
             }
         }
-        tex.set(cx, 38, ink);
-        tex.set(cx + 1, 38, ink);
-        // The lid over the top: one line of ink is the whole difference between
-        // an eye looking at you and an eye floating.
-        for dx in -5..=5 { tex.set(cx + dx, 34, ink); }
-        // Brow, thicker and angled in toward the bridge.
-        for dx in -7i32..=7 {
-            let lift = (dx.abs() as f32 / 7.0 * 1.6) as i32;
-            for dy in 0..=1 {
-                tex.set(cx + dx, 29 - lift + dy, ink.scale(0.85));
+        for dy in -1..=1 { tex.set(cx + dy, 36, ink); }
+        // Lid, angled: a heavy line over the top is the whole difference between
+        // an eye looking at you and an eye floating on a face.
+        for dx in -9..=9 {
+            let lift = (dx as f32 * 0.12 * tilt) as i32;
+            tex.set(cx + dx, 31 + lift, ink);
+            tex.set(cx + dx, 32 + lift, ink.scale(0.88));
+        }
+        // Brow: a thick bar, angled in toward the bridge, clear of the lid so the
+        // two do not merge into one dark smear at distance.
+        for dx in -10i32..=10 {
+            let lift = (dx.abs() as f32 / 10.0 * 3.0) as i32;
+            for dy in 0..=2 {
+                tex.set(cx + dx, 24 - lift + dy, ink);
             }
         }
     }
 
-    // Mouth: a line, with the lower lip a shade off the skin under it.
-    for x in 25..=39 {
-        tex.set(x, 17, ink.scale(0.9));
+    // Mouth: a wide line with the lower lip catching the light above it.
+    for x in 21..=43 {
+        tex.set(x, 12, ink.scale(0.9));
     }
-    for x in 27..=37 {
-        tex.set(x, 16, skin.scale(0.78));
-        tex.set(x, 15, skin.scale(0.9));
+    for x in 23..=41 {
+        tex.set(x, 11, skin.scale(0.74));
+        tex.set(x, 13, skin.scale(0.94));
     }
     tex
 }
