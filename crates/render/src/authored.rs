@@ -21,9 +21,10 @@
 //! of zero points a procedural figure.
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use nopads_core::math::{Rgb, Vec3};
+use nopads_core::team::Uniform;
 
 use crate::raster::Texture;
 use crate::scene::{Mesh, Tri};
@@ -429,10 +430,26 @@ impl Hero {
     /// The broadcast's own figures are filled this way; this is the same deal for
     /// an authored one.
     pub fn skin_into(&self, joints: &[Affine], scale: f32, mesh: &mut Mesh) {
+        self.skin_into_kit(joints, scale, &self.texture, mesh);
+    }
+
+    /// The same figure wearing an atlas that is not the one it shipped with.
+    ///
+    /// A character arrives carrying one club's colours, which leaves every team
+    /// in the file looking like the same team. This is the seam that lets one
+    /// asset dress fourteen men: the geometry, the skeleton and the face are the
+    /// file's, and the cloth is whoever's kit is handed in here.
+    pub fn skin_into_kit(
+        &self,
+        joints: &[Affine],
+        scale: f32,
+        kit: &Arc<Texture>,
+        mesh: &mut Mesh,
+    ) {
         let (pos, nor) = self.skin(joints, scale);
         mesh.reuse();
         mesh.tris.reserve(self.indices.len() / 3);
-        mesh.textures.push(Arc::clone(&self.texture));
+        mesh.textures.push(Arc::clone(kit));
         for t in self.indices.chunks_exact(3) {
             let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
             let (pa, pb, pc) = (pos[a], pos[b], pos[c]);
@@ -493,6 +510,261 @@ impl HeroActor {
     pub fn new(hero: Arc<Hero>, height: f32) -> HeroActor {
         let scale = if hero.height > 1e-3 { height / hero.height } else { 1.0 };
         HeroActor { hero, scale, within: 14.0 }
+    }
+}
+
+// ---------------------------------------------------------------------- club kits
+
+/// What part of a man's kit a patch of the atlas is painted on.
+///
+/// A character arrives with its own club's colours baked into one atlas. Swapping
+/// them is not a hue rotation, because the texture cannot say what a texel is:
+/// the navy of a sleeve and the navy of a sock are the same three numbers. The
+/// geometry can say. Every vertex knows where it sits on the body in the bind
+/// pose, so the triangles that use a texel vote on what that texel belongs to,
+/// and the shirt is whatever the torso is made of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Piece {
+    /// Skin, hair, gloves: already the right colour, and not ours to paint.
+    Keep = 0,
+    Shirt,
+    Shorts,
+    Sock,
+    Shoe,
+}
+
+const PIECES: usize = 5;
+
+impl Piece {
+    fn index(self) -> usize {
+        self as usize
+    }
+}
+
+/// Which piece of the kit a vertex is part of, from where it sits on the body.
+///
+/// The fractions are of the figure's own height with the feet at zero, and
+/// `lateral` is how far the vertex hangs out from the spine -- the only thing
+/// separating an arm from a rib at the same height, and a hand from a thigh.
+fn piece_at(z_frac: f32, lateral_frac: f32) -> Piece {
+    // Arms hang inside the shorts and the shirt both. Anything this far out from
+    // the spine above the knees is a limb, and a limb is skin and undershirt.
+    if lateral_frac > 0.17 && z_frac > 0.30 {
+        return Piece::Keep;
+    }
+    if z_frac < 0.115 {
+        Piece::Shoe
+    } else if z_frac < 0.30 {
+        Piece::Sock
+    } else if z_frac < 0.45 {
+        // Bare thigh between the top of the sock and the hem of the shorts.
+        Piece::Keep
+    } else if z_frac < 0.60 {
+        Piece::Shorts
+    } else if z_frac < 0.87 {
+        Piece::Shirt
+    } else {
+        // Neck and head. The face is the one thing a re-kit must not touch, so
+        // everything above the shoulders is left exactly as it was authored.
+        Piece::Keep
+    }
+}
+
+/// Which piece every texel of an atlas is painted on, and the average light of
+/// each one.
+///
+/// That average is the whole trick. A piece of kit is repainted by keeping its
+/// own light and swapping only its hue: a fold, a seam, the shadow under an arm
+/// and the number painted across a chest are all differences in brightness, so
+/// they survive being dressed for another club. Multiplying a club's colour by
+/// this ratio turns a black and gold shirt green and gold without throwing away
+/// any of the modelling the artist did.
+pub struct KitMap {
+    pub w: usize,
+    pub h: usize,
+    piece: Vec<Piece>,
+    mean: [f32; PIECES],
+}
+
+impl KitMap {
+    /// How many texels of the atlas belong to a piece. Read by the tests and by
+    /// anything that wants to know whether a map actually found the shirt.
+    pub fn count(&self, piece: Piece) -> usize {
+        self.piece.iter().filter(|p| **p == piece).count()
+    }
+}
+
+/// Rasterise one triangle's footprint in uv space into the piece map.
+fn fill_uv(map: &mut [Piece], w: usize, h: usize, uvs: &[(f32, f32)], tri: [usize; 3], piece: Piece) {
+    let p = [uvs[tri[0]], uvs[tri[1]], uvs[tri[2]]];
+    let xs = [p[0].0 * w as f32, p[1].0 * w as f32, p[2].0 * w as f32];
+    let ys = [p[0].1 * h as f32, p[1].1 * h as f32, p[2].1 * h as f32];
+    let area = (xs[1] - xs[0]) * (ys[2] - ys[0]) - (xs[2] - xs[0]) * (ys[1] - ys[0]);
+    if area.abs() < 1e-6 {
+        return;
+    }
+    let inv = 1.0 / area;
+    let lo_x = xs.iter().cloned().fold(f32::MAX, f32::min).floor().max(0.0) as usize;
+    let lo_y = ys.iter().cloned().fold(f32::MAX, f32::min).floor().max(0.0) as usize;
+    let hi_x = (xs.iter().cloned().fold(f32::MIN, f32::max).ceil().max(0.0) as usize).min(w - 1);
+    let hi_y = (ys.iter().cloned().fold(f32::MIN, f32::max).ceil().max(0.0) as usize).min(h - 1);
+    for py in lo_y..=hi_y {
+        for px in lo_x..=hi_x {
+            let (cx, cy) = (px as f32 + 0.5, py as f32 + 0.5);
+            let w0 = ((xs[1] - cx) * (ys[2] - cy) - (xs[2] - cx) * (ys[1] - cy)) * inv;
+            let w1 = ((xs[2] - cx) * (ys[0] - cy) - (xs[0] - cx) * (ys[2] - cy)) * inv;
+            let w2 = 1.0 - w0 - w1;
+            // A little slack on the edges: texels that fall just outside a
+            // triangle are still part of that piece of the shirt, and a texel
+            // left unclaimed reads as a seam of the old club's colour.
+            if w0 >= -0.05 && w1 >= -0.05 && w2 >= -0.05 {
+                map[py * w + px] = piece;
+            }
+        }
+    }
+}
+
+fn eat(h: &mut u64, b: u8) {
+    *h ^= b as u64;
+    *h = h.wrapping_mul(0x0000_0100_0000_01b3);
+}
+
+/// One atlas per club, so two clubs in the same colours share one.
+fn kit_key(hero: &Hero, uniform: &Uniform) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in [
+        hero.positions.len() as u8,
+        (hero.positions.len() >> 8) as u8,
+        (hero.height * 100.0) as u8,
+        uniform.jersey.r,
+        uniform.jersey.g,
+        uniform.jersey.b,
+        uniform.jersey_accent.r,
+        uniform.jersey_accent.g,
+        uniform.jersey_accent.b,
+        uniform.shorts.r,
+        uniform.shorts.g,
+        uniform.shorts.b,
+        uniform.socks.r,
+        uniform.socks.g,
+        uniform.socks.b,
+        uniform.shoes.r,
+        uniform.shoes.g,
+        uniform.shoes.b,
+    ] {
+        eat(&mut h, b);
+    }
+    h
+}
+
+impl Hero {
+    /// Read the atlas against the body: which piece of the kit each texel is.
+    pub fn kit_map(&self) -> KitMap {
+        let (w, h) = (self.texture.w, self.texture.h);
+        let mut piece = vec![Piece::Keep; w * h];
+        let mut vert = vec![Piece::Keep; self.positions.len()];
+        let inv_height = if self.height > 1e-3 { 1.0 / self.height } else { 1.0 };
+        for (i, p) in self.positions.iter().enumerate() {
+            let s = to_scene([p.x, p.y, p.z]);
+            vert[i] = piece_at(s.z * inv_height, s.y.abs() * inv_height);
+        }
+        for t in self.indices.chunks_exact(3) {
+            let (a, b, c) = (t[0] as usize, t[1] as usize, t[2] as usize);
+            let (pa, pb, pc) = (vert[a], vert[b], vert[c]);
+            // A triangle spanning two pieces lies on the hem between them. Give
+            // it to whichever piece has the vote, and leave it in the file's own
+            // colours when the vote is tied.
+            let here = if pa == pb || pa == pc {
+                pa
+            } else if pb == pc {
+                pb
+            } else {
+                continue;
+            };
+            if here == Piece::Keep {
+                continue;
+            }
+            fill_uv(&mut piece, w, h, &self.uvs, [a, b, c], here);
+        }
+        let mut sum = [0.0f32; PIECES];
+        let mut count = [0usize; PIECES];
+        for (i, px) in self.texture.px.iter().enumerate() {
+            let k = piece[i].index();
+            sum[k] += px.luma();
+            count[k] += 1;
+        }
+        let mut mean = [128.0f32; PIECES];
+        for k in 0..PIECES {
+            if count[k] > 0 {
+                // Floored well above zero: a piece that is nearly black would
+                // otherwise divide every fold in it into a blowout.
+                mean[k] = (sum[k] / count[k] as f32).max(10.0);
+            }
+        }
+        KitMap { w, h, piece, mean }
+    }
+
+    /// This figure dressed for a club.
+    pub fn kit_texture(&self, uniform: &Uniform) -> Arc<Texture> {
+        static CACHE: OnceLock<Mutex<Vec<(u64, Arc<Texture>)>>> = OnceLock::new();
+        let key = kit_key(self, uniform);
+        let cache = CACHE.get_or_init(|| Mutex::new(Vec::new()));
+        {
+            let held = cache.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some((_, tex)) = held.iter().find(|(k, _)| *k == key) {
+                return tex.clone();
+            }
+        }
+        let map = self.kit_map();
+        let target = [
+            Rgb::WHITE,
+            uniform.jersey,
+            uniform.shorts,
+            uniform.socks,
+            uniform.shoes,
+        ];
+        let mut tex = Texture::new(map.w, map.h, Rgb::BLACK);
+        for (i, src) in self.texture.px.iter().enumerate() {
+            let piece = map.piece[i];
+            if piece == Piece::Keep {
+                tex.px[i] = *src;
+                continue;
+            }
+            let k = piece.index();
+            let detail = (src.luma() / map.mean[k]).clamp(0.45, 1.8);
+            tex.px[i] = target[k].scale(detail);
+        }
+        let tex = Arc::new(tex);
+        cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push((key, tex.clone()));
+        tex
+    }
+}
+
+/// An authored character standing in for every man on the field.
+///
+/// [`HeroActor`] is a showcase: one figure, the nearest running man, so the model
+/// can be judged in a real frame. This is the other thing entirely -- the
+/// imported figure as the base for all fourteen men, each in his own club's kit.
+pub struct AuthoredField {
+    pub hero: Arc<Hero>,
+    pub scale: f32,
+    /// One atlas per side. A club's kit is painted once, not once a man.
+    pub kits: [Arc<Texture>; 2],
+}
+
+impl AuthoredField {
+    /// The field `height` render units tall -- a man is about 1.9.
+    pub fn new(hero: Arc<Hero>, height: f32, uniforms: [&Uniform; 2]) -> AuthoredField {
+        let scale = if hero.height > 1e-3 { height / hero.height } else { 1.0 };
+        let kits = [
+            hero.kit_texture(uniforms[0]),
+            hero.kit_texture(uniforms[1]),
+        ];
+        AuthoredField { hero, scale, kits }
     }
 }
 
@@ -1177,6 +1449,21 @@ mod tests {
         assert!((y.z - 1.0).abs() < 1e-6 && y.y.abs() < 1e-6, "Y went to {y:?}");
         let z = m.mul_vec(Vec3::new(0.0, 0.0, 1.0));
         assert!((z.y + 1.0).abs() < 1e-6, "Z went to {z:?}");
+    }
+
+    #[test]
+    fn the_kit_map_tells_a_shirt_from_a_hand_hanging_beside_it() {
+        // The shirt is the torso; a hand hanging past the hem is at the same
+        // height as the shorts and has to stay skin. That is why the vote comes
+        // from where the geometry sits rather than from the colours in the file.
+        assert_eq!(piece_at(0.70, 0.05), Piece::Shirt);
+        assert_eq!(piece_at(0.70, 0.30), Piece::Keep);
+        assert_eq!(piece_at(0.50, 0.06), Piece::Shorts);
+        assert_eq!(piece_at(0.50, 0.30), Piece::Keep);
+        assert_eq!(piece_at(0.20, 0.06), Piece::Sock);
+        assert_eq!(piece_at(0.05, 0.08), Piece::Shoe);
+        // The face is the one thing a re-kit must never repaint.
+        assert_eq!(piece_at(0.95, 0.02), Piece::Keep);
     }
 
     #[test]

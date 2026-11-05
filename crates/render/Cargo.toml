@@ -25,3 +25,7 @@ required-features = ["authored"]
 [[example]]
 name = "hero_shot"
 required-features = ["authored"]
+
+[[example]]
+name = "field"
+required-features = ["authored"]

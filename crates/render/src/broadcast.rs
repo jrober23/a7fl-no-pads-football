@@ -159,6 +159,10 @@ pub struct Broadcast {
     /// `authored` feature is on and the caller has one to give.
     #[cfg(feature = "authored")]
     hero_actor: Option<crate::authored::HeroActor>,
+    /// Every man on the field drawn from an authored character, when one has
+    /// been loaded. Takes precedence over the single `hero_actor`.
+    #[cfg(feature = "authored")]
+    authored_field: Option<crate::authored::AuthoredField>,
 }
 
 impl Broadcast {
@@ -238,6 +242,8 @@ impl Broadcast {
             },
             #[cfg(feature = "authored")]
             hero_actor: None,
+            #[cfg(feature = "authored")]
+            authored_field: None,
         }
     }
 
@@ -294,6 +300,16 @@ impl Broadcast {
     #[cfg(feature = "authored")]
     pub fn set_hero(&mut self, hero: Option<crate::authored::HeroActor>) {
         self.hero_actor = hero;
+    }
+
+    /// Dress every man on the field from the authored character, or put the
+    /// procedural figures back with `None`.
+    ///
+    /// This is the base mesh for the whole field rather than one showcase figure:
+    /// fourteen men, skinned from one rig, each in his own club's kit.
+    #[cfg(feature = "authored")]
+    pub fn set_authored_field(&mut self, field: Option<crate::authored::AuthoredField>) {
+        self.authored_field = field;
     }
 
     /// Render one frame of a recorded play at time `t` (seconds after the snap).
@@ -1039,6 +1055,23 @@ impl Broadcast {
         while men.len() < bodies.len() {
             men.push(Mesh::new());
         }
+        // The authored field replaces the whole picture, not one man in it.
+        #[cfg(feature = "authored")]
+        if let Some(field) = self.authored_field.as_ref() {
+            let clock = self.crowd_t;
+            for (mesh, p) in men.iter_mut().zip(bodies.iter()) {
+                let team = (p.team as usize).min(1);
+                Self::hero_into(
+                    &field.hero,
+                    field.scale,
+                    p,
+                    clock,
+                    Some(&field.kits[team]),
+                    mesh,
+                );
+            }
+            return bodies.len();
+        }
         #[cfg(feature = "authored")]
         let hero_at = self.hero_slot(camera, bodies);
         for (slot, (mesh, p)) in men.iter_mut().zip(bodies).enumerate() {
@@ -1047,7 +1080,7 @@ impl Broadcast {
             #[cfg(feature = "authored")]
             if hero_at == Some(slot) {
                 if let Some(actor) = self.hero_actor.as_ref() {
-                    Self::hero_into(actor, p, self.crowd_t, mesh);
+                    Self::hero_into(&actor.hero, actor.scale, p, self.crowd_t, None, mesh);
                     continue;
                 }
             }
@@ -1118,11 +1151,10 @@ impl Broadcast {
     /// this time it is a mannequin with an idle clip.
     #[cfg(feature = "authored")]
     fn hero_clip(
-        actor: &crate::authored::HeroActor,
+        hero: &crate::authored::Hero,
         p: &RenderPlayer,
         clock: f32,
     ) -> Option<(usize, f32)> {
-        let hero = &actor.hero;
         let named = |names: &[&str]| names.iter().find_map(|n| hero.clip_index(n));
         let dancing = if p.celebrate > 0.5 {
             named(&["Hip_Hop_Dance_3", "Agree_Gesture"])
@@ -1156,16 +1188,22 @@ impl Broadcast {
     /// standing where he stands.
     #[cfg(feature = "authored")]
     fn hero_into(
-        actor: &crate::authored::HeroActor,
+        hero: &crate::authored::Hero,
+        scale: f32,
         p: &RenderPlayer,
         clock: f32,
+        kit: Option<&std::sync::Arc<crate::raster::Texture>>,
         mesh: &mut Mesh,
     ) {
-        let joints = match Self::hero_clip(actor, p, clock) {
-            Some((clip, time)) => actor.hero.pose(clip, time),
-            None => actor.hero.bind_pose(),
+        let joints = match Self::hero_clip(hero, p, clock) {
+            Some((clip, time)) => hero.pose(clip, time),
+            None => hero.bind_pose(),
         };
-        actor.hero.skin_into(&joints, actor.scale, mesh);
+        // A man with no kit handed in wears the colours the file shipped with.
+        match kit {
+            Some(tex) => hero.skin_into_kit(&joints, scale, tex, mesh),
+            None => hero.skin_into(&joints, scale, mesh),
+        }
         mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
     }
 
@@ -2658,7 +2696,7 @@ mod tests {
         };
         let actor = HeroActor::new(Arc::clone(&hero), 1.9);
         let played = |p: &RenderPlayer| {
-            let (c, _) = Broadcast::hero_clip(&actor, p, 0.7).expect("a clip to play");
+            let (c, _) = Broadcast::hero_clip(&actor.hero, p, 0.7).expect("a clip to play");
             hero.clips[c].name.clone()
         };
         assert_eq!(
