@@ -11,6 +11,10 @@
 //! simulation and renders camera framings of it, so a rendered frame always matches
 //! the text play-by-play.
 
+/// Art kit characters: a rigged GLB, skinned on the CPU. Behind the `authored`
+/// feature because it carries its own JSON reader, JPEG decoder and asset loader.
+#[cfg(feature = "authored")]
+pub mod authored;
 pub mod broadcast;
 mod head;
 pub mod callsheet;

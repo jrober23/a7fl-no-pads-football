@@ -9,3 +9,15 @@ description = "Software 3D broadcast renderer for 7 on 7 No Pads Football"
 nopads_core = { path = "../core" }
 image = { version = "0.25", default-features = false, features = ["png"] }
 gif = "0.13"
+
+[features]
+# Authored characters: an artist's GLB, skinned on the CPU. Off by default --
+# it brings a JPEG decoder (the kit is painted into a JPEG atlas) and an asset
+# loader that nothing else in the renderer wants. `cargo run -p nopads_render
+# --features authored --example hero` is what it is for.
+authored = ["image/jpeg"]
+
+[[example]]
+name = "hero"
+# The example links the loader, so it cannot be built without the feature.
+required-features = ["authored"]
