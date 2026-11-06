@@ -378,7 +378,14 @@ impl Season {
         if round.games.iter().any(|g| !g.played()) {
             return;
         }
-        let winners: Vec<usize> = round.games.iter().filter_map(|g| g.winner()).collect();
+        // A bracket game has to send somebody through: the game can end tied
+        // after overtime, and the home side is always the better seed here, so a
+        // tie goes to the club that was already ahead of the other in the table.
+        let winners: Vec<usize> = round
+            .games
+            .iter()
+            .map(|g| g.winner().unwrap_or(g.home))
+            .collect();
         if round.name == "CHAMPIONSHIP" || winners.len() == 1 {
             self.champion = winners.first().copied();
             self.phase = Phase::Done;
@@ -494,6 +501,22 @@ mod tests {
                 assert!(!seeds.contains(club), "a club outside the top two got in");
             }
         }
+    }
+
+    #[test]
+    fn a_tied_playoff_game_still_sends_a_side_through() {
+        let mut season = Season::new(0, 2, 33);
+        for _ in 0..2 {
+            season.sim_rest();
+        }
+        season.start_playoffs();
+        for game in season.rounds[0].games.iter_mut() {
+            game.score = Some((10, 10));
+        }
+        season.sim_rest();
+        assert_eq!(season.rounds.len(), 2, "a tied quarterfinal built no semifinal");
+        assert_eq!(season.rounds[1].games.len(), 2);
+        assert_eq!(season.rounds[1].name, "SEMIFINAL");
     }
 
     #[test]
