@@ -23,6 +23,7 @@ use nopads_render::passing::{Badge, Guide, PassUi, Tone};
 use nopads_render::raster::Frame;
 
 mod arcade;
+mod controls;
 mod menu;
 mod view;
 

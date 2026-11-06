@@ -126,10 +126,15 @@ keyboard drives it, so the game is always playable.
  NEW 14 - 7 PAT   2ND 6:41   1ST & 10   BALL ON OWN 34
  SLANT RIGHT - DROPBACK PASS - DAL shows COVER 2
  A KELSEY 4.2   B ROSS 1.4   X HALE 3.1   Y DIAZ 0.9
- NEW ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [START] PAUSE
 ```
 
-Controls:
+That page under the picture is the terminal's; the window draws the field and
+nothing over it. Every button is on the **CONTROLS** page instead -- open it from
+**SETTINGS**, or from **CONTROLS** in any pause menu -- where it is laid out on
+four pages with the moves the old bar never had room for.
+
+Controls (all of them are on the **CONTROLS** page, under SETTINGS, and on the
+same page from every pause menu):
 
 | Input | On the call sheet | At the line and during the play |
 | --- | --- | --- |
@@ -578,7 +583,7 @@ pass is a penalty, so he has nothing left to do with it but run.
 A move is a state, not a button press that does something on the frame it is pressed:
 it runs for a fixed time, the tackle mathematics know what he is in the middle of, and
 there is a short cooldown afterwards so mashing the buttons cannot chain moves into a
-permanent immunity. The active move is named in the text bar while it runs.
+permanent immunity.
 
 ### Scoreboard, replays and the picture
 

@@ -446,7 +446,7 @@ fn settings_screen(
     pad: &mut Option<&mut Pad>,
     settings: &mut Settings,
 ) -> Option<()> {
-    const ROWS: usize = 5;
+    const ROWS: usize = 6;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -490,12 +490,20 @@ fn settings_screen(
                     }
                 }
                 2 => {
+                    // The controls are a page, not a value: the row opens it.
+                    if forward {
+                        controls_screen(view, pad);
+                        last = Instant::now();
+                        continue;
+                    }
+                }
+                3 => {
                     let n = RESOLUTIONS.len() as isize;
                     let i = ((settings.resolution_index() as isize + dir).rem_euclid(n)) as usize;
                     settings.set_resolution(i);
                     changed = true;
                 }
-                3 => {
+                4 => {
                     settings.fullscreen = !settings.fullscreen;
                     changed = true;
                 }
@@ -521,6 +529,7 @@ fn settings_screen(
                 CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string(),
             ),
             ("LENS", settings.lens_label()),
+            ("CONTROLS", String::new()),
             ("RESOLUTION", settings.resolution_label()),
             ("DISPLAY", settings.display_label().to_string()),
             ("BACK", String::new()),
@@ -536,6 +545,37 @@ fn settings_screen(
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
         );
         footer(&mut frame, "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK");
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// The controls page, opened from the settings. It is the same page the pause
+/// menu lifts over a frozen picture; here it gets the whole screen, because the
+/// settings screen has no game behind it to keep.
+fn controls_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+    let mut page = 0usize;
+    let mut pager = crate::controls::Pager::default();
+    view.reset();
+    loop {
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.a || input.pressed.b || input.pressed.start {
+            return Some(());
+        }
+        let left = input.stick.x < -0.55 || input.pressed.dummy;
+        let right = input.stick.x > 0.55 || input.pressed.shoulder;
+        if let Some(turn) = pager.turn(left, right) {
+            page = crate::controls::walk(page, turn);
+            // The push that turned the page must not also be seen as held.
+            view.reset();
+            continue;
+        }
+        let mut frame = Frame::new(UI_W, UI_H);
+        night(&mut frame);
+        crate::controls::draw(&mut frame, page);
+        footer(&mut frame, "[LEFT/RIGHT] PAGE   [A] DONE");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2698,6 +2738,7 @@ mod tests {
         let rows = [
             ("CAMERA", "BROADCAST".to_string()),
             ("LENS", "1.00 / +0.00".to_string()),
+            ("CONTROLS", String::new()),
             ("RESOLUTION", "1280 X 720".to_string()),
             ("DISPLAY", "WINDOWED".to_string()),
             ("BACK", String::new()),
@@ -2713,6 +2754,13 @@ mod tests {
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
         );
         save("settings", &settings);
+        for (i, _) in crate::controls::PAGES.iter().enumerate() {
+            let mut page = Frame::new(UI_W, UI_H);
+            night(&mut page);
+            crate::controls::draw(&mut page, i);
+            footer(&mut page, "[LEFT/RIGHT] PAGE   [A] DONE");
+            save(&format!("controls_{}", i + 1), &page);
+        }
         let all = clubs();
         let mut length = Frame::new(UI_W, UI_H);
         draw_season_length(&mut length, &all, 0, 4, &ui::Slide::new(4), 2.0);

@@ -1846,18 +1846,21 @@ struct PauseSlots {
     replay: usize,
     cam: usize,
     lens: usize,
+    help: usize,
     leave: usize,
 }
 
 fn pause_slots(can_replay: bool) -> PauseSlots {
     let cam = if can_replay { 2 } else { 1 };
+    let help = cam + 2;
     PauseSlots {
         can_replay,
-        items: if can_replay { 5 } else { 4 },
+        items: help + 2,
         replay: 1,
         cam,
         lens: cam + 1,
-        leave: cam + 2,
+        help,
+        leave: help + 1,
     }
 }
 
@@ -1908,6 +1911,7 @@ impl PausePanel<'_> {
             }
             rows.push(("CAMERA", self.cam.to_string()));
             rows.push(("LENS", format!("{:.2} / {:+.2}", self.zoom, self.tilt)));
+            rows.push(("CONTROLS", String::new()));
             rows.push(("LEAVE GAME", String::new()));
             PauseSheet {
                 title: "PAUSED",
@@ -2019,6 +2023,28 @@ fn draw_pause(frame: &mut nopads_render::Frame, sheet: &PauseSheet<'_>) {
     }
 }
 
+/// The controls page over a frozen picture.
+///
+/// Drawn on the interface's own grid and lifted by a whole step, for the same
+/// reason the pause panel is: the page's type and rows are designed at 640 wide,
+/// and drawing them at the picture's size would halve its footnotes again. Only
+/// the card -- and the line of paging hints under it -- is lifted, so the field
+/// around it is not resampled.
+fn draw_controls_over(frame: &mut nopads_render::Frame, page: usize) {
+    use nopads_render::ui;
+    let step = (frame.w / UI_W).max(1);
+    let mut grid = frame.downsample(step);
+    let (x, y, w, h) = crate::controls::draw(&mut grid, page);
+    let hints = ui::parse_hints("[LEFT/RIGHT] PAGE   [A] DONE");
+    ui::hints(&mut grid, UI_W as i32 / 2, y + h + 4, &hints);
+    let s = step as i32;
+    for py in y..(y + h + ui::S5).min(UI_H as i32) {
+        for px in x..(x + w).min(UI_W as i32) {
+            frame.fill_rect(px * s, py * s, s, s, grid.get(px, py));
+        }
+    }
+}
+
 /// Set when the player asked for the front end instead of the desktop.
 ///
 /// The pause screen is a free function called from the bottom of a snap, a
@@ -2051,6 +2077,9 @@ fn pause_menu(
     // The lens sub-screen: the stick on the camera, the frozen picture in front
     // of it, exactly like the lens screen in the settings.
     let mut tuning = false;
+    // The controls page, over the frozen picture: which of its pages is open.
+    let mut help: Option<usize> = None;
+    let mut pager = crate::controls::Pager::default();
     // The quit prompt: 0 is the menu, 1 is the desktop.
     let mut leaving: Option<usize> = None;
     let mut last = Instant::now();
@@ -2063,6 +2092,41 @@ fn pause_menu(
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if let Some(page) = help {
+            // The controls page has the pad while it is up: the stick and the
+            // bumpers walk its four pages, and A, B or START puts it away and
+            // leaves the game paused behind it.
+            let mut page = page;
+            if input.pressed.a || input.pressed.b || input.pressed.start {
+                help = None;
+            } else {
+                let left = input.stick.x < -0.55 || input.pressed.dummy;
+                let right = input.stick.x > 0.55 || input.pressed.shoulder;
+                if let Some(turn) = pager.turn(left, right) {
+                    page = crate::controls::walk(page, turn);
+                    help = Some(page);
+                }
+            }
+            let mut shown = false;
+            if view.is_window() && !matches!(shot, PausedShot::None) {
+                if still.is_none() {
+                    still = paused_still(broadcast, &shot, CAMS[*cam % CAMS.len()]);
+                }
+                if let Some(base) = &still {
+                    let mut frame = base.clone();
+                    draw_controls_over(&mut frame, page);
+                    shown = true;
+                    if !view.show(&mut frame, &[]) {
+                        break PauseAction::Quit;
+                    }
+                }
+            }
+            if !shown && !view.page(&crate::controls::lines(page)) {
+                break PauseAction::Quit;
+            }
+            std::thread::sleep(Duration::from_millis(16));
+            continue;
+        }
         if input.pressed.start || input.pressed.b {
             // B backs out of the lens without leaving the game paused behind it.
             if tuning {
@@ -2125,6 +2189,10 @@ fn pause_menu(
                         still = None;
                     }
                     p if p == slots.lens => tuning = true,
+                    p if p == slots.help => {
+                        help = Some(0);
+                        pager = crate::controls::Pager::default();
+                    }
                     p if p == slots.leave => leaving = Some(0),
                     _ => {}
                 }
@@ -2917,16 +2985,22 @@ fn snap_loop<S: SnapSim>(
             if screen.sim.scoreboard_visible() {
                 hud::draw_scoreboard(&mut frame, board);
             }
-            let mut lines = Vec::with_capacity(rows.len() + 3);
-            lines.push(header.to_string());
-            lines.extend(rows);
-            // The clock at the line, where the player can see it while the ball is
-            // still his to snap: the scoreboard bar is the game's clock, not this.
-            if let Some(clock) = screen.sim.clock_row() {
-                lines.push(clock);
-            }
-            if let Some(flag) = screen.sim.flag_row() {
-                lines.push(flag);
+            // The picture carries no bar of button hints any more: the controls
+            // are a page, opened from the settings and from every pause menu, so
+            // the ball is not read through a strip of text. A terminal has no
+            // picture to read a formation off at all, so it still gets the lines
+            // under it -- they are the only thing a terminal can say.
+            let mut lines = Vec::new();
+            if !screen.view.is_window() {
+                lines = Vec::with_capacity(rows.len() + 3);
+                lines.push(header.to_string());
+                lines.extend(rows);
+                if let Some(clock) = screen.sim.clock_row() {
+                    lines.push(clock);
+                }
+                if let Some(flag) = screen.sim.flag_row() {
+                    lines.push(flag);
+                }
             }
             if !screen.view.show(&mut frame, &lines) {
                 return false;
