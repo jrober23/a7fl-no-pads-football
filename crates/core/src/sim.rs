@@ -174,6 +174,17 @@ pub struct SnapSetup {
     pub is_try: bool,
 }
 
+/// Which play a defender has decided on under a ball in the air. The two are
+/// different pictures -- two hands up to take it away, one hand up to knock it
+/// down -- and the passer reads the same thing the player does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BallHands {
+    /// Going for the interception.
+    Pick,
+    /// Going for the knock-down.
+    Swat,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayOutcome {
     Run,
@@ -619,6 +630,9 @@ pub struct PlaySim<'a> {
     /// Whether a defender has already had his chance at a ball in the air, so one
     /// throw is not swatted at on every frame of its flight.
     pass_contacted: bool,
+    /// The defender playing the ball in the air and what he is playing it for,
+    /// while the ball is up. Nothing here once the pass is over.
+    pub ball_hands: Option<(usize, BallHands)>,
     /// What the game clock stopped at, when the ball died before the wrap finished.
     elapsed_override: Option<f32>,
     /// A ball dropping to the turf with nobody on it. The result is booked when
@@ -785,6 +799,7 @@ impl<'a> PlaySim<'a> {
             loose_recovery: None,
             return_is_fumble: false,
             pass_contacted: false,
+            ball_hands: None,
             elapsed_override: None,
             falling: None,
             pump_t: 0.0,
@@ -1833,6 +1848,7 @@ impl<'a> PlaySim<'a> {
     pub fn throw_to_with(&mut self, qb: usize, target: Option<usize>, power: f32) {
         // A new throw is a new chance for somebody to get a hand on it.
         self.pass_contacted = false;
+        self.ball_hands = None;
         let qb_pos = self.players[qb].pos;
         // The button is the arc, not the arm. It arrives here called power, but
         // nothing below uses it for power any more.
@@ -3315,6 +3331,12 @@ impl<'a> PlaySim<'a> {
                 let dist = self.players[d].pos.dist(self.ball.pos);
                 if dist < 2.1 && self.ball.z < 3.4 {
                     self.pass_contacted = true;
+                    // Committed before the roll: the figure shows what he is
+                    // trying to do, not what he managed to do.
+                    self.ball_hands = Some((
+                        d,
+                        if ctl.intercept { BallHands::Pick } else { BallHands::Swat },
+                    ));
                     let cov = self.attrs(d).coverage_factor();
                     let hands = self.attrs(d).catching as f32 / 100.0;
                     // Right on it is a play; a lunging reach is a half chance.
@@ -3356,10 +3378,12 @@ impl<'a> PlaySim<'a> {
                 let bat = (0.12 + cov * 0.16 + hands * 0.08) * reached;
                 let spot = self.ball.pos.x;
                 if self.rng.chance(pick) {
+                    self.ball_hands = Some((d, BallHands::Pick));
                     self.catch_spot = spot;
                     self.start_return(d, spot, flight.thrower, flight.air_yards);
                     return;
                 }
+                self.ball_hands = Some((d, BallHands::Swat));
                 if self.rng.chance(bat) {
                     let desc = format!("{} gets a hand in and bats it down!", self.name_of(d));
                     self.let_fall(PlayOutcome::PassIncomplete, spot, desc, flight.thrower, flight.air_yards, true);
@@ -3471,6 +3495,7 @@ impl<'a> PlaySim<'a> {
                 let pick_chance = (0.035 + cov * 0.11 + catching * 0.06 + self.difficulty.pick_bonus())
                     * if target.is_some() { 1.0 } else { 2.2 };
                 if self.rng.chance(pick_chance) {
+                    self.ball_hands = Some((d, BallHands::Pick));
                     let thrower = flight.thrower;
                     let air = flight.air_yards;
                     self.start_return(d, landing.x, thrower, air);
@@ -3887,6 +3912,7 @@ impl<'a> PlaySim<'a> {
         self.ball.pos = self.players[self.qb].pos;
         self.ball.z = 1.15;
         self.pass_contacted = false;
+        self.ball_hands = None;
         self.throw_away = false;
         self.pass_caught = false;
         self.scramble_started = false;
@@ -4905,6 +4931,51 @@ mod tests {
             sim.step(FIXED_DT);
         }
         assert!(sim.result.is_none(), "the return was over before it started");
+    }
+
+    /// A defender going up for a ball tells the picture which play he is on:
+    /// one hand up is the swat, two hands up is the interception. The state is
+    /// set when he commits, so a miss still reads as the play he tried.
+    #[test]
+    fn a_defender_shows_whether_he_is_swatting_or_picking() {
+        for (swat, want) in [(true, BallHands::Swat), (false, BallHands::Pick)] {
+            let (off, def) = teams();
+            let book = playbook();
+            let play = book
+                .iter()
+                .find(|p| p.family.is_pass())
+                .expect("no pass play");
+            let dcall = defensive_playbook()[0].clone();
+            let s = setup(45.0, 1, 10.0, 91);
+            let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+            sim.set_human_defender(Some(7));
+            let at = sim.players[7].pos;
+            sim.ball.holder = None;
+            sim.phase = Phase::BallInAir;
+            sim.pass_contacted = false;
+            sim.ball.flight = Some(Flight {
+                from: at,
+                to: at,
+                t: 1.0,
+                duration: 2.0,
+                peak: 0.3,
+                target: None,
+                thrower: sim.qb,
+                air_yards: 8.0,
+                speed: 12.0,
+            });
+            sim.set_def_control(Some(DefControl {
+                swat,
+                intercept: !swat,
+                ..Default::default()
+            }));
+            sim.step(FIXED_DT);
+            assert_eq!(
+                sim.ball_hands,
+                Some((7, want)),
+                "the man on the pad showed the wrong hands"
+            );
+        }
     }
 
     #[test]

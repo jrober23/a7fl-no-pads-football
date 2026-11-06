@@ -189,6 +189,11 @@ pub struct Pose {
     /// toes the way the carrier's dive does, and the arms go out in front of it,
     /// elbows locked, so the hands arrive before the chest.
     pub dive: f32,
+    /// 0..1: a defender going up for a ball in the air. Two hands up is a man
+    /// going to take it away; one hand is a man knocking it down.
+    pub reach: f32,
+    /// Whether that reach is the swat: the near hand alone, not both.
+    pub one_hand: bool,
 }
 
 /// One man's limbs in the figure's own vocabulary.
@@ -1487,6 +1492,22 @@ pub fn build_mesh_into(
         if pose.blocking && pose.arms_up > 0.0 {
             let up = pose.arms_up.clamp(0.0, 1.0);
             swing += (2.15 - swing) * up;
+        }
+        // A defender under a thrown ball shows which play he has chosen: both
+        // hands up to take it away, the near hand alone to knock it down. It is
+        // the one read a passer gets off a defensive back before the ball
+        // arrives, so it is posed off the sim's decision and not guessed at.
+        //
+        // An arm overhead is not a fat arm: the reach goes to 2.8 radians and the
+        // elbow is locked, so the hand is over the helmet rather than out in
+        // front of the face where it reads as a push.
+        if pose.reach > 0.0 {
+            let up = pose.reach.clamp(0.0, 1.0);
+            let near = *side > 0.0;
+            if !pose.one_hand || near {
+                swing += (2.80 - swing) * up;
+                flex += (0.04 - flex) * up;
+            }
         }
         // Capture overrides everything above: a clip already knows where the arm
         // is in a stride, and a carrying or blocking adjustment on top of it is

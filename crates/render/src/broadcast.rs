@@ -69,6 +69,10 @@ struct RenderPlayer {
     tackled: f32,
     /// 0..1 through a lunge at the man with the ball, for the pose.
     dive: f32,
+    /// 0..1: reaching up for a ball in the air, and whether it is the one-handed
+    /// swat rather than both hands going for the catch.
+    reach: f32,
+    one_hand: bool,
     celebrate: f32,
     /// The move this man is in the middle of, if he is the carrier, and how far
     /// through it he is.
@@ -445,6 +449,15 @@ impl Broadcast {
                     blocking: p.blocking,
                     hands: p.hands,
                     arms_up: p.drive,
+                    reach: if sim.ball_hands.map(|(who, _)| who) == Some(i) {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                    one_hand: matches!(
+                        sim.ball_hands,
+                        Some((who, nopads_core::sim::BallHands::Swat)) if who == i
+                    ),
                     down: p.down,
                 wrap: p.wrap.max(p.tackle_arms * 0.55),
                 dive: if p.dive_t > 0.0 {
@@ -619,6 +632,8 @@ impl Broadcast {
                 blocking: false,
                 hands: 0.0,
                 arms_up: 0.0,
+                reach: 0.0,
+                one_hand: false,
                 down: p.down,
                 wrap: p.wrap,
                 dive: 0.0,
@@ -848,6 +863,15 @@ impl Broadcast {
                 blocking: p.blocking,
                 hands: p.hands,
                 arms_up: p.drive,
+                reach: if sim.ball_hands.map(|(who, _)| who) == Some(i) {
+                    1.0
+                } else {
+                    0.0
+                },
+                one_hand: matches!(
+                    sim.ball_hands,
+                    Some((who, nopads_core::sim::BallHands::Swat)) if who == i
+                ),
                 down: p.down,
                 wrap: p.wrap.max(p.tackle_arms * 0.55),
                 dive: if p.dive_t > 0.0 {
@@ -1287,6 +1311,8 @@ impl Broadcast {
             blocking: p.blocking,
             hands: p.hands,
             arms_up: p.arms_up,
+            reach: p.reach,
+            one_hand: p.one_hand,
             down: p.down,
             wrapping: p.wrap,
             dive: p.dive,
@@ -2724,6 +2750,8 @@ mod tests {
             blocking: false,
             hands: 0.0,
             arms_up: 0.0,
+            reach: 0.0,
+            one_hand: false,
             down: false,
             wrap: 0.0,
             dive: 0.0,
@@ -2809,6 +2837,8 @@ mod tests {
             blocking: false,
             hands: 0.0,
             arms_up: 0.0,
+            reach: 0.0,
+            one_hand: false,
             down: false,
             wrap: 0.0,
             dive: 0.0,

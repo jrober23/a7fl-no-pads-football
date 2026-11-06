@@ -44,6 +44,8 @@ fn main() {
         tackled: 0.0,
         limbs: None,
         dive: 0.0,
+        reach: 0.0,
+        one_hand: false,
     };
 
     let views = [("0", 0.0f32), ("90", FRAC_PI_2), ("180", PI), ("270", 3.0 * FRAC_PI_2)];
@@ -64,6 +66,32 @@ fn main() {
             }
         }
     }
+    // The two plays a defender can make on a ball in the air, side by side: the
+    // one-handed swat and the two-handed pick. They are the read the passer gets,
+    // so they have to be tellable apart at a glance and from the front.
+    let mut pair = Frame::new(TILE_W * 2, TILE_H);
+    pair.clear(Rgb::hex(0xC8CCD2));
+    for (i, one_hand) in [true, false].into_iter().enumerate() {
+        let reached = Pose { reach: 1.0, one_hand, ..pose };
+        let mut frame = Frame::new(TILE_W, TILE_H);
+        frame.clear(Rgb::hex(0xC8CCD2));
+        let mut mesh =
+            players::build_mesh_at(player, uniform, &reached, player.id as u32, Detail::Close);
+        mesh.place(Vec3::new(0.0, 0.0, 0.0), 0.0, 1.0);
+        let scene = SceneRenderer::new(TILE_W, TILE_H, 34f32.to_radians());
+        let cam = Camera::new(Vec3::new(-3.4, 0.0, 1.05), 0.0, -0.04);
+        scene.draw_mesh(&mut frame, &mesh, &cam);
+        for y in 0..TILE_H {
+            for x in 0..TILE_W {
+                pair.color[y * pair.w + i * TILE_W + x] = frame.color[y * TILE_W + x];
+            }
+        }
+    }
+    match write_png("artifacts/reach.png", &pair) {
+        Ok(()) => println!("wrote artifacts/reach.png ({}x{})", pair.w, pair.h),
+        Err(e) => eprintln!("png failed: {e}"),
+    }
+
     let _ = std::fs::create_dir_all("artifacts");
     match write_png("artifacts/sheet.png", &sheet) {
         Ok(()) => println!("wrote artifacts/sheet.png ({}x{})", sheet.w, sheet.h),

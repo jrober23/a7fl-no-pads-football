@@ -309,7 +309,7 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
         "EXHIBITION",
         "SEASON",
         "MORE MODES",
-        "CUSTOMIZATION",
+        "ROSTER",
         "SETTINGS",
         "QUIT",
     ];
@@ -317,7 +317,7 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
         "ONE GAME, PICKED IN A MINUTE",
         "A CLUB, A LEAGUE, A SEASON",
         "TUTORIAL, PRACTICE, THE GAUNTLET",
-        "DEPTH CHARTS AND ROSTERS",
+        "DEPTH CHART AND ROSTER FOR EVERY CLUB",
         "CAMERA, LENS AND DISPLAY",
         "CLOSE THE GAME",
     ];
@@ -1032,7 +1032,7 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
-        centered(&mut frame, 12, "CUSTOMIZATION", 3, accent());
+        centered(&mut frame, 12, "ROSTER", 3, accent());
         centered(
             &mut frame,
             44,

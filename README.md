@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.82-windows-x86_64.zip` from the
+Grab `7on7-v0.25.83-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -210,6 +210,14 @@ is three: **call it**, **stop it**, **cover it** — call a defense off the shee
 make a tackle inside ten yards, and break up or intercept a pass. **BOTH** runs the
 offense and then the defense. When the steps are done it tells you where the rest
 of the controls live, which is the controls page on the pause menu.
+
+A defender under a thrown ball shows the play he has decided on: **two hands up
+for the interception, one hand up for the swat**, whether the pad is on him or the
+AI is playing him. It is the same read a passer gets in real life, and it is set when
+he commits, so a defender who goes for the pick and misses still looked like a man
+going for the pick.
+
+The depth charts and rosters live under **ROSTER** on the start screen.
 
 **PRACTICE** asks the same question the tutorial does — offense, defense or both —
 and then which book to run and how hard the other lot should play, and gives you the
