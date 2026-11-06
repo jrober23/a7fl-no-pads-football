@@ -907,7 +907,7 @@ impl Arcade {
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
-                    PausedShot::None,
+                    PausedShot::sheet(frame),
                 false) == PauseAction::Quit {
                     self.quit = true;
                     return None;
@@ -1501,7 +1501,7 @@ impl Arcade {
                     self.pad.as_mut(),
                     &mut self.cam,
                     &mut self.broadcast,
-                    PausedShot::None,
+                    PausedShot::sheet(frame),
                 false) == PauseAction::Quit {
                     self.quit = true;
                     return None;
@@ -1785,8 +1785,8 @@ fn ui_none() -> PassUi {
     }
 }
 
-/// What the pause screen can put behind its menu: the call sheet and the
-/// between-plays cards have no live picture, but a snap and a throw-off do.
+/// What the pause screen can put behind its menu: a snap, a throw-off and a call
+/// sheet all have a picture to freeze; the between-plays cards do not.
 enum PausedShot<'s> {
     None,
     /// The frozen picture, drawn by whichever sim is behind the menu: a snap and
@@ -1800,6 +1800,13 @@ impl<'s> PausedShot<'s> {
         PausedShot::Frozen(Box::new(move |broadcast, mode| {
             S::frame(broadcast, sim, mode, None)
         }))
+    }
+
+    /// A picture the caller has already drawn. A call sheet's pause keeps the
+    /// sheet it was opened on: the same glass over a page, rather than a page of
+    /// text where the sheet used to be.
+    fn sheet(frame: nopads_render::Frame) -> Self {
+        PausedShot::Frozen(Box::new(move |_, _| frame.clone()))
     }
 }
 
@@ -1951,8 +1958,12 @@ struct PauseSheet<'a> {
 /// out half the height of the row labels.
 fn draw_pause(frame: &mut nopads_render::Frame, sheet: &PauseSheet<'_>) {
     use nopads_render::ui;
-    let s = UI_SCALE as i32;
-    let mut page = frame.downsample(UI_SCALE);
+    // A live picture is drawn at the canvas's size; a call sheet is already on
+    // the interface's own grid. Either way the panel is built at 640 wide and
+    // lifted by whichever whole step the frame is drawn at.
+    let step = (frame.w / UI_W).max(1);
+    let mut page = frame.downsample(step);
+    let s = step as i32;
     let row_h = 26;
     // Wide enough for the longest thing the panel has to say -- the quit
     // question is wider than the menu's rows -- and never wider than the screen.
@@ -4228,6 +4239,15 @@ mod tests {
         // The lens, and the question that quitting asks.
         save("pause_lens", &panel(0, true, None, true));
         save("pause_leave", &panel(0, false, Some(1), true));
+        // Over a call sheet: the sheet stays behind the glass, at the size the
+        // sheet is drawn at, rather than being replaced by a page of text.
+        let forms = nopads_core::playbook::formations_in(&book);
+        let mut sheet = nopads_render::Frame::new(UI_W, UI_H);
+        nopads_render::callsheet::draw_layered(&mut sheet, &book, &forms, 0, 0, false, false);
+        draw_pause(&mut sheet, &panel(0, false, None, false).sheet());
+        let mut canvas = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
+        canvas.blit_up(&sheet, UI_SCALE);
+        nopads_render::write_png(format!("{dir}/pause_sheet.png"), &canvas).expect("write png");
         println!("wrote the pause menu to {dir}");
     }
 
