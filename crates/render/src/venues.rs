@@ -2125,6 +2125,312 @@ fn sea_texture() -> Texture {
     tex
 }
 
+/// One sun lounger: two trestles, the bed, a back that leans in two steps, and
+/// a towel over it. Blocky on purpose -- this is crowd furniture, and every box
+/// on a software rasteriser costs a frame time's worth of setup.
+fn sun_lounger(mesh: &mut Mesh, at: Vec3, yaw: f32, towel: Rgb) {
+    let (s, c) = yaw.sin_cos();
+    let p = |dx: f32, dy: f32, dz: f32| {
+        Vec3::new(at.x + dx * c - dy * s, at.y + dx * s + dy * c, at.z + dz)
+    };
+    let frame = Rgb::hex(0xF2F2EC);
+    let bed = Rgb::hex(0xE4DCC8);
+    for dx in [-0.85f32, 0.85] {
+        mesh.box_shaded(p(dx, 0.0, 0.18), Vec3::new(0.06, 0.30, 0.18), yaw, frame, 1.0);
+    }
+    mesh.box_shaded(p(0.0, 0.0, 0.38), Vec3::new(1.05, 0.30, 0.05), yaw, bed, 1.0);
+    for (i, &(dx, dz)) in [(-1.14f32, 0.56f32), (-1.36, 0.86)].iter().enumerate() {
+        mesh.box_shaded(
+            p(dx, 0.0, dz),
+            Vec3::new(0.13, 0.30, 0.17),
+            yaw,
+            bed,
+            1.0 - i as f32 * 0.04,
+        );
+    }
+    mesh.box_shaded(p(0.18, 0.0, 0.43), Vec3::new(0.62, 0.27, 0.02), yaw, towel, 1.0);
+}
+
+/// Somebody on a lounger: legs, a body in trunks, and a head against the raised
+/// end. Three blocks, the same shorthand the stand's crowd uses.
+fn sunbather(mesh: &mut Mesh, at: Vec3, yaw: f32, skin: Rgb, swim: Rgb) {
+    let (s, c) = yaw.sin_cos();
+    let p = |dx: f32, dy: f32, dz: f32| {
+        Vec3::new(at.x + dx * c - dy * s, at.y + dx * s + dy * c, at.z + dz)
+    };
+    mesh.box_shaded(p(0.52, 0.0, 0.47), Vec3::new(0.46, 0.24, 0.07), yaw, skin, 1.0);
+    mesh.box_shaded(p(0.02, 0.0, 0.52), Vec3::new(0.42, 0.21, 0.10), yaw, swim, 1.0);
+    mesh.box_shaded(p(-0.58, 0.0, 0.64), Vec3::new(0.12, 0.11, 0.11), yaw, skin, 1.0);
+}
+
+/// Somebody standing on the deck in trunks, maybe in a hat.
+fn bather(mesh: &mut Mesh, at: Vec3, yaw: f32, skin: Rgb, swim: Rgb, hat: Option<Rgb>) {
+    let (s, c) = yaw.sin_cos();
+    let p = |dx: f32, dy: f32, dz: f32| {
+        Vec3::new(at.x + dx * c - dy * s, at.y + dx * s + dy * c, at.z + dz)
+    };
+    mesh.box_shaded(p(0.0, 0.0, 0.40), Vec3::new(0.14, 0.18, 0.40), yaw, skin, 1.0);
+    mesh.box_shaded(p(0.0, 0.0, 1.00), Vec3::new(0.16, 0.21, 0.22), yaw, swim, 1.0);
+    mesh.box_shaded(p(0.0, 0.0, 1.34), Vec3::new(0.11, 0.11, 0.12), yaw, skin, 1.0);
+    if let Some(c) = hat {
+        mesh.box_shaded(p(0.0, 0.0, 1.47), Vec3::new(0.15, 0.15, 0.04), yaw, c, 1.0);
+    }
+}
+
+/// Somebody sitting on the pool edge with their legs over the water.
+fn pool_sitter(mesh: &mut Mesh, at: Vec3, yaw: f32, skin: Rgb, swim: Rgb) {
+    let (s, c) = yaw.sin_cos();
+    let p = |dx: f32, dy: f32, dz: f32| {
+        Vec3::new(at.x + dx * c - dy * s, at.y + dx * s + dy * c, at.z + dz)
+    };
+    mesh.box_shaded(p(0.24, 0.0, 0.26), Vec3::new(0.16, 0.16, 0.24), yaw, skin, 1.0);
+    mesh.box_shaded(p(0.0, 0.0, 0.64), Vec3::new(0.16, 0.21, 0.21), yaw, swim, 1.0);
+    mesh.box_shaded(p(0.0, 0.0, 0.96), Vec3::new(0.11, 0.11, 0.12), yaw, skin, 1.0);
+}
+
+/// A pool set into the deck: a white curb, the water inside it, and a ladder.
+fn plunge_pool(mesh: &mut Mesh, at: Vec3, half: Vec3, water: Rgb, shallow: Rgb) {
+    let curb = Rgb::hex(0xF2F2EC);
+    let cop = 0.42;
+    let top = 0.30;
+    for side in [-1.0f32, 1.0] {
+        mesh.box_shaded(
+            Vec3::new(at.x, at.y + side * (half.y + cop), at.z + top * 0.5),
+            Vec3::new(half.x + cop * 2.0, cop, top * 0.5),
+            0.0,
+            curb,
+            1.0,
+        );
+        mesh.box_shaded(
+            Vec3::new(at.x + side * (half.x + cop), at.y, at.z + top * 0.5),
+            Vec3::new(cop, half.y, top * 0.5),
+            0.0,
+            curb,
+            1.0,
+        );
+    }
+    // Water, two tones so the depth reads from above.
+    let surface = at.z + top * 0.82;
+    mesh.quad_shaded(
+        Vec3::new(at.x - half.x, at.y - half.y, surface),
+        Vec3::new(at.x - half.x * 0.25, at.y - half.y, surface),
+        Vec3::new(at.x - half.x * 0.25, at.y + half.y, surface),
+        Vec3::new(at.x - half.x, at.y + half.y, surface),
+        shallow,
+        1.0,
+    );
+    mesh.quad_shaded(
+        Vec3::new(at.x - half.x * 0.25, at.y - half.y, surface),
+        Vec3::new(at.x + half.x, at.y - half.y, surface),
+        Vec3::new(at.x + half.x, at.y + half.y, surface),
+        Vec3::new(at.x - half.x * 0.25, at.y + half.y, surface),
+        water,
+        1.0,
+    );
+    // The ladder at the bow end.
+    for dy in [-0.28f32, 0.28] {
+        mesh.box_shaded(
+            Vec3::new(at.x + half.x + cop, at.y + dy, at.z + 0.52),
+            Vec3::new(0.05, 0.05, 0.52),
+            0.0,
+            Rgb::hex(0xD8D8CE),
+            1.0,
+        );
+    }
+}
+
+/// A hot tub, eight-sided so it reads as round without a cylinder.
+fn hot_tub(mesh: &mut Mesh, at: Vec3, radius: f32, water: Rgb) {
+    let curb = Rgb::hex(0xF2F2EC);
+    for i in 0..8 {
+        let a = std::f32::consts::FRAC_PI_4 * i as f32;
+        let (s, c) = a.sin_cos();
+        mesh.box_shaded(
+            Vec3::new(at.x + c * radius, at.y + s * radius, at.z + 0.26),
+            Vec3::new(0.52, 0.18, 0.26),
+            a,
+            curb,
+            1.0,
+        );
+    }
+    let surface = at.z + 0.40;
+    let inner = radius - 0.45;
+    for i in 0..8 {
+        let a0 = std::f32::consts::FRAC_PI_4 * i as f32;
+        let a1 = std::f32::consts::FRAC_PI_4 * (i + 1) as f32;
+        mesh.tri(
+            Vec3::new(at.x, at.y, surface),
+            Vec3::new(at.x + a0.cos() * inner, at.y + a0.sin() * inner, surface),
+            Vec3::new(at.x + a1.cos() * inner, at.y + a1.sin() * inner, surface),
+            water,
+        );
+    }
+    // The water moving, in a couple of pale flecks.
+    for (dx, dy) in [(0.55f32, 0.25f32), (-0.5, -0.55)] {
+        mesh.quad_shaded(
+            Vec3::new(at.x + dx, at.y + dy, surface + 0.02),
+            Vec3::new(at.x + dx + 0.62, at.y + dy, surface + 0.02),
+            Vec3::new(at.x + dx + 0.62, at.y + dy + 0.36, surface + 0.02),
+            Vec3::new(at.x + dx, at.y + dy + 0.36, surface + 0.02),
+            Rgb::hex(0xDCF4F4),
+            1.0,
+        );
+    }
+}
+
+/// A parasol over the loungers: a pole and two crossed canopy boards.
+fn parasol(mesh: &mut Mesh, at: Vec3, canopy: Rgb, pole_h: f32) {
+    mesh.box_shaded(
+        Vec3::new(at.x, at.y, at.z + pole_h * 0.5),
+        Vec3::new(0.06, 0.06, pole_h * 0.5),
+        0.0,
+        Rgb::hex(0xD8D8CE),
+        1.0,
+    );
+    for (i, a) in [0.0f32, std::f32::consts::FRAC_PI_2].iter().enumerate() {
+        mesh.box_shaded(
+            Vec3::new(at.x, at.y, at.z + pole_h),
+            Vec3::new(1.32, 0.34, 0.06),
+            *a,
+            if i == 0 { canopy } else { Rgb::hex(0xF2F2EC) },
+            1.0,
+        );
+    }
+}
+
+/// The sun deck on the side away from the stand: a pool, a hot tub, a row of
+/// loungers under two parasols, and the people in and out of the water. The
+/// opposite side is the bleachers, so this is the only open deck on the boat.
+fn sun_deck(mesh: &mut Mesh, deck: f32, edge: f32, ox: f32, oy: f32) {
+    // Built round the origin and placed, so the whole lounge can be moved along
+    // the boat without touching its layout.
+    let mut d = Mesh::new();
+    {
+        let mesh = &mut d;
+    let z = 0.004;
+    // Set toward the boards rather than across the middle of the band: the
+    // broadcast lens stands over the outboard half of this deck, and a pool in
+    // the middle of it is behind the camera.
+    let mid = deck + 7.6;
+    let skins = [
+        Rgb::hex(0xE6B18A),
+        Rgb::hex(0x9C6239),
+        Rgb::hex(0xC98E62),
+        Rgb::hex(0x6B4429),
+        Rgb::hex(0xF0C6A4),
+    ];
+    let swims = [
+        Rgb::hex(0xE8573F),
+        Rgb::hex(0x2C7FB8),
+        Rgb::hex(0xF2C14E),
+        Rgb::hex(0xF2F2EC),
+        Rgb::hex(0x2AA198),
+    ];
+    let towels = [Rgb::hex(0xE8573F), Rgb::hex(0xF2C14E), Rgb::hex(0x2C7FB8)];
+
+    plunge_pool(
+        mesh,
+        Vec3::new(38.0, mid - 1.0, z),
+        Vec3::new(5.0, 3.0, 0.0),
+        Rgb::hex(0x2F9FC4),
+        Rgb::hex(0x55C2DE),
+    );
+    hot_tub(mesh, Vec3::new(52.0, mid + 0.6, z), 2.4, Rgb::hex(0x33B6BC));
+
+    // Loungers in a row between the pool and the rail, feet toward the water.
+    for i in 0..7 {
+        let x = 27.0 + i as f32 * 2.9;
+        let y = mid + 7.0;
+        sun_lounger(mesh, Vec3::new(x, y, z), -std::f32::consts::FRAC_PI_2, towels[i % 3]);
+        if i != 4 {
+            sunbather(
+                mesh,
+                Vec3::new(x, y, z),
+                -std::f32::consts::FRAC_PI_2,
+                skins[i % 5],
+                swims[(i + 2) % 5],
+            );
+        }
+    }
+    // Three more on the field side of the pool, facing back across it.
+    for i in 0..3 {
+        let x = 31.0 + i as f32 * 3.1;
+        let y = mid - 6.4;
+        sun_lounger(mesh, Vec3::new(x, y, z), std::f32::consts::FRAC_PI_2, towels[(i + 1) % 3]);
+        sunbather(
+            mesh,
+            Vec3::new(x, y, z),
+            std::f32::consts::FRAC_PI_2,
+            skins[(i + 1) % 5],
+            swims[(i + 4) % 5],
+        );
+    }
+
+    // Two at the edge with their legs in the water.
+    pool_sitter(
+        mesh,
+        Vec3::new(36.0, mid + 2.6, z),
+        0.0,
+        skins[1],
+        swims[0],
+    );
+    pool_sitter(
+        mesh,
+        Vec3::new(40.5, mid + 2.6, z),
+        0.0,
+        skins[0],
+        swims[2],
+    );
+
+    // Standing about: one by the pool, two at the tub.
+    bather(
+        mesh,
+        Vec3::new(45.0, mid + 1.0, z),
+        -0.7,
+        skins[3],
+        swims[1],
+        None,
+    );
+    bather(
+        mesh,
+        Vec3::new(50.0, mid + 3.4, z),
+        2.4,
+        skins[4],
+        swims[3],
+        Some(Rgb::hex(0xF2C14E)),
+    );
+    bather(
+        mesh,
+        Vec3::new(55.2, mid + 1.6, z),
+        -2.2,
+        skins[2],
+        swims[0],
+        None,
+    );
+
+    // Shade over the row, and two towels dropped between the chairs.
+    parasol(mesh, Vec3::new(31.0, mid + 7.6, z), Rgb::hex(0xE8573F), 2.7);
+    parasol(mesh, Vec3::new(44.5, mid + 7.6, z), Rgb::hex(0x2C7FB8), 2.7);
+    mesh.box_shaded(
+        Vec3::new(39.6, mid + 6.2, z + 0.03),
+        Vec3::new(0.62, 0.40, 0.03),
+        0.3,
+        towels[1],
+        1.0,
+    );
+    mesh.box_shaded(
+        Vec3::new(47.6, mid + 6.0, z + 0.03),
+        Vec3::new(0.58, 0.38, 0.03),
+        -0.2,
+        towels[2],
+        1.0,
+    );
+    }
+    d.place(Vec3::new(ox - 38.0, oy - (deck + 7.6), 0.0), 0.0, 1.0);
+    mesh.append(&d);
+
+}
+
 fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
     /// Where the painted ground stops: every deck plank starts exactly here.
     const DECK: f32 = HALF_WIDTH + 6.0;
@@ -2188,19 +2494,32 @@ fn yacht(mesh: &mut Mesh, rand: &mut dyn FnMut() -> f32) {
         (crate::fieldtex::TEX_X1, BOW, -DECK, DECK, Some(Side::LowX)),
         (-EDGE, crate::fieldtex::TEX_X0, -DECK, DECK, Some(Side::HighX)),
     ] {
-        let before = mesh.tris.len();
-        mesh.quad_shaded(
-            Vec3::new(x0, y0, 0.004),
-            Vec3::new(x1, y0, 0.004),
-            Vec3::new(x1, y1, 0.004),
-            Vec3::new(x0, y1, 0.004),
-            Rgb::WHITE,
-            1.0,
-        );
-        mesh.set_quad_uv(before, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]);
-        let slot = mesh.add_texture(std::sync::Arc::new(teak(x0, x1, y0, y1, margin)));
-        mesh.texture_range(before..mesh.tris.len(), slot);
+        let tex = std::sync::Arc::new(teak(x0, x1, y0, y1, margin));
+        let slot = mesh.add_texture(tex);
+        // The band is drawn in tiles, not as one quad the length of the boat: a
+        // single triangle that big is dropped whole by the culler when the lens
+        // stands on the deck it is meant to be under.
+        let tiles = (((x1 - x0) / 24.0).ceil() as usize).max(1);
+        for i in 0..tiles {
+            let (u0, u1) = (i as f32 / tiles as f32, (i + 1) as f32 / tiles as f32);
+            let a = x0 + (x1 - x0) * u0;
+            let b = x0 + (x1 - x0) * u1;
+            let before = mesh.tris.len();
+            mesh.quad_shaded(
+                Vec3::new(a, y0, 0.004),
+                Vec3::new(b, y0, 0.004),
+                Vec3::new(b, y1, 0.004),
+                Vec3::new(a, y1, 0.004),
+                Rgb::WHITE,
+                1.0,
+            );
+            mesh.set_quad_uv(before, [(u0, 0.0), (u1, 0.0), (u1, 1.0), (u0, 1.0)]);
+            mesh.texture_range(before..mesh.tris.len(), slot);
+        }
     }
+
+    // The sun deck, on the side away from the stand.
+    sun_deck(mesh, DECK, EDGE, 38.0, 36.8);
 
     // The bow: the deck tapers to a point ahead of the foredeck.
     mesh.quad_shaded(
@@ -2945,6 +3264,48 @@ mod venue_tests {
         let layouts: std::collections::HashSet<_> = cities.iter().map(|c| c.layout).collect();
         assert!(waters.len() >= 4, "only {} kinds of water in the league", waters.len());
         assert!(layouts.len() >= 4, "only {} skyline shapes in the league", layouts.len());
+    }
+
+    /// The deck opposite the bleachers is a place people are, not bare plank:
+    /// a pool, a hot tub and loungers, with people on them and in the water.
+    #[test]
+    fn the_yacht_has_a_sun_deck_away_from_the_stand() {
+        let mesh = build(Kind::Yacht);
+        let low = HALF_WIDTH + 7.0;
+        let high = HALF_WIDTH + 29.0;
+        let on_deck: Vec<_> = mesh
+            .tris
+            .iter()
+            .filter(|t| {
+                [t.a, t.b, t.c]
+                    .iter()
+                    .all(|p| p.y > low && p.y < high && p.z > 0.15)
+            })
+            .collect();
+        assert!(
+            on_deck.len() > 400,
+            "the deck opposite the stand is bare: {} triangles on it",
+            on_deck.len()
+        );
+        let pool = Rgb::hex(0x2F9FC4);
+        let tub = Rgb::hex(0x33B6BC);
+        assert!(
+            on_deck.iter().any(|t| t.color == pool),
+            "no pool on the sun deck"
+        );
+        assert!(
+            on_deck.iter().any(|t| t.color == tub),
+            "no hot tub on the sun deck"
+        );
+        // The stand is on the other side; nothing here should be under it.
+        assert!(
+            mesh.tris
+                .iter()
+                .filter(|t| [t.a, t.b, t.c].iter().all(|p| p.y < -low && p.z > 2.0))
+                .count()
+                > 0,
+            "the stand moved off its sideline"
+        );
     }
 
     /// Nothing a ground draws may lie on top of the painted ground. The turf and
