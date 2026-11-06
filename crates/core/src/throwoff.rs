@@ -237,6 +237,10 @@ struct Flight {
 
 #[derive(Clone)]
 pub struct ThrowOffSim<'a> {
+    /// Whether the two gunners who are not on the ball keep outside leverage and
+    /// squeeze the returner back up the middle, rather than all three running at
+    /// him in a line. Normal and hard are taught it; easy is not.
+    pub contain: bool,
     pub setup: ThrowOffSetup,
     pub throwing: &'a Team,
     pub receiving: &'a Team,
@@ -369,6 +373,7 @@ impl<'a> ThrowOffSim<'a> {
         });
         let _ = &mut rng;
         ThrowOffSim {
+            contain: true,
             setup: setup.clone(),
             throwing,
             receiving,
@@ -421,6 +426,13 @@ impl<'a> ThrowOffSim<'a> {
     /// The returner asks for a move. Only the man with the ball, only after the
     /// catch, and only on his feet: a mash of the buttons during the flight must
     /// not spend the moves before the return starts.
+    /// Teach the gunners outside leverage, or leave them running at the man in a
+    /// line. Easy hands the returner the corner; normal and hard do not.
+    pub fn with_contain(mut self, on: bool) -> Self {
+        self.contain = on;
+        self
+    }
+
     pub fn request_move(&mut self, kind: crate::moves::Kind) {
         if self.phase != ThrowPhase::Return || self.human != Some(self.returner()) {
             return;
@@ -938,7 +950,37 @@ impl<'a> ThrowOffSim<'a> {
         self.finish(outcome, next, ball.x, 0, None, desc);
     }
 
-    fn update_return(&mut self, dt: f32) {
+    /// How wide of the returner a containing gunner holds, and how far ahead of him.
+/// Wide enough that the runner cannot get outside him, tight enough that the two
+/// of them are still part of the tackle.
+    const CONTAIN_LANE: f32 = 5.5;
+    const CONTAIN_LEAD: f32 = 3.0;
+
+    /// The lane a containing gunner holds, or `None` when he should go and get the
+    /// ball. Two men take a side each, wide of the returner and a step ahead of
+    /// him, and give the lane up once they are close enough to tackle: a lane held
+    /// at every distance is a fence nobody ever closes. `lane_at` only decides
+    /// which side a man is given.
+    fn contain_lane(
+        contain: bool,
+        is_chaser: bool,
+        close_help: bool,
+        lane_at: usize,
+        gap: f32,
+        pos: Vec2,
+        dir: i8,
+    ) -> Option<Vec2> {
+        // list order: the first outside man takes the left, the next the right.
+        let side = if lane_at % 2 == 0 { 1.0 } else { -1.0 };
+        if !contain || is_chaser || close_help || gap < 12.0 {
+            return None;
+        }
+        let wide = (pos.y + side * Self::CONTAIN_LANE)
+            .clamp(-FIELD_HALF_WIDTH + 1.5, FIELD_HALF_WIDTH - 1.5);
+        Some(Vec2::new(pos.x + dir as f32 * Self::CONTAIN_LEAD, wide))
+    }
+
+fn update_return(&mut self, dt: f32) {
         let dir = self.setup.receive_direction;
         let returner = self.returner();
 
@@ -1087,6 +1129,32 @@ impl<'a> ThrowOffSim<'a> {
 
         // Gunners chase, unless one of them is the man the human is driving, or
         // he is still on the ground from a dive that did not hold on.
+        //
+        // Three men running at one line is three men the returner can beat in a
+        // straight line to the corner. So the two who are not nearest the ball
+        // keep outside leverage instead: level with him, a lane wide, one on each
+        // side, with the chaser coming up the middle behind him. The only ground
+        // left is up the middle, which is where the help is. A side that has not
+        // been taught this -- easy -- still runs at him in a line, which is why he
+        // gets the corner there and not here.
+        let chaser = (1..4)
+            .filter(|&g| !self.players[g].down && human != Some(g))
+            .min_by(|&a, &b| {
+                self.players[a]
+                    .pos
+                    .dist(pos)
+                    .partial_cmp(&self.players[b].pos.dist(pos))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        let lanes = [1.0f32, -1.0];
+        let mut lane_at = 0usize;
+        // Containment ends when the chase gets there: once the man on the ball is
+        // on the returner's shoulder the two outside men are the help, not the
+        // fence. Holding a lane while a teammate is already in the tackle is how
+        // a return goes the whole way with two men watching it.
+        let close_help = chaser
+            .map(|c| self.players[c].pos.dist(pos) < 6.0)
+            .unwrap_or(false);
         for g in 1..4 {
             if self.players[g].down {
                 continue;
@@ -1095,8 +1163,20 @@ impl<'a> ThrowOffSim<'a> {
             let target = if human == Some(g) {
                 self.pad_target(g, push, pos)
             } else {
-                pos
+                Self::contain_lane(
+                    self.contain,
+                    Some(g) == chaser,
+                    close_help,
+                    lane_at,
+                    self.players[g].pos.dist(pos),
+                    pos,
+                    dir,
+                )
+                .unwrap_or(pos)
             };
+            if human != Some(g) && Some(g) != chaser && !close_help {
+                lane_at += 1;
+            }
             self.steer(g, target, speed, dt);
         }
 
@@ -1847,6 +1927,44 @@ mod tests {
     /// The thirty-second clock is on the return, not on the throw-off. A throw
     /// that took most of the half-minute to come down used to have the return
     /// whistled dead the frame the ball was caught.
+    /// The two gunners who are not on the ball keep outside leverage, one to each
+    /// side, so the corner is closed and the only ground left is up the middle
+    /// where the chaser is coming. A side that has not been taught it -- easy --
+    /// runs at him in a line.
+    #[test]
+    fn gunners_contain_the_returner_to_the_middle() {
+        // The decision, which is the whole of containment: the two men who are
+        // not the chaser hold the outside lanes, and nobody does it on easy.
+        let pos = Vec2::new(0.0, 0.0);
+        let left = ThrowOffSim::contain_lane(true, false, false, 0, 30.0, pos, 1);
+        let right = ThrowOffSim::contain_lane(true, false, false, 1, 30.0, pos, 1);
+        let (left, right) = (left.expect("a lane"), right.expect("a lane"));
+        assert!(
+            left.y > 4.0 && right.y < -4.0,
+            "one man each side of him, not one line: {left:?} {right:?}"
+        );
+        assert!(
+            left.x > pos.x && right.x > pos.x,
+            "the lane man is ahead of the returner, not behind him"
+        );
+        assert!(
+            ThrowOffSim::contain_lane(true, true, false, 0, 30.0, pos, 1).is_none(),
+            "the chaser holds a lane instead of going and getting him"
+        );
+        assert!(
+            ThrowOffSim::contain_lane(false, false, false, 0, 30.0, pos, 1).is_none(),
+            "the side that was not taught containment held it anyway"
+        );
+        assert!(
+            ThrowOffSim::contain_lane(true, false, false, 0, 5.0, pos, 1).is_none(),
+            "a lane five yards from the ball is a spectator, not a tackler"
+        );
+        assert!(
+            ThrowOffSim::contain_lane(true, false, true, 0, 30.0, pos, 1).is_none(),
+            "the help is in the tackle and the lane man is still holding a fence"
+        );
+    }
+
     #[test]
     fn the_thirty_second_clock_runs_from_the_catch() {
         let (a, b) = teams();

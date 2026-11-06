@@ -7,6 +7,7 @@
 
 use std::time::{Duration, Instant};
 
+use nopads_core::playbook::Book;
 use nopads_core::game::{GameState, PlayRecord};
 use nopads_core::math::Rgb;
 use nopads_core::season::{self, Phase, Season};
@@ -64,12 +65,32 @@ pub struct Kickoff {
     pub receive: bool,
     /// The ground the game is played at: an index into the venue list.
     pub venue: usize,
+    /// The book the player is running: his club's own unless he picked another.
+    pub book: Book,
+}
+
+/// One of the clubs, agreed before anything is picked: who hosts, who travels,
+/// which side of the ball the player takes, and which shirt each of them wears.
+pub struct Sides {
+    pub yours: usize,
+    pub theirs: usize,
+    pub player_home: bool,
+    pub kits: [bool; 2],
+}
+
+/// Which of the tutoring sessions the player asked for: the offense, the
+/// defense, or both of them one after the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TutorialTrack {
+    Offense,
+    Defense,
+    Both,
 }
 
 /// Which of the sessions under MORE MODES the player picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrillKind {
-    Tutorial,
+    Tutorial(TutorialTrack),
     Practice,
     Gauntlet,
 }
@@ -80,8 +101,9 @@ pub enum Front {
     Friendly(Kickoff),
     /// A whole season, already scheduled.
     Season(Box<Season>),
-    /// One of the sessions under MORE MODES: no clock, no season, a drill.
-    Drill(DrillKind),
+    /// One of the sessions under MORE MODES: no clock, no season, a drill, on
+    /// the same clubs and the same book the game would have been played with.
+    Drill(DrillKind, Kickoff),
 }
 
 enum Start {
@@ -110,7 +132,9 @@ pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> O
             }
             Start::Modes => {
                 if let Some(kind) = modes_screen(view, &mut pad) {
-                    return Some(Front::Drill(kind));
+                    if let Some(kick) = drill_kickoff(view, &mut pad, kind) {
+                        return Some(Front::Drill(kind, kick));
+                    }
                 }
             }
             Start::Customize => {
@@ -436,6 +460,69 @@ fn draw_modes(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
     );
 }
 
+/// The three tutoring sessions, drawn on the same screen the modes are.
+const TRACKS: [(&str, &str); 3] = [
+    ("OFFENSE", "SNAP IT, THROW IT, RUN IT, SCORE IT"),
+    ("DEFENSE", "CALL IT, STOP IT, COVER IT"),
+    ("BOTH", "THE OFFENSE AND THEN THE DEFENSE"),
+];
+
+fn draw_tutorial(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
+    let mut rows: Vec<(&str, String)> =
+        TRACKS.iter().map(|(name, _)| (*name, String::new())).collect();
+    rows.push(("BACK", String::new()));
+    let note = TRACKS
+        .get(pick)
+        .map(|(_, line)| *line)
+        .unwrap_or("BACK TO THE MODES");
+    draw_option_screen(
+        frame,
+        "TUTORIAL",
+        "WHICH SIDE OF THE BALL DO YOU WANT TAUGHT?",
+        &rows,
+        slide,
+        note,
+        "[UP/DOWN] SESSION   [A] START   [B] BACK",
+    );
+}
+
+fn tutorial_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<TutorialTrack> {
+    let mut pick = 0usize;
+    let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return None;
+        }
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, TRACKS.len() + 1, -d);
+            }
+        }
+        slide.step(pick, dt);
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_tutorial(&mut frame, pick, &slide);
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        if input.pressed.a {
+            return match pick {
+                0 => Some(TutorialTrack::Offense),
+                1 => Some(TutorialTrack::Defense),
+                2 => Some(TutorialTrack::Both),
+                _ => None,
+            };
+        }
+        beat();
+    }
+}
+
 fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<DrillKind> {
     let mut pick = 0usize;
     let mut nav = Repeat::default();
@@ -463,7 +550,7 @@ fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<DrillKind
         }
         if input.pressed.a {
             return match pick {
-                0 => Some(DrillKind::Tutorial),
+                0 => tutorial_screen(view, pad).map(DrillKind::Tutorial),
                 1 => Some(DrillKind::Practice),
                 2 => Some(DrillKind::Gauntlet),
                 _ => None,
@@ -1279,18 +1366,16 @@ fn exhibition(
             }
         })
         .collect();
-    // Both sides are the player's to pick now, not just his own: the second
-    // screen is the club he is playing against, from any division. Either screen
-    // can be left to a roll instead.
-    // Both clubs first, and neither of them is "yours" yet: the side of the ball
-    // is the screen after this one.
-    let (first, first_kit) = pick_team(view, pad, &all, &cards, None, "FIRST TEAM")?.club(&all, None);
-    let (second, second_kit) =
-        pick_team(view, pad, &all, &cards, Some(first), "SECOND TEAM")?.club(&all, Some(first));
-    // The pad starts in the middle and slides to a side: the club on that side is
-    // the one the player runs, and the other hosts.
-    let (yours, theirs, player_home, kits) =
-        pick_side(view, pad, &all, first, first_kit, second, second_kit)?;
+    let sides = choose_sides(view, pad, &all, &cards)?;
+    let (yours, theirs, player_home, kits) = (
+        sides.yours,
+        sides.theirs,
+        sides.player_home,
+        sides.kits,
+    );
+    // Which book he runs: his club's own unless he wants another one. Every club
+    // has one, the way its NFL counterpart does.
+    let book = pick_book(view, pad, yours)?;
     let home = if player_home { yours } else { theirs };
     // The ground comes before the toss: the player picks where the game is
     // played, and then stands on it to call the coin.
@@ -1306,6 +1391,121 @@ fn exhibition(
         kits,
         receive,
         venue,
+        book,
+    })
+}
+
+/// The two clubs and the side of the ball, which every mode asks for: home
+/// first, then away, then which of them the player runs.
+fn choose_sides(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    all: &[Club],
+    cards: &[Card],
+) -> Option<Sides> {
+    // Both clubs first, and neither of them is "yours" yet: the side of the ball
+    // is the screen after this one. Either screen can be left to a roll instead.
+    let (first, first_kit) = pick_team(view, pad, all, cards, None, "HOME TEAM")?.club(all, None);
+    let (second, second_kit) =
+        pick_team(view, pad, all, cards, Some(first), "AWAY TEAM")?.club(all, Some(first));
+    // The pad starts in the middle and slides to a side: the club on that side is
+    // the one the player runs, and the other hosts.
+    let (yours, theirs, player_home, kits) =
+        pick_side(view, pad, all, first, first_kit, second, second_kit)?;
+    Some(Sides {
+        yours,
+        theirs,
+        player_home,
+        kits,
+    })
+}
+
+/// Which book the player runs. His own club's is the one it opens on, and the
+/// screen says which that is: a side is not stuck with the plays it was born
+/// with.
+fn pick_book(view: &mut View, pad: &mut Option<&mut Pad>, club: usize) -> Option<Book> {
+    let all = clubs();
+    let own = all[club].book;
+    let mut pick = Book::ALL.iter().position(|b| *b == own).unwrap_or(0);
+    let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return None;
+        }
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, Book::ALL.len(), -d);
+            }
+        }
+        slide.step(pick, dt);
+        let book = Book::ALL[pick];
+        let rows: Vec<(&str, String)> = Book::ALL
+            .iter()
+            .map(|b| (b.label(), if *b == own { "YOUR CLUB".to_string() } else { String::new() }))
+            .collect();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut frame,
+            "PLAYBOOK",
+            &format!("{} RUNS {}", all[club].abbr, own.label()),
+            &rows,
+            &slide,
+            book.blurb(),
+            "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        if input.pressed.a {
+            return Some(book);
+        }
+        beat();
+    }
+}
+
+/// One of the drills under MORE MODES, set up on the same clubs, side and book
+/// the exhibition screen asks for. A drill has no ground to pick and no clock to
+/// set: it is played on the practice field, and the toss is only about who
+/// returns first.
+fn drill_kickoff(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    _kind: DrillKind,
+) -> Option<Kickoff> {
+    let all = clubs();
+    let cards: Vec<Card> = all
+        .iter()
+        .map(|c| {
+            let (ratings, men) = c.profile(3);
+            Card {
+                ratings,
+                stars: men
+                    .into_iter()
+                    .map(|(pos, name, rating)| {
+                        (format!("{} {}", pos.abbr(), name.to_uppercase()), rating)
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    let sides = choose_sides(view, pad, &all, &cards)?;
+    let book = pick_book(view, pad, sides.yours)?;
+    let receive = coin_flip(view, pad, &all, sides.yours, sides.theirs, 0)?;
+    Some(Kickoff {
+        yours: sides.yours,
+        theirs: sides.theirs,
+        player_home: sides.player_home,
+        kits: sides.kits,
+        receive,
+        venue: 0,
+        book,
     })
 }
 
@@ -2180,6 +2380,7 @@ pub fn season_hub(
                                 kits: [true, false],
                                 receive: coin_seed() % 2 == 0,
                                 venue,
+                                book: clubs()[season.you].book,
                             }));
                         }
                     }
@@ -2881,6 +3082,37 @@ mod tests {
         let mut length = Frame::new(UI_W, UI_H);
         draw_season_length(&mut length, &all, 0, 4, &ui::Slide::new(4), 2.0);
         save("season_length", &length);
+
+        // The playbook screen, with the club's own book marked, and the tutorial
+        // submenu that opens off MORE MODES.
+        let rows: Vec<(&str, String)> = Book::ALL
+            .iter()
+            .map(|b| {
+                (
+                    b.label(),
+                    if *b == all[0].book {
+                        "YOUR CLUB".to_string()
+                    } else {
+                        String::new()
+                    },
+                )
+            })
+            .collect();
+        let mut books = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut books,
+            "PLAYBOOK",
+            &format!("{} RUNS {}", all[0].abbr, all[0].book.label()),
+            &rows,
+            &ui::Slide::new(1),
+            Book::ALL[1].blurb(),
+            "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
+        );
+        save("playbook", &books);
+
+        let mut tracks = Frame::new(UI_W, UI_H);
+        draw_tutorial(&mut tracks, 1, &ui::Slide::new(1));
+        save("tutorial_tracks", &tracks);
 
         let (depth, roster) = depth_chart(&all[0]);
         let pages = roster.len().div_ceil(CHART_ROWS).max(1);

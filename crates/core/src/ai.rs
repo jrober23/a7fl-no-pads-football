@@ -5,13 +5,20 @@ use std::sync::OnceLock;
 
 use crate::difficulty::Difficulty;
 use crate::math::Rng;
-use crate::playbook::{defensive_playbook, playbook, DefCall, Play, PlayFamily};
+use crate::playbook::{
+    defensive_playbook, defensive_playbook_for, playbook, playbook_for, Book, DefCall, Play,
+    PlayFamily,
+};
 use crate::sim::PlayOutcome;
 
 use crate::game::{GamePhase, GameState};
 
 static OFFENSE_BOOK: OnceLock<Vec<Play>> = OnceLock::new();
 static DEFENSE_BOOK: OnceLock<Vec<DefCall>> = OnceLock::new();
+/// Every book, laid out once: a coordinator asking for its club's book on every
+/// snap should not be building it every snap.
+static OFF_BOOKS: OnceLock<Vec<Vec<Play>>> = OnceLock::new();
+static DEF_BOOKS: OnceLock<Vec<Vec<DefCall>>> = OnceLock::new();
 
 pub fn offense_book() -> &'static [Play] {
     OFFENSE_BOOK.get_or_init(playbook)
@@ -19,6 +26,19 @@ pub fn offense_book() -> &'static [Play] {
 
 pub fn defense_book() -> &'static [DefCall] {
     DEFENSE_BOOK.get_or_init(defensive_playbook)
+}
+
+/// The offense a club runs: its own book, not the league's whole catalog.
+pub fn offense_book_for(book: Book) -> &'static [Play] {
+    let all = OFF_BOOKS.get_or_init(|| Book::ALL.iter().map(|b| playbook_for(*b)).collect());
+    &all[book.index()]
+}
+
+/// The defense a club plays.
+pub fn defense_book_for(book: Book) -> &'static [DefCall] {
+    let all =
+        DEF_BOOKS.get_or_init(|| Book::ALL.iter().map(|b| defensive_playbook_for(*b)).collect());
+    &all[book.index()]
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,13 +84,26 @@ impl Situation {
 }
 
 /// Weighted pick of a play matching a family, falling back to anything similar.
-fn pick_family(rng: &mut Rng, families: &[PlayFamily]) -> &'static Play {
-    let book = offense_book();
+fn pick_family(rng: &mut Rng, book: &'static [Play], families: &[PlayFamily]) -> &'static Play {
     let candidates: Vec<&'static Play> = book
         .iter()
         .filter(|p| families.contains(&p.family))
         .collect();
     if candidates.is_empty() {
+        // The club's book does not carry that concept -- a power side has no
+        // screen, an air raid side no boot. Keep the intent rather than the
+        // concept: a down that called for a throw gets a throw, a down that
+        // called for a run gets a run. Falling through to any play at all turned
+        // every one of those downs into a coin toss, and a game of coin tosses
+        // is a game with no clock left in it.
+        let want_pass = families.iter().any(|f| f.is_pass());
+        let near: Vec<&'static Play> = book
+            .iter()
+            .filter(|p| p.family.is_pass() == want_pass)
+            .collect();
+        if !near.is_empty() {
+            return near[rng.index(near.len())];
+        }
         return &book[rng.index(book.len())];
     }
     // Slight preference for plays with routes matching the situation is handled by
@@ -81,6 +114,9 @@ fn pick_family(rng: &mut Rng, families: &[PlayFamily]) -> &'static Play {
 pub fn choose_offense(g: &GameState, seed: u64) -> Play {
     let mut rng = Rng::new(seed ^ 0x0FF5_EE11);
     let s = Situation::from_game(g);
+    // The book belongs to the club with the ball: a power side calls power and a
+    // spread side calls the option on the same down and distance.
+    let book = offense_book_for(g.teams[g.offense()].book);
 
     // Conversions: pick a concept that fits the distance.
     if s.is_try {
@@ -89,37 +125,31 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
         } else {
             &[PlayFamily::QuickPass, PlayFamily::DropbackPass]
         };
-        return pick_family(&mut rng, families).clone();
+        return pick_family(&mut rng, book, families).clone();
     }
 
     // Short-yardage and goal line.
     if s.to_go <= 2.0 && (s.down >= 3 || s.yards_to_goal < 4.0) {
         if rng.chance(0.62) {
-            return pick_family(&mut rng, &[PlayFamily::RunInside, PlayFamily::QbRun]).clone();
+            return pick_family(&mut rng, book, &[PlayFamily::RunInside, PlayFamily::QbRun]).clone();
         }
-        return pick_family(&mut rng, &[PlayFamily::QuickPass, PlayFamily::PlayAction]).clone();
+        return pick_family(&mut rng, book, &[PlayFamily::QuickPass, PlayFamily::PlayAction]).clone();
     }
 
     if s.down == 4 {
         // Call something with a high completion rate.
-        return pick_family(
-            &mut rng,
-            &[PlayFamily::QuickPass, PlayFamily::DropbackPass, PlayFamily::Screen],
+        return pick_family(&mut rng, book, &[PlayFamily::QuickPass, PlayFamily::DropbackPass, PlayFamily::Screen],
         )
         .clone();
     }
 
     if s.down == 3 {
         if s.to_go > 8.0 {
-            return pick_family(
-                &mut rng,
-                &[PlayFamily::DropbackPass, PlayFamily::Screen, PlayFamily::QuickPass],
+            return pick_family(&mut rng, book, &[PlayFamily::DropbackPass, PlayFamily::Screen, PlayFamily::QuickPass],
             )
             .clone();
         }
-        return pick_family(
-            &mut rng,
-            &[PlayFamily::QuickPass, PlayFamily::DropbackPass, PlayFamily::RunOutside],
+        return pick_family(&mut rng, book, &[PlayFamily::QuickPass, PlayFamily::DropbackPass, PlayFamily::RunOutside],
         )
         .clone();
     }
@@ -127,16 +157,14 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
     // Clock-killing mode: run the ball, stay in bounds.
     if s.late_and_close() && s.score_diff > 0 {
         if rng.chance(0.7) {
-            return pick_family(&mut rng, &[PlayFamily::RunInside, PlayFamily::RunOutside]).clone();
+            return pick_family(&mut rng, book, &[PlayFamily::RunInside, PlayFamily::RunOutside]).clone();
         }
-        return pick_family(&mut rng, &[PlayFamily::QuickPass]).clone();
+        return pick_family(&mut rng, book, &[PlayFamily::QuickPass]).clone();
     }
 
     // Two-minute offense: get out of bounds, throw it downfield.
     if s.desperate() {
-        return pick_family(
-            &mut rng,
-            &[PlayFamily::DropbackPass, PlayFamily::PlayAction, PlayFamily::QuickPass],
+        return pick_family(&mut rng, book, &[PlayFamily::DropbackPass, PlayFamily::PlayAction, PlayFamily::QuickPass],
         )
         .clone();
     }
@@ -145,25 +173,19 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
     // it throws on early downs rather than grinding the ball for four yards.
     let push = g.difficulty.aggression();
     if push > 0.0 && s.down <= 2 && s.to_go >= 5.0 && rng.chance(0.30 + 0.30 * push) {
-        return pick_family(
-            &mut rng,
-            &[PlayFamily::DropbackPass, PlayFamily::PlayAction, PlayFamily::QuickPass],
+        return pick_family(&mut rng, book, &[PlayFamily::DropbackPass, PlayFamily::PlayAction, PlayFamily::QuickPass],
         )
         .clone();
     }
 
     // Normal down and distance: establish the run on early downs.
     if s.down <= 2 && s.to_go <= 6.0 && rng.chance(0.55) {
-        return pick_family(
-            &mut rng,
-            &[PlayFamily::RunInside, PlayFamily::RunOutside, PlayFamily::QbRun],
+        return pick_family(&mut rng, book, &[PlayFamily::RunInside, PlayFamily::RunOutside, PlayFamily::QbRun],
         )
         .clone();
     }
     if s.to_go >= 8.0 {
-        return pick_family(
-            &mut rng,
-            &[
+        return pick_family(&mut rng, book, &[
                 PlayFamily::DropbackPass,
                 PlayFamily::PlayAction,
                 PlayFamily::QuickPass,
@@ -172,9 +194,7 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
         )
         .clone();
     }
-    pick_family(
-        &mut rng,
-        &[
+    pick_family(&mut rng, book, &[
             PlayFamily::RunInside,
             PlayFamily::RunOutside,
             PlayFamily::QuickPass,
@@ -189,9 +209,23 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
 pub fn choose_defense(g: &GameState, seed: u64) -> DefCall {
     let mut rng = Rng::new(seed ^ 0xDEFE_5511);
     let s = Situation::from_game(g);
-    let book = defense_book();
+    let book = defense_book_for(g.teams[g.defense()].book);
+    // A call this club's book does not carry is replaced by the nearest thing it
+    // does: the same coverage off a different front, then the front itself, then
+    // whatever it opens with. A book is a book, not a script with holes in it.
     let by_name = |name: &str| -> DefCall {
-        book.iter().find(|d| d.name == name).cloned().unwrap_or_else(|| book[0].clone())
+        if let Some(d) = book.iter().find(|d| d.name == name) {
+            return d.clone();
+        }
+        if let Some(want) = defensive_playbook().into_iter().find(|d| d.name == name) {
+            if let Some(d) = book.iter().find(|d| d.coverage == want.coverage) {
+                return d.clone();
+            }
+            if let Some(d) = book.iter().find(|d| d.front == want.front) {
+                return d.clone();
+            }
+        }
+        book[0].clone()
     };
 
     // Goal line: crowd the box.

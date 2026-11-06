@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.47-windows-x86_64.zip` from the
+Grab `7on7-v0.25.80-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -195,26 +195,33 @@ the film and timing paths use.
 **MORE MODES** is the three sessions that are drills rather than games: no clock, no
 season, nothing on the scoreboard, and you leave when you have had enough.
 
-**TUTORIAL** is the offense one control at a time, lined up on the ten. It asks for
-four things in order — **snap it**, **throw it**, **run it**, **score it** — and it
-does not move on until the snap did the thing it asked for: a run does not finish
-the throw, and a play stopped at the one does not finish the score. When all four
-are done it tells you where the rest of the controls live, which is the controls
-page on the pause menu.
+All three ask for the same two clubs, the same side of the ball and the same
+playbook the exhibition screen does — home team, away team, which end you take,
+which book you run — so a drill is played with the club and the plays you meant to
+practise. The pause menu inside them is the game's: same resume, same controls
+page, same lens.
 
-**PRACTICE** is the same session without the list: your call from the whole
-playbook, no clock, no downs, no turnover to lose, and the ball back on the same
-spot for the next snap. It is where a play gets learned without a game being spent
-on it.
+**TUTORIAL** opens a second screen: **OFFENSE**, **DEFENSE** or **BOTH**. The
+offense session is one control at a time, lined up on the ten. It asks for four
+things in order — **snap it**, **throw it**, **run it**, **score it** — and it does
+not move on until the snap did the thing it asked for: a run does not finish the
+throw, and a play stopped at the one does not finish the score. The defense session
+is three: **call it**, **stop it**, **cover it** — call a defense off the sheet,
+make a tackle inside ten yards, and break up or intercept a pass. **BOTH** runs the
+offense and then the defense. When the steps are done it tells you where the rest
+of the controls live, which is the controls page on the pause menu.
+
+**PRACTICE** is the same session without the list: your call from your book, no
+clock, no downs, no turnover to lose, and the ball back on the same spot for the
+next snap. It is where a play gets learned without a game being spent on it.
 
 **THREE-ON-ONE GAUNTLET** is the drill a throw-off already is — one man with the
-ball and three gunners coming for him, nobody else on the field — run five times.
-Every return is scored by the ground you made: thirty yards is a point, sixty is
-two, the house is six.
-
-All three are played on the practice field with the league's first two clubs, and
-the pause menu inside them is the game's: same resume, same controls page, same
-lens.
+ball and three gunners coming for him, nobody else on the field — played back and
+forth between the two clubs. The toss decides who brings the first one back; then
+the clubs alternate, five returns each player's side, one club's card against the
+other's. A return is scored by the ground it made: thirty yards is a point, sixty
+is two, the house is six. If the five apiece leave a tie — or a lead of one —
+sudden death: more returns in pairs, and it takes a lead of two to end it.
 
 **CUSTOMIZATION** is the league's paperwork, and it is for every club rather than
 only the one you are about to play: pick a club off the thirty-two and the screen
@@ -233,9 +240,9 @@ nickname underneath it, the clubs either side waiting their turn. Up and down ch
 division, left and right roll through the eight clubs in it, A takes the card you are
 on.
 
-Both sides are yours to pick. The first screen is your club, the second is the club
-you are playing against, and the second can come from any division — a divisional
-game is still there if you want it, it is just no longer the only game in the menu.
+Both sides are yours to pick, and the screens say which is which: **HOME TEAM** and
+then **AWAY TEAM**. The second can come from any division — a divisional game is
+still there if you want it, it is just no longer the only game in the menu.
 After the last club in a division there is a **RANDOM** card: take it and the
 division you were looking at picks the club for you, never the one already in the
 game. Both screens carry one, so a player who does not want to choose can roll
@@ -348,7 +355,11 @@ defense, nearest the ball first, and the stick moves whoever you are on.
 
 A throw-off is three gunners against one returner, as the rules say. All four face
 the ball: the throwing side looks downfield at the returner, and the returner looks
-back at the men coming for him. The thrower is
+back at the men coming for him. On normal and hard the coverage is taught to
+contain: the nearest gunner goes and gets him while the other two take a lane either
+side, a step ahead, and close only once the chase arrives — so the ground he is
+given is up the middle, where the help is, and not the corner. On easy they come at
+him in a line instead, which is the difficulty where the return is the reward. The thrower is
 not a coverage man: once the ball is away he leaves the picture, and the pad takes one
 of the three chasing it. B walks it round them, the way it walks round the seven on a
 scrimmage snap.

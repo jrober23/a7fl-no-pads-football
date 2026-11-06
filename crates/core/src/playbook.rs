@@ -882,6 +882,214 @@ pub fn playbook() -> Vec<Play> {
                 (WideR, route(&[(19.0, 3.0), (31.0, 4.0)], 30)),
             ],
         ),
+
+        // ---------------------- the scheme designs -------------------------
+        // Each club's book is built out of these and the designs above: the
+        // shared ones every club has, and the ones that are the club's own.
+        play(
+            "DIG DRIVE",
+            "Dig / drive",
+            PlayFamily::DropbackPass,
+            Formation::Trips,
+            2.6,
+            0,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, Assign::PassBlock { slide: 1.0, max_depth: -1.0 }),
+                (Slot, route(&[(9.0, -3.0), (15.0, -7.0)], 15)),
+                (WideL, route(&[(7.0, 9.0), (13.0, 15.0)], 12)),
+                (WideR, route(&[(4.0, 3.0)], 4)),
+            ],
+        ),
+        play(
+            "SPOT",
+            "Spot / hitch",
+            PlayFamily::QuickPass,
+            Formation::Doubles,
+            1.2,
+            0,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, Assign::PassBlock { slide: -1.0, max_depth: -1.0 }),
+                (Slot, route(&[(5.0, 1.5), (5.5, -1.0)], 5)),
+                (WideL, route(&[(3.5, 6.0)], 3)),
+                (WideR, route(&[(3.5, -6.0)], 3)),
+            ],
+        ),
+        play(
+            "Y CROSS",
+            "Crosser",
+            PlayFamily::DropbackPass,
+            Formation::Trips,
+            3.0,
+            0,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, route(&[(3.0, 2.0)], 3)),
+                (Slot, route(&[(12.0, -10.0), (17.0, 4.0)], 16)),
+                (WideL, route(&[(20.0, -2.0), (32.0, -3.0)], 28)),
+                (WideR, route(&[(10.0, 0.0), (9.0, -1.0)], 10)),
+            ],
+        ),
+        play(
+            "TUNNEL SCREEN",
+            "Tunnel screen",
+            PlayFamily::Screen,
+            Formation::Trips,
+            0.5,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, screen_block(0.5, 5.5)),
+                (Slot, screen_block(1.0, 8.0)),
+                (WideL, route(&[(18.0, -3.0)], 18)),
+                (WideR, route(&[(-1.5, 1.0), (6.0, 2.0)], 0)),
+            ],
+        ),
+        play(
+            "PA BOMB",
+            "Play action deep",
+            PlayFamily::PlayAction,
+            Formation::Doubles,
+            2.0,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, fake(Vec2::new(2.0, 1.0), &[(20.0, 8.0), (34.0, 10.0)], 30)),
+                (Slot, route(&[(20.0, -1.0), (34.0, -2.0)], 32)),
+                (WideL, route(&[(16.0, 4.0), (30.0, 5.0)], 28)),
+                (WideR, route(&[(6.0, 5.0)], 6)),
+            ],
+        ),
+        play(
+            "DOUBLE POST",
+            "Double post",
+            PlayFamily::DropbackPass,
+            Formation::Spread,
+            3.2,
+            0,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Slot, route(&[(12.0, -2.0), (24.0, -8.0)], 22)),
+                (WideL, route(&[(13.0, 2.0), (26.0, 8.0)], 24)),
+                (WideR, route(&[(6.0, 5.0), (11.0, 8.0)], 9)),
+            ],
+        ),
+        play(
+            "RPO GLANCE",
+            "RPO glance",
+            PlayFamily::QuickPass,
+            Formation::Pistol,
+            1.0,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, run_block(1.5, 0.6, false)),
+                (Rg, run_block(1.5, 2.2, false)),
+                (Back, Assign::PassBlock { slide: 1.0, max_depth: -1.0 }),
+                (Slot, run_block(2.5, 3.5, true)),
+                (WideL, route(&[(6.0, -2.0)], 6)),
+                (WideR, route(&[(9.0, -1.0)], 9)),
+            ],
+        ),
+        play(
+            "TRIPLE OPTION",
+            "Option",
+            PlayFamily::QbRun,
+            Formation::Spread,
+            0.0,
+            1,
+            &[
+                (Qb, qb_carry(&[(-1.0, 0.0), (1.0, 2.5), (6.0, 5.0), (14.0, 6.0)])),
+                (Lg, run_block(2.0, 0.5, false)),
+                (Rg, run_block(3.0, 3.0, false)),
+                (Back, run_block(3.0, 5.0, true)),
+                (Slot, run_block(3.0, -4.0, true)),
+                (WideL, route(&[(8.0, -2.0)], 8)),
+                (WideR, route(&[(10.0, 2.0)], 10)),
+            ],
+        ),
+        play(
+            "DUO",
+            "Duo",
+            PlayFamily::RunInside,
+            Formation::Bone,
+            0.0,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: 1.0 }),
+                (Lg, run_block(2.0, -0.6, false)),
+                (Rg, run_block(3.2, 2.0, false)),
+                (Back, carry(&[(-1.5, 0.0), (2.0, 0.5), (7.0, 1.0), (14.0, 0.5)])),
+                (Slot, run_block(4.0, 3.5, true)),
+                (WideL, run_block(1.0, -6.0, true)),
+                (WideR, run_block(2.0, 9.0, true)),
+            ],
+        ),
+        play(
+            "LEAD ISO",
+            "Isolation",
+            PlayFamily::RunInside,
+            Formation::Bone,
+            0.0,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: 1.0 }),
+                (Lg, run_block(2.5, 0.0, false)),
+                (Rg, run_block(3.0, 2.0, false)),
+                (Back, carry(&[(-1.0, 0.2), (2.0, 0.6), (8.0, 0.4), (15.0, 0.2)])),
+                (Slot, run_block(2.5, 1.6, false)),
+                (WideL, run_block(1.0, -5.5, true)),
+                (WideR, run_block(2.0, 8.5, true)),
+            ],
+        ),
+        play(
+            "ZONE BOOT",
+            "Bootleg",
+            PlayFamily::PlayAction,
+            Formation::Pistol,
+            1.5,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: -1.0 }),
+                (Lg, pass_pro(0.0)),
+                (Rg, pass_pro(0.0)),
+                (Back, fake(Vec2::new(2.0, 1.0), &[(1.0, 14.0), (12.0, 18.0)], 10)),
+                (Slot, route(&[(8.0, 4.0), (16.0, -1.0)], 14)),
+                (WideL, route(&[(4.0, -8.0)], 5)),
+                (WideR, route(&[(16.0, 10.0)], 16)),
+            ],
+        ),
+        play(
+            "WIDE ZONE",
+            "Outside zone",
+            PlayFamily::RunOutside,
+            Formation::Pistol,
+            0.0,
+            1,
+            &[
+                (Qb, Assign::PassBlock { slide: 0.0, max_depth: 1.0 }),
+                (Lg, run_block(1.0, 1.0, false)),
+                (Rg, run_block(1.5, 3.0, false)),
+                (Back, carry(&[(-1.0, 0.4), (0.5, 3.5), (3.0, 7.0), (12.0, 8.0)])),
+                (Slot, run_block(2.0, 5.0, true)),
+                (WideL, run_block(1.0, -6.0, true)),
+                (WideR, run_block(3.0, 10.0, true)),
+            ],
+        ),
     ]
 }
 
@@ -1137,7 +1345,332 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             blitzers: vec![DefRole::Mike],
             press: true,
         },
+        DefCall {
+            name: "COVER 2 TAMPA",
+            front: DefFront::Tite,
+            coverage: Coverage::Cover2,
+            run_fit: RunFit::Conservative,
+            blitzers: vec![],
+            press: false,
+        },
+        DefCall {
+            name: "COVER 0 BLITZ",
+            front: DefFront::Over,
+            coverage: Coverage::ManFree,
+            run_fit: RunFit::Aggressive,
+            blitzers: vec![DefRole::Mike, DefRole::Will],
+            press: true,
+        },
+        DefCall {
+            name: "FIRE ZONE",
+            front: DefFront::Tite,
+            coverage: Coverage::Cover3,
+            run_fit: RunFit::Aggressive,
+            blitzers: vec![DefRole::Will],
+            press: false,
+        },
+        DefCall {
+            name: "COVER 3 MATCH",
+            front: DefFront::Over,
+            coverage: Coverage::Cover3,
+            run_fit: RunFit::Balanced,
+            blitzers: vec![],
+            press: false,
+        },
+        DefCall {
+            name: "HEAVY TITE",
+            front: DefFront::Tite,
+            coverage: Coverage::ManFree,
+            run_fit: RunFit::Aggressive,
+            blitzers: vec![],
+            press: true,
+        },
+        DefCall {
+            name: "COVER 4 QUARTERS",
+            front: DefFront::Over,
+            coverage: Coverage::Cover4,
+            run_fit: RunFit::Conservative,
+            blitzers: vec![],
+            press: false,
+        },
     ]
+}
+
+// ---------------------------------------------------------------------------
+// The books
+// ---------------------------------------------------------------------------
+
+/// A club's book: the offense it runs and the defense it plays.
+///
+/// Seven of them, and each is a whole identity rather than a label: the offense
+/// picks its designs out of the catalog above, and the defense picks its calls.
+/// Every club in the league has one, the way every NFL club does, and the player
+/// may run any book over his own club's side.
+///
+/// Every book carries the same handful of fundamentals -- the shared plays are
+/// what let two clubs line up against each other and still recognise the game --
+/// and adds the designs that are its own. Some designs turn up in more than one
+/// book, because a mesh concept is a mesh concept whoever draws it up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Book {
+    /// Short, timed, underneath: the ball comes out on rhythm.
+    WestCoast,
+    /// Four wide, mesh and verticals, the whole field spread.
+    AirRaid,
+    /// Deep shots and play action off a heavy run look.
+    Vertical,
+    /// The quarterback as a runner, and the option.
+    Spread,
+    /// Gap runs, isolation, and the play action off them.
+    Power,
+    /// Outside zone, boots and the cut block.
+    Zone,
+    /// Nothing left out: the whole catalog, both ways.
+    Balanced,
+}
+
+impl Book {
+    pub const ALL: [Book; 7] = [
+        Book::WestCoast,
+        Book::AirRaid,
+        Book::Vertical,
+        Book::Spread,
+        Book::Power,
+        Book::Zone,
+        Book::Balanced,
+    ];
+
+    pub fn index(self) -> usize {
+        match self {
+            Book::WestCoast => 0,
+            Book::AirRaid => 1,
+            Book::Vertical => 2,
+            Book::Spread => 3,
+            Book::Power => 4,
+            Book::Zone => 5,
+            Book::Balanced => 6,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Book::WestCoast => "WEST COAST",
+            Book::AirRaid => "AIR RAID",
+            Book::Vertical => "VERTICAL",
+            Book::Spread => "SPREAD OPTION",
+            Book::Power => "POWER RUN",
+            Book::Zone => "ZONE RUN",
+            Book::Balanced => "BALANCED",
+        }
+    }
+
+    /// What the picker says about it, in one line.
+    pub fn blurb(self) -> &'static str {
+        match self {
+            Book::WestCoast => "TIMED, UNDERNEATH, ON RHYTHM: THE BALL COMES OUT QUICK",
+            Book::AirRaid => "FOUR WIDE, MESH AND VERTS: THE WHOLE FIELD, EVERY SNAP",
+            Book::Vertical => "DEEP SHOTS AND PLAY ACTION OFF A HEAVY RUN LOOK",
+            Book::Spread => "THE QUARTERBACK RUNS IT: OPTION, DRAW AND THE RPO",
+            Book::Power => "GAP RUNS, ISOLATION, AND THE PLAY ACTION OFF THEM",
+            Book::Zone => "OUTSIDE ZONE, BOOTS AND THE CUT BLOCK",
+            Book::Balanced => "EVERY DESIGN IN THE LEAGUE, BOTH SIDES OF THE BALL",
+        }
+    }
+
+    /// The designs in the book. The shared fundamentals are listed in each one,
+    /// because they are what every club in the league runs.
+    pub fn plays(self) -> &'static [&'static str] {
+        match self {
+            Book::WestCoast => &[
+                "ZONE READ",
+                "POWER O",
+                "CURL FLAT",
+                "SMASH",
+                "FOUR VERTS",
+                "RB SCREEN",
+                "SLANT FLAT",
+                "LEVELS",
+                "STICK",
+                "DAGGER",
+                "FLOOD",
+                "DIG DRIVE",
+                "SPOT",
+            ],
+            Book::AirRaid => &[
+                "ZONE READ",
+                "POWER O",
+                "CURL FLAT",
+                "SMASH",
+                "FOUR VERTS",
+                "RB SCREEN",
+                "SLANT FLAT",
+                "MESH",
+                "LEVELS",
+                "STICK",
+                "DAGGER",
+                "WR SCREEN",
+                "Y CROSS",
+                "TUNNEL SCREEN",
+            ],
+            Book::Vertical => &[
+                "ZONE READ",
+                "POWER O",
+                "CURL FLAT",
+                "SMASH",
+                "FOUR VERTS",
+                "RB SCREEN",
+                "DEEP SHOT",
+                "POST WHEEL",
+                "YANKEE",
+                "DAGGER",
+                "FLOOD",
+                "GOAL FADE",
+                "PA BOMB",
+                "DOUBLE POST",
+            ],
+            Book::Spread => &[
+                "ZONE READ",
+                "POWER O",
+                "CURL FLAT",
+                "SMASH",
+                "FOUR VERTS",
+                "RB SCREEN",
+                "QB DRAW",
+                "QB KEEPER",
+                "JET FLY",
+                "SLANT FLAT",
+                "MESH",
+                "WR SCREEN",
+                "RPO GLANCE",
+                "TRIPLE OPTION",
+            ],
+            Book::Power => &[
+                "ZONE READ",
+                "POWER O",
+                "CURL FLAT",
+                "SMASH",
+                "FOUR VERTS",
+                "RB SCREEN",
+                "COUNTER TREY",
+                "TRAP",
+                "QB KEEPER",
+                "PA BOOT",
+                "FLOOD",
+                "DEEP SHOT",
+                "DUO",
+                "LEAD ISO",
+            ],
+            Book::Zone => &[
+                "ZONE READ",
+                "POWER O",
+                "CURL FLAT",
+                "SMASH",
+                "FOUR VERTS",
+                "RB SCREEN",
+                "ROCKET SWEEP",
+                "JET FLY",
+                "FLOOD",
+                "PA BOOT",
+                "DEEP SHOT",
+                "ZONE BOOT",
+                "WIDE ZONE",
+            ],
+            Book::Balanced => &[],
+        }
+    }
+
+    /// The defensive calls in the book, on the same terms.
+    pub fn calls(self) -> &'static [&'static str] {
+        match self {
+            Book::WestCoast => &[
+                "COVER 1 MAN",
+                "COVER 3 ZONE",
+                "MIKE BLITZ",
+                "COVER 2 ZONE",
+                "COVER 2 TAMPA",
+                "PRESS BAIL",
+            ],
+            Book::AirRaid => &[
+                "COVER 1 MAN",
+                "COVER 3 ZONE",
+                "MIKE BLITZ",
+                "COVER 4 ZONE",
+                "COVER 4 QUARTERS",
+                "COVER 2 ZONE",
+            ],
+            Book::Vertical => &[
+                "COVER 1 MAN",
+                "COVER 3 ZONE",
+                "MIKE BLITZ",
+                "COVER 0 BLITZ",
+                "PRESS BAIL",
+                "GOAL LINE BEAR",
+            ],
+            Book::Spread => &[
+                "COVER 1 MAN",
+                "COVER 3 ZONE",
+                "MIKE BLITZ",
+                "WILL BLITZ",
+                "FIRE ZONE",
+                "COVER 2 ZONE",
+            ],
+            Book::Power => &[
+                "COVER 1 MAN",
+                "COVER 3 ZONE",
+                "MIKE BLITZ",
+                "HEAVY TITE",
+                "GOAL LINE BEAR",
+                "PRESS BAIL",
+            ],
+            Book::Zone => &[
+                "COVER 1 MAN",
+                "COVER 3 ZONE",
+                "MIKE BLITZ",
+                "COVER 3 MATCH",
+                "COVER 4 ZONE",
+                "COVER 2 ZONE",
+            ],
+            Book::Balanced => &[],
+        }
+    }
+}
+
+/// The designs every club in the league has, whatever its book.
+pub const SHARED_PLAYS: [&str; 6] =
+    ["ZONE READ", "POWER O", "CURL FLAT", "SMASH", "FOUR VERTS", "RB SCREEN"];
+
+/// The calls every club in the league has, whatever its book.
+/// The calls every club carries, whatever it hangs its hat on. Goal line is on
+/// the list because a book without one has no defense to call inside the five,
+/// and the fallback was a man-to-man call that hands over the touchdown instead.
+pub const SHARED_CALLS: [&str; 4] =
+    ["COVER 1 MAN", "COVER 3 ZONE", "MIKE BLITZ", "GOAL LINE BEAR"];
+
+/// The offense one club's book gives it, in catalog order so the call sheet
+/// reads the same way every week.
+pub fn playbook_for(book: Book) -> Vec<Play> {
+    let all = playbook();
+    if book == Book::Balanced {
+        return all;
+    }
+    let names = book.plays();
+    all.into_iter()
+        .filter(|p| names.contains(&p.name) || SHARED_PLAYS.contains(&p.name))
+        .collect()
+}
+
+/// The defense one club's book gives it, on the same terms.
+pub fn defensive_playbook_for(book: Book) -> Vec<DefCall> {
+    let all = defensive_playbook();
+    if book == Book::Balanced {
+        return all;
+    }
+    let names = book.calls();
+    // The shared calls come with every book whether the book bothers to list
+    // them or not: the fundamentals are the league's, not the scheme's.
+    all.into_iter()
+        .filter(|d| names.contains(&d.name) || SHARED_CALLS.contains(&d.name))
+        .collect()
 }
 
 /// Defensive alignment relative to the line of scrimmage. `los` is the canonical
@@ -1438,6 +1971,128 @@ mod tests {
         for d in defensive_playbook() {
             assert!(d.rushers() >= 2 && d.rushers() <= 4, "{} rush count", d.name);
             assert!(d.coverage.deep_defenders() <= 7 - d.rushers() + 2);
+        }
+    }
+}
+
+
+#[cfg(test)]
+mod book_tests {
+    use super::*;
+
+    /// Every club's book is a book: the shared fundamentals, enough designs to
+    /// call a game from, and more than one formation to line up in.
+    #[test]
+    fn every_book_has_the_shared_plays_and_enough_of_its_own() {
+        for book in Book::ALL {
+            let off = playbook_for(book);
+            let def = defensive_playbook_for(book);
+            assert!(off.len() >= 12, "{} has {} plays", book.label(), off.len());
+            for name in SHARED_PLAYS {
+                assert!(
+                    off.iter().any(|p| p.name == name),
+                    "{} is missing the shared play {name}",
+                    book.label()
+                );
+            }
+            let forms = formations_in(&off);
+            assert!(forms.len() >= 3, "{} has {} formations", book.label(), forms.len());
+            let runs = off.iter().filter(|p| p.family.is_run()).count();
+            let passes = off.iter().filter(|p| p.family.is_pass()).count();
+            assert!(runs >= 2 && passes >= 4, "{} is one-sided", book.label());
+            assert!(def.len() >= 4, "{} has {} calls", book.label(), def.len());
+            for name in SHARED_CALLS {
+                assert!(
+                    def.iter().any(|d| d.name == name),
+                    "{} is missing the shared call {name}",
+                    book.label()
+                );
+            }
+        }
+    }
+
+    /// A scheme book is not the whole catalog wearing a new name: each one is
+    /// missing designs that an unrelated one has.
+    #[test]
+    fn two_books_are_not_the_same_book() {
+        for a in Book::ALL {
+            for b in Book::ALL {
+                if a == b || a == Book::Balanced || b == Book::Balanced {
+                    continue;
+                }
+                let (one, two) = (playbook_for(a), playbook_for(b));
+                assert!(
+                    one.iter().any(|p| !two.iter().any(|q| q.name == p.name)),
+                    "{} and {} run exactly the same plays",
+                    a.label(),
+                    b.label()
+                );
+            }
+        }
+    }
+
+    /// A name in a book that is not in the catalog would silently shorten the
+    /// book, and a duplicate name would make two designs the same design.
+    #[test]
+    fn every_named_design_exists_and_names_are_unique() {
+        let all = playbook();
+        let calls = defensive_playbook();
+        let mut seen: Vec<&str> = Vec::new();
+        for p in &all {
+            assert!(!seen.contains(&p.name), "two designs called {}", p.name);
+            seen.push(p.name);
+            // Every design gives every job something to do, or a man stands
+            // there while the play is run.
+            for role in OffRole::ALL {
+                assert!(
+                    p.assignment(role).is_some(),
+                    "{} asks nothing of {}",
+                    p.name,
+                    role.label()
+                );
+            }
+        }
+        let mut seen: Vec<&str> = Vec::new();
+        for d in &calls {
+            assert!(!seen.contains(&d.name), "two calls called {}", d.name);
+            seen.push(d.name);
+        }
+        for book in Book::ALL {
+            for name in book.plays() {
+                assert!(
+                    all.iter().any(|p| p.name == *name),
+                    "{} names {name}",
+                    book.label()
+                );
+            }
+            for name in book.calls() {
+                assert!(
+                    calls.iter().any(|d| d.name == *name),
+                    "{} calls {name}",
+                    book.label()
+                );
+            }
+        }
+    }
+
+    /// A book's defense says what it is: fronts and coverages rather than the
+    /// same shape six times.
+    #[test]
+    fn a_book_covers_more_than_one_coverage() {
+        for book in Book::ALL {
+            let def = defensive_playbook_for(book);
+            let mut covs: Vec<Coverage> = Vec::new();
+            let mut fronts: Vec<DefFront> = Vec::new();
+            for d in &def {
+                if !covs.contains(&d.coverage) {
+                    covs.push(d.coverage);
+                }
+                if !fronts.contains(&d.front) {
+                    fronts.push(d.front);
+                }
+            }
+            assert!(covs.len() >= 2, "{} plays one coverage", book.label());
+            assert!(fronts.len() >= 2, "{} plays one front", book.label());
         }
     }
 }

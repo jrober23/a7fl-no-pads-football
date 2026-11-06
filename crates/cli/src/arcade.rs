@@ -319,7 +319,15 @@ pub struct Arcade {
     /// drill's own scoreboard: a drill has no clock and no score on the bug.
     drill_step: usize,
     drill_wave: u32,
-    drill_points: u32,
+    /// The gauntlet's two cards, which side of the ball the tutorial teaches, and
+    /// which side it is teaching right now.
+    gauntlet: [u32; 2],
+    track: Track,
+    teaching: Track,
+    /// Whether the gunners are taught to contain the returner.
+    contain: bool,
+    /// Who gets the first return in the gauntlet, from the opening toss.
+    first_return: usize,
 }
 
 /// What the player asked for at the final whistle.
@@ -368,7 +376,11 @@ impl Arcade {
             mode: Mode::Game,
             drill_step: 0,
             drill_wave: 0,
-            drill_points: 0,
+            gauntlet: [0, 0],
+            track: Track::Offense,
+            teaching: Track::Offense,
+            contain: true,
+            first_return: 0,
             game,
             pad,
             view,
@@ -436,6 +448,33 @@ impl Arcade {
     /// same pad, the same picture and the same snap loop, and plays no clock.
     pub fn with_mode(mut self, mode: Mode) -> Self {
         self.mode = mode;
+        self
+    }
+
+    /// The book the player runs, both ways: his club's unless he picked another.
+    /// A book is the whole offense and the whole defense.
+    pub fn with_book(mut self, book: nopads_core::playbook::Book) -> Self {
+        self.book = nopads_core::playbook::playbook_for(book);
+        self.defbook = nopads_core::playbook::defensive_playbook_for(book);
+        self
+    }
+
+    /// Which side of the ball the tutorial teaches.
+    pub fn with_track(mut self, track: Track) -> Self {
+        self.track = track;
+        self
+    }
+
+    /// Whether the gunners are taught to contain the returner. They are on every
+    /// difficulty but easy, which is where the return is the reward.
+    pub fn with_contain(mut self, contain: bool) -> Self {
+        self.contain = contain;
+        self
+    }
+
+    /// Which club gets the first return of the gauntlet, from the opening toss.
+    pub fn with_first_return(mut self, side: usize) -> Self {
+        self.first_return = side.min(1);
         self
     }
 
@@ -584,7 +623,19 @@ impl Arcade {
     fn drill(&mut self) {
         match self.mode {
             Mode::Gauntlet => self.drill_returns(),
-            Mode::Practice | Mode::Tutorial => self.drill_offense(),
+            Mode::Practice => self.drill_offense(false),
+            Mode::Tutorial => match self.track {
+                Track::Offense => self.drill_offense(true),
+                Track::Defense => self.drill_defense(true),
+                // Both: the offense first, then the defense, as two sessions in
+                // one. Leaving the first leaves the tutorial, not half of it.
+                Track::Both => {
+                    self.drill_offense(true);
+                    if !self.quit {
+                        self.drill_defense(true);
+                    }
+                }
+            },
             Mode::Game => {}
         }
     }
@@ -593,8 +644,8 @@ impl Arcade {
     /// spot, with no clock, no downs and no turnover to lose. The tutorial is the
     /// same session with a list of things to do, and does not go on to the next
     /// thing until the last one has been done.
-    fn drill_offense(&mut self) {
-        let tutorial = self.mode == Mode::Tutorial;
+    fn drill_offense(&mut self, tutorial: bool) {
+        self.teaching = Track::Offense;
         // The tutorial lines up on the ten, so the last step of it -- score --
         // is a thing a player can actually do in a couple of snaps.
         let yards_to_goal = if tutorial { 10.0 } else { 30.0 };
@@ -603,11 +654,11 @@ impl Arcade {
         self.view.reset();
         while !self.quit {
             if tutorial {
-                if self.drill_step >= TUTORIAL.len() {
+                if self.drill_step >= TUTORIAL_OFFENSE.len() {
                     let done = vec![
                         "TUTORIAL COMPLETE".to_string(),
                         String::new(),
-                        format!("  ALL {} STEPS DONE.", TUTORIAL.len()),
+                        format!("  ALL {} STEPS DONE.", TUTORIAL_OFFENSE.len()),
                         String::new(),
                         "  THAT IS THE OFFENSE. THE REST OF THE CONTROLS ARE ON THE".to_string(),
                         "  CONTROLS PAGE, WHICH IS ON EVERY PAUSE MENU AND IN THE SETTINGS.".to_string(),
@@ -617,9 +668,9 @@ impl Arcade {
                     self.drill_card(&done);
                     return;
                 }
-                let (title, ask) = TUTORIAL[self.drill_step];
+                let (title, ask) = TUTORIAL_OFFENSE[self.drill_step];
                 let card = vec![
-                    format!("  STEP {} OF {}   {}", self.drill_step + 1, TUTORIAL.len(), title),
+                    format!("  STEP {} OF {}   {}", self.drill_step + 1, TUTORIAL_OFFENSE.len(), title),
                     String::new(),
                     format!("  {ask}"),
                     String::new(),
@@ -695,17 +746,17 @@ impl Arcade {
             if tutorial && tutorial_met(self.drill_step, result.outcome, result.touchdown) {
                 self.drill_step += 1;
                 card.push(String::new());
-                if self.drill_step >= TUTORIAL.len() {
+                if self.drill_step >= TUTORIAL_OFFENSE.len() {
                     card.push("  STEP DONE - THAT WAS THE LAST ONE".to_string());
                 } else {
                     card.push(format!(
                         "  STEP DONE - NEXT: {}",
-                        TUTORIAL[self.drill_step].0
+                        TUTORIAL_OFFENSE[self.drill_step].0
                     ));
                 }
             } else if tutorial {
                 card.push(String::new());
-                card.push(format!("  NOT YET: {}", TUTORIAL[self.drill_step].0));
+                card.push(format!("  NOT YET: {}", TUTORIAL_OFFENSE[self.drill_step].0));
             }
             card.push(String::new());
             card.push("  [A] NEXT SNAP".to_string());
@@ -715,39 +766,202 @@ impl Arcade {
         }
     }
 
-    /// The gauntlet: five throw-offs, and every one of them yours to return. The
-    /// drill the mode is named for is the one a throw-off already is -- one man
-    /// with the ball and three gunners coming for him, with nobody else on the
-    /// field to help either side.
+    /// The gauntlet: the throw-off, back and forth. One club brings it back,
+    /// then the other, five returns each, and the score is the drill's own. A tie
+    /// after the ten -- or a lead of one -- is sudden death: more returns in
+    /// pairs, and it takes a lead of two to end it.
     fn drill_returns(&mut self) {
         const RETURNS: u32 = 5;
+        /// Nobody separated after twenty returns each: the drill is a draw.
+        const CAP: u32 = 40;
+        let mine = self.my_team.unwrap_or(0);
         let mut seed = self.game.seed ^ 0x7A11_0F;
-        let mut yards = 0.0f32;
+        self.gauntlet = [0, 0];
         self.drill_wave = 0;
-        self.drill_points = 0;
+        let mut turn = 0u32;
         self.view.reset();
-        while self.drill_wave < RETURNS && !self.quit {
-            let setup = nopads_core::throwoff::ThrowOffSetup {
-                throwing_team: 1,
-                receiving_team: 0,
+        while !self.quit {
+            let returning = if turn % 2 == 0 {
+                self.first_return
+            } else {
+                1 - self.first_return
+            };
+            let setup = ThrowOffSetup {
+                throwing_team: 1 - returning,
+                receiving_team: returning,
                 seed,
-                ..nopads_core::throwoff::ThrowOffSetup::normal()
+                ..ThrowOffSetup::normal()
             };
             seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let throwing = self.game.teams[1].clone();
-            let receiving = self.game.teams[0].clone();
-            let mut sim = ThrowOffSim::new(&setup, &throwing, &receiving);
+            let throwing = self.game.teams[1 - returning].clone();
+            let receiving = self.game.teams[returning].clone();
+            let mut sim =
+                ThrowOffSim::new(&setup, &throwing, &receiving).with_contain(self.contain);
             let header = self.drill_header();
             let board = drill_board(&[receiving.clone(), throwing.clone()], 80.0);
-            let mut caller = ThrowOffSnap {
-                game: &mut self.game,
-                my_team: 0,
-                hold: 0.0,
-                charging: false,
-                aim_y: 0.0,
-                armed: false,
-                cover_pick: 0,
-                cover_order: None,
+            let result = if returning == mine {
+                // The player's return, pad in hand, on the same picture as a game.
+                let mut caller = ThrowOffSnap {
+                    game: &mut self.game,
+                    my_team: mine,
+                    hold: 0.0,
+                    charging: false,
+                    aim_y: 0.0,
+                    armed: false,
+                    cover_pick: 0,
+                    cover_order: None,
+                };
+                let finished = snap_loop(
+                    &mut SnapScreen {
+                        sim: &mut sim,
+                        broadcast: &mut self.broadcast,
+                        view: &mut self.view,
+                        pad: self.pad.as_mut(),
+                        cam: &mut self.cam,
+                        flip_y: self.flip_y,
+                    },
+                    &mut caller,
+                    &header,
+                    &board,
+                );
+                if !finished {
+                    self.quit = true;
+                    return;
+                }
+                match sim.result.clone() {
+                    Some(result) => result,
+                    None => {
+                        turn += 1;
+                        continue;
+                    }
+                }
+            } else {
+                // Their return is the machine's. The drill is one man bringing it
+                // back for his club; the other club's answer is what makes it a
+                // scoreboard and not a score.
+                sim.run_to_completion()
+            };
+            let points = gauntlet_points(result.touchdown, result.return_yards);
+            self.gauntlet[returning] += points;
+            self.drill_wave += 1;
+            turn += 1;
+            let lead = (self.gauntlet[0] as i32 - self.gauntlet[1] as i32).abs();
+            let both_had_five = turn >= RETURNS * 2;
+            let over = both_had_five && turn % 2 == 0 && (lead >= 2 || turn >= CAP);
+            let mut card = vec![
+                format!(
+                    "  {} POINT{} ON THE RETURN",
+                    points,
+                    if points == 1 { "" } else { "S" }
+                ),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                format!("  {:.0} YARDS BACK", result.return_yards),
+                String::new(),
+                format!(
+                    "  {} {} - {} {}",
+                    self.game.teams[mine].abbr.to_uppercase(),
+                    self.gauntlet[mine],
+                    self.game.teams[1 - mine].abbr.to_uppercase(),
+                    self.gauntlet[1 - mine]
+                ),
+            ];
+            if over {
+                card.push(String::new());
+                card.push(format!(
+                    "  GAUNTLET OVER {} - {}",
+                    self.gauntlet[mine], self.gauntlet[1 - mine]
+                ));
+                card.push("  [A] BACK TO THE MODES".to_string());
+            } else {
+                if both_had_five {
+                    card.push(String::new());
+                    card.push("  SUDDEN DEATH - WIN BY TWO".to_string());
+                }
+                card.push(String::new());
+                card.push("  [A] NEXT RETURN".to_string());
+            }
+            if !self.drill_card(&card) {
+                return;
+            }
+            if over {
+                return;
+            }
+        }
+    }
+
+    /// The defense tutorial: call it, stop it, cover it. The same picture and the
+    /// same snap loop from the other side of the ball, with the drill's own card.
+    fn drill_defense(&mut self, tutorial: bool) {
+        self.teaching = Track::Defense;
+        self.drill_step = 0;
+        let yards_to_goal = 30.0;
+        let mut seed = self.game.seed ^ 0xDEF_E115;
+        self.view.reset();
+        while !self.quit {
+            if tutorial {
+                if self.drill_step >= TUTORIAL_DEFENSE.len() {
+                    let done = vec![
+                        "TUTORIAL COMPLETE".to_string(),
+                        String::new(),
+                        format!("  ALL {} DEFENSIVE STEPS DONE.", TUTORIAL_DEFENSE.len()),
+                        String::new(),
+                        "  THAT IS THE DEFENSE. THE REST OF THE CONTROLS ARE ON THE".to_string(),
+                        "  CONTROLS PAGE, WHICH IS ON EVERY PAUSE MENU AND IN THE SETTINGS."
+                            .to_string(),
+                        String::new(),
+                        "  [A] BACK TO THE MODES".to_string(),
+                    ];
+                    self.drill_card(&done);
+                    return;
+                }
+                let (title, ask) = TUTORIAL_DEFENSE[self.drill_step];
+                let card = vec![
+                    format!(
+                        "  STEP {} OF {}   {}",
+                        self.drill_step + 1,
+                        TUTORIAL_DEFENSE.len(),
+                        title
+                    ),
+                    String::new(),
+                    format!("  {ask}"),
+                    String::new(),
+                    "  [A] TO THE CALL SHEET".to_string(),
+                ];
+                if !self.drill_card(&card) {
+                    return;
+                }
+            }
+            let Some(def) = self.def_sheet() else {
+                return;
+            };
+            let play = self.cpu_offense();
+            let dir = 1i8;
+            let los = nopads_core::field::spot_from_yards_to_goal(yards_to_goal, dir);
+            let teams = [self.game.teams[0].clone(), self.game.teams[1].clone()];
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let setup = nopads_core::sim::SnapSetup {
+                los,
+                ball_y: 0.0,
+                direction: dir,
+                down: 1,
+                to_go: 10.0,
+                seed,
+                offense_team: 1,
+                defense_team: 0,
+                is_try: false,
+            };
+            let mut sim = PlaySim::new(&teams[1], &teams[0], &play, &def, &setup);
+            sim.await_snap(true);
+            sim.set_human_defender(sim.nearest_defender());
+            let header = self.drill_header();
+            let board = drill_board(&teams, yards_to_goal);
+            let defbook: &[DefCall] = &self.defbook;
+            let mut caller = DefenseSnap {
+                header: &header,
+                defbook,
+                switched: Instant::now() - Duration::from_millis(400),
             };
             let finished = snap_loop(
                 &mut SnapScreen {
@@ -769,29 +983,30 @@ impl Arcade {
             let Some(result) = sim.result.clone() else {
                 continue;
             };
-            yards += result.return_yards;
-            let points = gauntlet_points(result.touchdown, result.return_yards);
-            self.drill_points += points;
-            self.drill_wave += 1;
             let mut card = vec![
-                format!(
-                    "  RETURN {} OF {}   {} POINTS",
-                    self.drill_wave, RETURNS, self.drill_points
-                ),
+                self.drill_header(),
                 String::new(),
                 format!("  {}", result.description.to_uppercase()),
                 String::new(),
-                format!("  {:.0} YARDS BACK", result.return_yards),
-                format!("  {} POINT{} ON IT", points, if points == 1 { "" } else { "S" }),
+                format!("  {:.0} YARDS ALLOWED", result.yards),
             ];
-            if self.drill_wave >= RETURNS {
+            if tutorial && defense_met(self.drill_step, &result) {
+                self.drill_step += 1;
                 card.push(String::new());
-                card.push(format!("  GAUNTLET DONE: {} POINTS, {:.0} YARDS", self.drill_points, yards));
-                card.push("  [A] BACK TO THE MODES".to_string());
-            } else {
+                if self.drill_step >= TUTORIAL_DEFENSE.len() {
+                    card.push("  STEP DONE - THAT WAS THE LAST ONE".to_string());
+                } else {
+                    card.push(format!(
+                        "  STEP DONE - NEXT: {}",
+                        TUTORIAL_DEFENSE[self.drill_step].0
+                    ));
+                }
+            } else if tutorial {
                 card.push(String::new());
-                card.push("  [A] NEXT THROW-OFF".to_string());
+                card.push(format!("  NOT YET: {}", TUTORIAL_DEFENSE[self.drill_step].0));
             }
+            card.push(String::new());
+            card.push("  [A] NEXT SNAP".to_string());
             if !self.drill_card(&card) {
                 return;
             }
@@ -825,22 +1040,37 @@ impl Arcade {
     fn drill_header(&self) -> String {
         match self.mode {
             Mode::Tutorial => {
-                let step = self.drill_step.min(TUTORIAL.len() - 1);
+                let steps: &[(&str, &str)] = if self.teaching == Track::Defense {
+                    &TUTORIAL_DEFENSE
+                } else {
+                    &TUTORIAL_OFFENSE
+                };
+                let step = self.drill_step.min(steps.len().saturating_sub(1));
                 format!(
-                    "TUTORIAL   STEP {} OF {}   {}",
+                    "TUTORIAL   {}   STEP {} OF {}   {}",
+                    if self.teaching == Track::Defense {
+                        "DEFENSE"
+                    } else {
+                        "OFFENSE"
+                    },
                     step + 1,
-                    TUTORIAL.len(),
-                    TUTORIAL[step].0
+                    steps.len(),
+                    steps.get(step).map(|s| s.0).unwrap_or("DONE")
                 )
             }
             Mode::Practice => {
                 "PRACTICE   NO CLOCK, NO DOWNS   THE SAME SPOT EVERY SNAP".to_string()
             }
-            Mode::Gauntlet => format!(
-                "THREE-ON-ONE GAUNTLET   RETURN {} OF 5   {} POINTS",
-                (self.drill_wave + 1).min(5),
-                self.drill_points
-            ),
+            Mode::Gauntlet => {
+                let mine = self.my_team.unwrap_or(0);
+                format!(
+                    "THREE-ON-ONE GAUNTLET   {} {} - {} {}",
+                    self.game.teams[mine].abbr.to_uppercase(),
+                    self.gauntlet[mine],
+                    self.game.teams[1 - mine].abbr.to_uppercase(),
+                    self.gauntlet[1 - mine]
+                )
+            }
             Mode::Game => self.header(),
         }
     }
@@ -1714,7 +1944,11 @@ impl Arcade {
     }
 
     fn cpu_defense(&self) -> DefCall {
-        let book = &self.defbook;
+        // Their book, not the player's: the defense across the ball is the club
+        // that is playing it, and every club plays its own.
+        let book = nopads_core::playbook::defensive_playbook_for(
+            self.game.teams[self.game.possession].book,
+        );
         let situation = ai::Situation::from_game(&self.game);
         if situation.yards_to_goal <= 5.0 {
             if let Some(call) = book.iter().find(|d| d.name == "GOAL LINE BEAR") {
@@ -1732,7 +1966,8 @@ impl Arcade {
             }
         }
         let mut rng = Rng::new(self.game.seed ^ 0xD37E_C0DE);
-        book[rng.index(book.len())].clone()
+        let pick = rng.index(book.len());
+        book[pick].clone()
     }
 
     /// What the computer runs at a player who is playing defense: down and distance
@@ -1747,13 +1982,12 @@ impl Arcade {
         } else {
             rng.chance(0.55)
         };
-        let pool: Vec<&Play> = self
-            .book
-            .iter()
-            .filter(|p| p.family.is_pass() == want_pass)
-            .collect();
+        // Their book, not the player's: the other club calls its own game.
+        let book =
+            nopads_core::playbook::playbook_for(self.game.teams[self.game.possession].book);
+        let pool: Vec<&Play> = book.iter().filter(|p| p.family.is_pass() == want_pass).collect();
         if pool.is_empty() {
-            return self.book[rng.index(self.book.len())].clone();
+            return book[rng.index(book.len())].clone();
         }
         pool[rng.index(pool.len())].clone()
     }
@@ -3113,14 +3347,41 @@ impl Mode {
     }
 }
 
+/// Which side of the ball a tutorial teaches.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Track {
+    Offense,
+    Defense,
+    Both,
+}
+
 /// The tutorial, in order: the step, and what it asks the player to do. The check
 /// that a step is done lives in `tutorial_met`.
-const TUTORIAL: [(&str, &str); 4] = [
+const TUTORIAL_OFFENSE: [(&str, &str); 4] = [
     ("SNAP IT", "PRESS [A] AT THE LINE AND THE BALL GOES"),
     ("THROW IT", "CALL A PASS, HOLD A/B/X/Y, LET GO"),
     ("RUN IT", "CALL A RUN AND TAKE THE HAND-OFF"),
     ("SCORE IT", "GET THE BALL INTO THE END ZONE"),
 ];
+
+/// The defense tutorial, in order: call a defense, get a stop, cover a throw.
+const TUTORIAL_DEFENSE: [(&str, &str); 3] = [
+    ("CALL IT", "PICK A DEFENSE ON THE CALL SHEET"),
+    ("STOP IT", "MAKE THE TACKLE BEFORE THEY GET TEN"),
+    ("COVER IT", "BREAK UP A PASS OR PICK IT OFF"),
+];
+
+/// Whether a defensive snap did what its tutorial step asked for.
+fn defense_met(step: usize, result: &nopads_core::sim::PlayResult) -> bool {
+    use nopads_core::sim::PlayOutcome;
+    match step {
+        // The call has been made by the time a snap is played.
+        0 => true,
+        1 => !result.touchdown && result.yards < 10.0,
+        2 => result.incomplete || result.outcome == PlayOutcome::Interception,
+        _ => false,
+    }
+}
 
 /// Whether a snap did what the tutorial step asked for. Step one is the snap
 /// itself, so any play that was run at all counts as having done it.

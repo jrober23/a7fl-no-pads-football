@@ -908,11 +908,11 @@ fn cmd_arcade(args: &[String]) {
                 pad = p;
                 return;
             }
-            Some(menu::Front::Drill(kind)) => {
+            Some(menu::Front::Drill(kind, kick)) => {
                 // A drill hands the view back when the player leaves it, and the
                 // front end is where they land: the modes are a place to come
                 // back to, not a game to finish.
-                let (v, p) = play_drill(view, pad, &settings, kind, seed);
+                let (v, p) = play_drill(view, pad, &settings, kind, &kick, seed);
                 view = v;
                 pad = p;
             }
@@ -999,6 +999,10 @@ fn play_kickoff(
         .with_settings(settings.clone())
         .with_venue(kick.venue)
         .with_my_team(me)
+        .with_book(kick.book)
+        // Containment is what the gunners are taught on normal and hard; easy is
+        // the difficulty where the return is the reward.
+        .with_contain(settings.difficulty != 0)
         .for_series(series);
     arcade.run();
     let finished = arcade.finished();
@@ -1017,15 +1021,24 @@ fn play_drill(
     pad: Option<pad::Pad>,
     settings: &settings::Settings,
     kind: menu::DrillKind,
+    kick: &menu::Kickoff,
     seed: u64,
 ) -> (view::View, Option<pad::Pad>) {
     let mode = match kind {
-        menu::DrillKind::Tutorial => arcade::Mode::Tutorial,
+        menu::DrillKind::Tutorial(_) => arcade::Mode::Tutorial,
         menu::DrillKind::Practice => arcade::Mode::Practice,
         menu::DrillKind::Gauntlet => arcade::Mode::Gauntlet,
     };
+    let track = match kind {
+        menu::DrillKind::Tutorial(menu::TutorialTrack::Defense) => arcade::Track::Defense,
+        menu::DrillKind::Tutorial(menu::TutorialTrack::Both) => arcade::Track::Both,
+        _ => arcade::Track::Offense,
+    };
     let teams = league_teams();
-    let mut game = GameState::new(teams[0].clone(), teams[1].clone(), seed);
+    // The player's club is team 0 whatever end of the field it was picked at: a
+    // drill is his, and the drills are written from the player's side of the
+    // ball. The shirts are the ones picked on the way in.
+    let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
     game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
         settings.difficulty,
     ));
@@ -1035,7 +1048,12 @@ fn play_drill(
         .with_settings(settings.clone())
         .with_venue(0)
         .with_my_team(0)
-        .with_mode(mode);
+        .with_mode(mode)
+        .with_track(track)
+        .with_book(kick.book)
+        .with_contain(settings.difficulty != 0)
+        // The toss is shared: whoever won it brings the first one back.
+        .with_first_return(if kick.receive { 0 } else { 1 });
     arcade.run();
     arcade.into_parts()
 }
