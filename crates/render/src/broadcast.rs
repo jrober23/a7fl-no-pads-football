@@ -939,7 +939,14 @@ impl Broadcast {
             self.paint_ball_marker(&mut frame, &camera, ball_pos, ball_z);
         }
         if let Some(result) = &sim.result {
-            self.paint_result_word(&mut frame, result);
+            // A try is not a touchdown: the word over the picture is whether the
+            // point was good, the same word the card will carry a beat later.
+            if sim.setup.is_try {
+                let word = if result.touchdown { "CONVERSION" } else { "NO GOOD" };
+                self.paint_word(&mut frame, word, false, &result.description);
+            } else {
+                self.paint_result_word(&mut frame, result);
+            }
         }
         if std::env::var_os("NOPADS_TIMING").is_some() {
             eprintln!(
@@ -1452,6 +1459,33 @@ impl Broadcast {
 
     fn banner_for_scrimmage(&self, record: &ScrimmageRecord) -> Option<Banner> {
         let off = record.setup.offense_team;
+        // A try is not a touchdown, and the card has to say what actually
+        // happened on it: the point was good, it was no good, or there was a flag
+        // that decides which of those it is going to be.
+        if record.is_try {
+            let pen = record.result.penalty.as_ref();
+            if let Some(pen) = pen {
+                return Some(Banner {
+                    title: "FLAG".to_string(),
+                    subtitle: pen.kind.label().to_string(),
+                    color: hud::YELLOW,
+                });
+            }
+            return Some(Banner {
+                title: if record.result.touchdown {
+                    "CONVERSION IS GOOD".to_string()
+                } else {
+                    "NO GOOD".to_string()
+                },
+                subtitle: format!("{} · {}", self.teams[off].abbr, record.result.description)
+                    .to_uppercase(),
+                color: if record.result.touchdown {
+                    self.teams[off].accent
+                } else {
+                    hud::RED
+                },
+            });
+        }
         if record.result.touchdown {
             return Some(Banner {
                 title: "TOUCHDOWN".to_string(),

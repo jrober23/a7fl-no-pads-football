@@ -791,11 +791,18 @@ impl GameState {
         self.box_score.record(offense, &result, false, self.quarter as usize);
 
         if let Some(call) = result.penalty.clone() {
-            if !result.touchdown {
-                // The 1-or-2 decision is locked in even if a penalty is called.
+            // A foul by the side that just scored takes the point off the board
+            // and brings the try back from wherever the flag puts it -- further
+            // out, which is the whole cost of it. A defensive foul on a made try
+            // is declined, because the point is worth more than the yardage. The
+            // 1-or-2 decision stays locked in either way.
+            let against_offense = call.kind.against() == crate::rules::FoulTeam::Offense;
+            if against_offense || !result.touchdown {
                 let enf =
                     enforce(&call, record.setup.los, self.direction, result.end_spot, 1, self.to_go);
-                self.box_score.add_penalty(offense, enf.yards.round() as u32);
+                let yards = enf.yards.round() as u32;
+                self.box_score.add_penalty(offense, yards);
+                record.penalty_yards = yards;
                 self.commentary.push(penalty_sentence(&call, &enf));
                 self.spot = enf.spot;
                 self.down = 1;
@@ -815,12 +822,17 @@ impl GameState {
         if converted {
             self.apply_score(offense, points);
             self.commentary.push(format!(
-                "{} {} the {} point conversion.",
-                self.teams[offense].abbr,
-                if converted { "gets" } else { "misses" },
-                points
+                "{} - the {} point conversion is good.",
+                self.teams[offense].abbr, points
             ));
             self.drive.points += points;
+        } else {
+            // A try that fails is a play with no line of its own, which left the
+            // miss unspoken: the scoreboard changed nothing and nobody said why.
+            self.commentary.push(format!(
+                "{} - the {} point conversion is no good.",
+                self.teams[offense].abbr, points
+            ));
         }
 
         if self.ot.is_some() {
@@ -837,7 +849,7 @@ impl GameState {
             from_own: THROW_OFF_SPOT_YARD_LINE,
         };
         self.clock_stopped = true;
-        self.end_drive(if converted { "Touchdown" } else { "Stopped" });
+        self.end_drive(if converted { "Conversion" } else { "Stopped" });
         self.advance_clock(result.elapsed, true);
     }
 
@@ -1200,6 +1212,15 @@ impl GameState {
 
     pub fn outcome_label(record: &PlayRecord) -> String {
         match record {
+            // A try is not a touchdown: it is the point after one, and the word
+            // for it is whether the point was good.
+            PlayRecord::Scrimmage(r) if r.is_try => {
+                if r.result.touchdown {
+                    "CONVERSION IS GOOD".to_string()
+                } else {
+                    "NO GOOD".to_string()
+                }
+            }
             PlayRecord::Scrimmage(r) => match r.result.outcome {
                 PlayOutcome::Touchdown => "TOUCHDOWN".to_string(),
                 _ => format!("{:?}", r.result.outcome).to_uppercase(),
@@ -1295,6 +1316,38 @@ mod tests {
             g.commentary.iter().any(|c| c.contains("declined")),
             "{:?}",
             g.commentary
+        );
+    }
+
+    /// A hold on a scored conversion: the point comes off, the try comes back
+    /// from further out, and the yardage is on the books.
+    #[test]
+    fn a_hold_on_a_conversion_wipes_the_point_and_replays_it_longer() {
+        let (mut g, mut rec) = a_touchdown_with_a_flag(23, crate::rules::PenaltyKind::Holding);
+        let offense = rec.setup.offense_team;
+        g.phase = GamePhase::ConversionChoice { offense };
+        g.set_conversion(false);
+        // The same spot the try is snapped from, so the walk-off starts there.
+        rec.setup.los = g.spot;
+        rec.setup.direction = g.direction;
+        let before = g.score;
+        let five = crate::field::yards_to_goal(g.spot, g.direction);
+        g.apply_try(&mut rec);
+        assert_eq!(
+            g.score, before,
+            "the conversion counted with a hold on it: {:?}",
+            g.commentary
+        );
+        assert!(rec.penalty_yards > 0, "the yardage was never walked off");
+        assert!(
+            matches!(g.phase, GamePhase::Conversion { .. }),
+            "there was no retry: {:?}",
+            g.commentary
+        );
+        let now = crate::field::yards_to_goal(g.spot, g.direction);
+        assert!(
+            now > five + 1.0,
+            "the retry was not longer: {five} yards, then {now}"
         );
     }
 
