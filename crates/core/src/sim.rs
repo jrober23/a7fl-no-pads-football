@@ -59,10 +59,6 @@ pub const ARM_REACH: f32 = 0.44;
 pub const HOLD_DISTANCE: f32 = BODY_RADIUS * 2.0 + 0.08;
 /// How far a diving defender throws himself at the man with the ball.
 pub const DIVE_LUNGE: f32 = 2.20;
-/// How close the ball has to be for a dive to be aimed at it. Past this the dive
-/// goes along the stick instead: a dive is thrown from where the man stands, and
-/// it is not a leap across the field at whoever has the ball.
-pub const DIVE_ASSIST: f32 = 4.0;
 /// Hands up inside this many yards of the carrier, hands at his sides past
 /// [`PRESS_FAR`]: a defender working to get to the ball is reaching for him.
 pub const PRESS_AT: f32 = 1.2;
@@ -2323,27 +2319,17 @@ impl<'a> PlaySim<'a> {
                                 self.players[i].heading.sin(),
                             )
                         };
-                        let ball_at = carrier
-                            .map(|c| self.players[c].pos)
-                            .or(self.ball.flight.as_ref().map(|f| f.to))
-                            .unwrap_or(self.ball.pos);
-                        let aim_at = if ball_at.dist(self.players[i].pos) <= DIVE_ASSIST {
-                            // Lead him. The lunge takes a third of a second and
-                            // a runner covers two and a half yards in that time,
-                            // so aimed at where he was a dive at a runner in the
-                            // open field always lands behind him.
-                            carrier
-                                .map(|c| {
-                                    self.players[c].pos + self.players[c].vel * (DIVE_WINDOW * 0.6)
-                                })
-                                .unwrap_or(ball_at)
-                        } else if stick.length() > 0.18 {
-                            // The stick is the dive: he throws himself the way he
-                            // is being pointed, wherever the ball happens to be.
+                        // The dive is the stick, and nothing else. It is never
+                        // aimed at the ball carrier, however close he is: the
+                        // ground a dive covers is covered where the man stands and
+                        // in the direction he is pointing, and the tackle it makes
+                        // is whatever his reach finds from there. Homing on the
+                        // carrier -- from across the field, or from three yards --
+                        // is the dive the report kept seeing.
+                        let aim_at = if stick.length() > 0.18 {
                             self.players[i].pos + stick.normalize_or_zero()
                         } else {
-                            // No stick and nobody near: he dives the way he is
-                            // facing, in the spot he is standing on.
+                            // No stick: he dives the way he is facing.
                             self.players[i].pos + facing
                         };
                         let to = aim_at - self.players[i].pos;
@@ -5143,7 +5129,13 @@ mod tests {
         // over the window, so the defender is not reset between frames.
         sim.players[7].pos = Vec2::new(20.0 + gap, 0.0);
         sim.players[7].dive_t = 0.0;
-        sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+        // The stick points at him: a dive goes where it is aimed, so this is
+        // the press a player makes when he wants to lunge at a man.
+        sim.set_def_control(Some(DefControl {
+            move_dir: Vec2::new(-1.0, 0.0),
+            dive: true,
+            ..Default::default()
+        }));
         for _ in 0..40 {
             if sim.result.is_some() {
                 break;
@@ -5306,6 +5298,27 @@ mod tests {
                 .abs()
                 < 0.4,
             "the dive turned at the ball {away:.1} yards away: {aim:?}"
+        );
+
+        // And close enough to put a hand on him: two yards across, still pointing
+        // downfield. A dive with the ball on his shoulder still goes where he is
+        // pointed, because the dive is a body movement and not a tackle.
+        sim.players[7].pos = sim.players[carrier].pos + Vec2::new(0.0, 2.0 * side);
+        sim.players[7].vel = Vec2::ZERO;
+        sim.players[7].stun = 0.0;
+        sim.players[7].dive_t = 0.0;
+        sim.players[7].dive_armed = true;
+        sim.players[7].tackle_cooldown = 0.0;
+        sim.set_def_control(Some(DefControl {
+            move_dir: downfield,
+            dive: true,
+            ..Default::default()
+        }));
+        sim.step(1.0 / 60.0);
+        let close = sim.players[7].dive_aim;
+        assert!(
+            close.dot(downfield) > 0.85,
+            "the dive still turned at a man two yards away: {close:?}"
         );
     }
 
