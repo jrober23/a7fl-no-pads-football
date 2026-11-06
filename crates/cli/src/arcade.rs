@@ -313,6 +313,13 @@ pub struct Arcade {
     /// is no rematch after it and no front end inside it, because the season
     /// screen is what comes next and it needs the result.
     series: bool,
+    /// A game, or one of the drills under MORE MODES.
+    mode: Mode,
+    /// The tutorial's step, and the gauntlet's wave and points. They are the
+    /// drill's own scoreboard: a drill has no clock and no score on the bug.
+    drill_step: usize,
+    drill_wave: u32,
+    drill_points: u32,
 }
 
 /// What the player asked for at the final whistle.
@@ -358,6 +365,10 @@ impl Arcade {
         Arcade {
             halftime_shown: false,
             series: false,
+            mode: Mode::Game,
+            drill_step: 0,
+            drill_wave: 0,
+            drill_points: 0,
             game,
             pad,
             view,
@@ -421,6 +432,13 @@ impl Arcade {
         self
     }
 
+    /// One of the modes under MORE MODES rather than a game. A drill takes the
+    /// same pad, the same picture and the same snap loop, and plays no clock.
+    pub fn with_mode(mut self, mode: Mode) -> Self {
+        self.mode = mode;
+        self
+    }
+
     /// The score on the board, for whoever asked for the game.
     pub fn final_score(&self) -> (u32, u32) {
         (self.game.score[0], self.game.score[1])
@@ -450,6 +468,12 @@ impl Arcade {
             io::stdout().flush().ok();
         }
         loop {
+            // A drill is a session, not a game: it runs once and hands the view
+            // straight back to the front end, with no final card and no rematch.
+            if self.mode.is_drill() {
+                self.drill();
+                break;
+            }
             BACK_TO_MENU.store(false, Ordering::Relaxed);
             self.quit = false;
             let after = self.play();
@@ -551,6 +575,274 @@ impl Arcade {
         self.form = 0;
         self.sheet_pick = 0;
         self.def_pick = 0;
+    }
+
+    // ------------------------------------------------------------------
+    // The modes under MORE MODES
+    // ------------------------------------------------------------------
+
+    fn drill(&mut self) {
+        match self.mode {
+            Mode::Gauntlet => self.drill_returns(),
+            Mode::Practice | Mode::Tutorial => self.drill_offense(),
+            Mode::Game => {}
+        }
+    }
+
+    /// Practice and the tutorial: the offense, snap after snap, from the same
+    /// spot, with no clock, no downs and no turnover to lose. The tutorial is the
+    /// same session with a list of things to do, and does not go on to the next
+    /// thing until the last one has been done.
+    fn drill_offense(&mut self) {
+        let tutorial = self.mode == Mode::Tutorial;
+        // The tutorial lines up on the ten, so the last step of it -- score --
+        // is a thing a player can actually do in a couple of snaps.
+        let yards_to_goal = if tutorial { 10.0 } else { 30.0 };
+        let mut seed = self.game.seed ^ 0xD21_11;
+        self.drill_step = 0;
+        self.view.reset();
+        while !self.quit {
+            if tutorial {
+                if self.drill_step >= TUTORIAL.len() {
+                    let done = vec![
+                        "TUTORIAL COMPLETE".to_string(),
+                        String::new(),
+                        format!("  ALL {} STEPS DONE.", TUTORIAL.len()),
+                        String::new(),
+                        "  THAT IS THE OFFENSE. THE REST OF THE CONTROLS ARE ON THE".to_string(),
+                        "  CONTROLS PAGE, WHICH IS ON EVERY PAUSE MENU AND IN THE SETTINGS.".to_string(),
+                        String::new(),
+                        "  [A] BACK TO THE MODES".to_string(),
+                    ];
+                    self.drill_card(&done);
+                    return;
+                }
+                let (title, ask) = TUTORIAL[self.drill_step];
+                let card = vec![
+                    format!("  STEP {} OF {}   {}", self.drill_step + 1, TUTORIAL.len(), title),
+                    String::new(),
+                    format!("  {ask}"),
+                    String::new(),
+                    "  [A] TO THE CALL SHEET".to_string(),
+                ];
+                if !self.drill_card(&card) {
+                    return;
+                }
+            }
+            let Some(play) = self.call_sheet() else {
+                return;
+            };
+            let dir = 1i8;
+            let los = nopads_core::field::spot_from_yards_to_goal(yards_to_goal, dir);
+            let def = self.cpu_defense();
+            let teams = [self.game.teams[0].clone(), self.game.teams[1].clone()];
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let setup = nopads_core::sim::SnapSetup {
+                los,
+                ball_y: 0.0,
+                direction: dir,
+                down: 1,
+                to_go: 10.0,
+                seed,
+                offense_team: 0,
+                defense_team: 1,
+                is_try: false,
+            };
+            let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+            sim.await_snap(true);
+            let header = self.drill_header();
+            let board = drill_board(&teams, yards_to_goal);
+            let book: &[Play] = &self.book;
+            let off_abbr = teams[0].abbr.clone();
+            let mut caller = OffenseSnap {
+                header: &header,
+                off_abbr: &off_abbr,
+                book,
+                my_team: 0,
+                charge: None,
+                claimed: false,
+                running: false,
+                run_call: false,
+                targets: Vec::new(),
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim: &mut sim,
+                    broadcast: &mut self.broadcast,
+                    view: &mut self.view,
+                    pad: self.pad.as_mut(),
+                    cam: &mut self.cam,
+                    flip_y: self.flip_y,
+                },
+                &mut caller,
+                &header,
+                &board,
+            );
+            if !finished {
+                self.quit = true;
+                return;
+            }
+            let Some(result) = sim.result.clone() else {
+                continue;
+            };
+            let mut card = vec![
+                self.drill_header(),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                format!("  {:.0} YARDS ON THE PLAY", result.yards),
+            ];
+            if tutorial && tutorial_met(self.drill_step, result.outcome, result.touchdown) {
+                self.drill_step += 1;
+                card.push(String::new());
+                if self.drill_step >= TUTORIAL.len() {
+                    card.push("  STEP DONE - THAT WAS THE LAST ONE".to_string());
+                } else {
+                    card.push(format!(
+                        "  STEP DONE - NEXT: {}",
+                        TUTORIAL[self.drill_step].0
+                    ));
+                }
+            } else if tutorial {
+                card.push(String::new());
+                card.push(format!("  NOT YET: {}", TUTORIAL[self.drill_step].0));
+            }
+            card.push(String::new());
+            card.push("  [A] NEXT SNAP".to_string());
+            if !self.drill_card(&card) {
+                return;
+            }
+        }
+    }
+
+    /// The gauntlet: five throw-offs, and every one of them yours to return. The
+    /// drill the mode is named for is the one a throw-off already is -- one man
+    /// with the ball and three gunners coming for him, with nobody else on the
+    /// field to help either side.
+    fn drill_returns(&mut self) {
+        const RETURNS: u32 = 5;
+        let mut seed = self.game.seed ^ 0x7A11_0F;
+        let mut yards = 0.0f32;
+        self.drill_wave = 0;
+        self.drill_points = 0;
+        self.view.reset();
+        while self.drill_wave < RETURNS && !self.quit {
+            let setup = nopads_core::throwoff::ThrowOffSetup {
+                throwing_team: 1,
+                receiving_team: 0,
+                seed,
+                ..nopads_core::throwoff::ThrowOffSetup::normal()
+            };
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let throwing = self.game.teams[1].clone();
+            let receiving = self.game.teams[0].clone();
+            let mut sim = ThrowOffSim::new(&setup, &throwing, &receiving);
+            let header = self.drill_header();
+            let board = drill_board(&[receiving.clone(), throwing.clone()], 80.0);
+            let mut caller = ThrowOffSnap {
+                game: &mut self.game,
+                my_team: 0,
+                hold: 0.0,
+                charging: false,
+                aim_y: 0.0,
+                armed: false,
+                cover_pick: 0,
+                cover_order: None,
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim: &mut sim,
+                    broadcast: &mut self.broadcast,
+                    view: &mut self.view,
+                    pad: self.pad.as_mut(),
+                    cam: &mut self.cam,
+                    flip_y: self.flip_y,
+                },
+                &mut caller,
+                &header,
+                &board,
+            );
+            if !finished {
+                self.quit = true;
+                return;
+            }
+            let Some(result) = sim.result.clone() else {
+                continue;
+            };
+            yards += result.return_yards;
+            let points = gauntlet_points(result.touchdown, result.return_yards);
+            self.drill_points += points;
+            self.drill_wave += 1;
+            let mut card = vec![
+                format!(
+                    "  RETURN {} OF {}   {} POINTS",
+                    self.drill_wave, RETURNS, self.drill_points
+                ),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                format!("  {:.0} YARDS BACK", result.return_yards),
+                format!("  {} POINT{} ON IT", points, if points == 1 { "" } else { "S" }),
+            ];
+            if self.drill_wave >= RETURNS {
+                card.push(String::new());
+                card.push(format!("  GAUNTLET DONE: {} POINTS, {:.0} YARDS", self.drill_points, yards));
+                card.push("  [A] BACK TO THE MODES".to_string());
+            } else {
+                card.push(String::new());
+                card.push("  [A] NEXT THROW-OFF".to_string());
+            }
+            if !self.drill_card(&card) {
+                return;
+            }
+        }
+    }
+
+    /// A card in a drill, on the same page a result card uses. A or START goes
+    /// on; B leaves the drill.
+    fn drill_card(&mut self, lines: &[String]) -> bool {
+        if !self.view.page(lines) {
+            self.quit = true;
+            return false;
+        }
+        let start = Instant::now();
+        loop {
+            let input = self.wait(Duration::from_millis(24));
+            if input.pressed.b {
+                self.quit = true;
+                return false;
+            }
+            if input.pressed.a || input.pressed.start {
+                return true;
+            }
+            if start.elapsed() >= RESULT_HOLD {
+                return true;
+            }
+        }
+    }
+
+    /// The line over a drill's screens: what it is, and how far through it is.
+    fn drill_header(&self) -> String {
+        match self.mode {
+            Mode::Tutorial => {
+                let step = self.drill_step.min(TUTORIAL.len() - 1);
+                format!(
+                    "TUTORIAL   STEP {} OF {}   {}",
+                    step + 1,
+                    TUTORIAL.len(),
+                    TUTORIAL[step].0
+                )
+            }
+            Mode::Practice => {
+                "PRACTICE   NO CLOCK, NO DOWNS   THE SAME SPOT EVERY SNAP".to_string()
+            }
+            Mode::Gauntlet => format!(
+                "THREE-ON-ONE GAUNTLET   RETURN {} OF 5   {} POINTS",
+                (self.drill_wave + 1).min(5),
+                self.drill_points
+            ),
+            Mode::Game => self.header(),
+        }
     }
 
     fn play(&mut self) -> Option<AfterFinal> {
@@ -966,7 +1258,13 @@ impl Arcade {
         let play = list.get(self.sheet_pick).map(|&i| &self.book[i]).unwrap_or(fallback);
         let side = if self.flip { "FLIPPED" } else { "AS DRAWN" };
         let mut lines = vec![
-            self.header(),
+            // A drill has no score to show, and the game it was opened with never
+            // moved: the line over the sheet is the drill's own.
+            if self.mode.is_drill() {
+                self.drill_header()
+            } else {
+                self.header()
+            },
             format!(
                 "  {:<16} {}   {}   PLAY {} OF {} IN {}   {} FORMATIONS",
                 play.name,
@@ -989,8 +1287,10 @@ impl Arcade {
                     .to_string(),
             );
         }
-        if let Some(last) = self.game.recent_plays(1).pop() {
-            lines.push(format!("  Last: {last}"));
+        if !self.mode.is_drill() {
+            if let Some(last) = self.game.recent_plays(1).pop() {
+                lines.push(format!("  Last: {last}"));
+            }
         }
         lines
     }
@@ -2796,6 +3096,79 @@ impl SnapSim for ThrowOffSim<'_> {
     }
 }
 
+/// What the arcade is doing. `Game` is the game; the rest are the sessions under
+/// MORE MODES, which take the same pad and picture without a clock on them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    Game,
+    Practice,
+    Tutorial,
+    Gauntlet,
+}
+
+impl Mode {
+    /// True for the modes that are not a game.
+    pub fn is_drill(self) -> bool {
+        self != Mode::Game
+    }
+}
+
+/// The tutorial, in order: the step, and what it asks the player to do. The check
+/// that a step is done lives in `tutorial_met`.
+const TUTORIAL: [(&str, &str); 4] = [
+    ("SNAP IT", "PRESS [A] AT THE LINE AND THE BALL GOES"),
+    ("THROW IT", "CALL A PASS, HOLD A/B/X/Y, LET GO"),
+    ("RUN IT", "CALL A RUN AND TAKE THE HAND-OFF"),
+    ("SCORE IT", "GET THE BALL INTO THE END ZONE"),
+];
+
+/// Whether a snap did what the tutorial step asked for. Step one is the snap
+/// itself, so any play that was run at all counts as having done it.
+fn tutorial_met(step: usize, outcome: nopads_core::sim::PlayOutcome, touchdown: bool) -> bool {
+    use nopads_core::sim::PlayOutcome;
+    match step {
+        0 => true,
+        1 => outcome.is_pass_attempt(),
+        2 => matches!(outcome, PlayOutcome::Run | PlayOutcome::QbScramble),
+        3 => touchdown,
+        _ => false,
+    }
+}
+
+/// What a return in the gauntlet is worth: the house is six, sixty yards is two,
+/// thirty is one. A gauntlet is scored in the thing it is a drill for -- how far
+/// one man got with three of them coming.
+fn gauntlet_points(touchdown: bool, return_yards: f32) -> u32 {
+    if touchdown {
+        6
+    } else if return_yards >= 60.0 {
+        2
+    } else if return_yards >= 30.0 {
+        1
+    } else {
+        0
+    }
+}
+
+/// The bug over a drill: the two clubs, and no score or clock, because a drill
+/// has neither. The down and distance are the drill's own spot, so the snap is
+/// still read the way a snap is read.
+fn drill_board(teams: &[nopads_core::team::Team; 2], yards_to_goal: f32) -> hud::Scoreboard {
+    hud::Scoreboard {
+        abbr: [teams[0].abbr.to_uppercase(), teams[1].abbr.to_uppercase()],
+        primary: [teams[0].primary, teams[1].primary],
+        accent: [teams[0].accent, teams[1].accent],
+        score: [0, 0],
+        timeouts: [0, 0],
+        possession: 0,
+        quarter: 1,
+        clock: 0.0,
+        down: 1,
+        to_go: 10.0,
+        yards_to_goal,
+    }
+}
+
 /// One frame of a snap as the side playing it sees it: the sim, the picture, the
 /// pad and the camera, bundled because a card over the field mid-play writes to
 /// all four.
@@ -4115,6 +4488,46 @@ fn throw_off_controls(
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+    use nopads_core::sim::PlayOutcome;
+
+    /// A step is done by the thing it asked for and nothing else: a run does not
+    /// finish the throw, and a play that stopped on the one does not finish the
+    /// score.
+    #[test]
+    fn the_tutorial_only_counts_the_thing_it_asked_for() {
+        assert!(tutorial_met(0, PlayOutcome::Run, false), "any snap is step one");
+        assert!(tutorial_met(1, PlayOutcome::PassComplete, false));
+        assert!(!tutorial_met(1, PlayOutcome::Run, false));
+        assert!(tutorial_met(2, PlayOutcome::Run, false));
+        assert!(!tutorial_met(2, PlayOutcome::PassComplete, false));
+        assert!(tutorial_met(3, PlayOutcome::Run, true));
+        assert!(!tutorial_met(3, PlayOutcome::Run, false));
+    }
+
+    /// The gauntlet pays for the ground one man made, not for the drive: the
+    /// house is six, sixty is two, thirty is one.
+    #[test]
+    fn the_gauntlet_pays_for_the_ground_one_man_made() {
+        assert_eq!(gauntlet_points(false, 12.0), 0);
+        assert_eq!(gauntlet_points(false, 29.9), 0);
+        assert_eq!(gauntlet_points(false, 30.0), 1);
+        assert_eq!(gauntlet_points(false, 60.0), 2);
+        assert_eq!(gauntlet_points(true, 4.0), 6);
+    }
+
+    /// A drill has no clock on the bug and no score, because it has neither: the
+    /// board is the two clubs and the spot the ball is on.
+    #[test]
+    fn a_drill_has_no_clock_on_the_bug() {
+        let teams = nopads_core::team::league_teams();
+        let board = drill_board(&[teams[0].clone(), teams[1].clone()], 30.0);
+        assert_eq!(board.clock, 0.0);
+        assert_eq!(board.score, [0, 0]);
+        assert_eq!(board.yards_to_goal, 30.0);
+        assert_eq!(board.abbr[0], teams[0].abbr.to_uppercase());
+    }
+
     use super::*;
 
     fn close(a: Vec2, b: Vec2) -> bool {

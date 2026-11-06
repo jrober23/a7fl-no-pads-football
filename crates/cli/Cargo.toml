@@ -36,3 +36,7 @@ default = ["gamepad"]
 gamepad = ["nopads_platform/gamepad"]
 # `7on7 arcade --bevy` draws the same canvas through a Bevy window.
 bevy_view = ["dep:bevy"]
+# A Windows binary that carries its own console instead of borrowing the one it
+# was started from. The release build leaves this off: double-clicking the game
+# should open the game, not a command prompt.
+console = []

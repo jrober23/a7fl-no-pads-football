@@ -1,3 +1,9 @@
+// A windowed program on Windows: the game opens without a console window in
+// front of it. Text is borrowed from the terminal that started the game, when
+// there is one (see `console`). Build with `--features console` for a binary
+// that always carries its own console instead.
+#![cfg_attr(all(windows, not(feature = "console")), windows_subsystem = "windows")]
+
 //! `7on7` — command line client for No Pads Football.
 //!
 //! ```text
@@ -23,6 +29,7 @@ use nopads_render::passing::{Badge, Guide, PassUi, Tone};
 use nopads_render::raster::Frame;
 
 mod arcade;
+mod console;
 mod controls;
 mod menu;
 mod view;
@@ -35,6 +42,9 @@ mod view_bevy;
 use nopads_platform::{pad, settings};
 
 fn main() {
+    // Before anything is printed: a windowed Windows build has no console of its
+    // own, so it takes the one that launched it, or none.
+    console::adopt();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // `--bevy` puts a Bevy window around the arcade client. A window system wants
     // the main thread, so the game moves to a worker and the two meet over
@@ -890,9 +900,19 @@ fn cmd_arcade(args: &[String]) {
         println!("Starting in a moment.");
         std::thread::sleep(std::time::Duration::from_millis(900));
     } else {
+        loop {
         match menu::run(&mut view, pad.as_mut(), &mut settings) {
             Some(menu::Front::Friendly(kick)) => {
                 let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed, false);
+                view = v;
+                pad = p;
+                return;
+            }
+            Some(menu::Front::Drill(kind)) => {
+                // A drill hands the view back when the player leaves it, and the
+                // front end is where they land: the modes are a place to come
+                // back to, not a game to finish.
+                let (v, p) = play_drill(view, pad, &settings, kind, seed);
                 view = v;
                 pad = p;
             }
@@ -920,10 +940,11 @@ fn cmd_arcade(args: &[String]) {
                         _ => break,
                     }
                 }
+                return;
             }
             None => return,
         }
-        return;
+        }
     }
 
     let flip_y = has(args, "--flip-y");
@@ -984,6 +1005,39 @@ fn play_kickoff(
     let score = arcade.final_score();
     let (view, pad) = arcade.into_parts();
     (view, pad, finished, score)
+}
+
+/// One of the sessions under MORE MODES, on the practice field.
+///
+/// A drill has no clubs to pick and no clock to set: it is one man and a pad
+/// against the drill itself. The two clubs are the league's first two so the
+/// shirts are real, and the ground is the practice field, which is what it is.
+fn play_drill(
+    view: view::View,
+    pad: Option<pad::Pad>,
+    settings: &settings::Settings,
+    kind: menu::DrillKind,
+    seed: u64,
+) -> (view::View, Option<pad::Pad>) {
+    let mode = match kind {
+        menu::DrillKind::Tutorial => arcade::Mode::Tutorial,
+        menu::DrillKind::Practice => arcade::Mode::Practice,
+        menu::DrillKind::Gauntlet => arcade::Mode::Gauntlet,
+    };
+    let teams = league_teams();
+    let mut game = GameState::new(teams[0].clone(), teams[1].clone(), seed);
+    game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
+        settings.difficulty,
+    ));
+    let mut arcade = arcade::Arcade::new(game, pad, view)
+        .with_camera(settings.camera)
+        .with_lens(settings.lens_zoom, settings.lens_tilt)
+        .with_settings(settings.clone())
+        .with_venue(0)
+        .with_my_team(0)
+        .with_mode(mode);
+    arcade.run();
+    arcade.into_parts()
 }
 
 fn cmd_film(args: &[String]) {

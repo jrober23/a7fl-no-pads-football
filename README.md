@@ -20,6 +20,13 @@ looks for a controller for three seconds, then falls back to the keyboard. Windo
 10 or 11, no runtime or installer needed. The build is unsigned, so SmartScreen may
 ask you to confirm first (More info → Run anyway).
 
+The game is built as a windowed program, so double-clicking `7on7.exe` opens the
+game and nothing else — there is no Command Prompt window in front of it. The text
+commands still print into the terminal they are run from (`7on7 sim`, `7on7 rules`,
+`7on7 teams`, `7on7 play`), and started from Explorer with nobody to print to they
+simply run. A build made with `--features console` carries its own console instead,
+which is what to use if the borrowed one is not enough for the way you launch it.
+
 ## Running it
 
 ```bash
@@ -178,10 +185,36 @@ On defense the same pad does different work:
 
 ### The start menu
 
-Bare `7on7` opens on the start menu: **EXHIBITION**, **SEASON**, **CUSTOMIZATION**,
-**SETTINGS**, **QUIT**. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
+Bare `7on7` opens on the start menu: **EXHIBITION**, **SEASON**, **MORE MODES**,
+**CUSTOMIZATION**, **SETTINGS**, **QUIT**. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
 skips the front end and goes straight to kickoff with the clubs named, which is what
 the film and timing paths use.
+
+### More modes
+
+**MORE MODES** is the three sessions that are drills rather than games: no clock, no
+season, nothing on the scoreboard, and you leave when you have had enough.
+
+**TUTORIAL** is the offense one control at a time, lined up on the ten. It asks for
+four things in order — **snap it**, **throw it**, **run it**, **score it** — and it
+does not move on until the snap did the thing it asked for: a run does not finish
+the throw, and a play stopped at the one does not finish the score. When all four
+are done it tells you where the rest of the controls live, which is the controls
+page on the pause menu.
+
+**PRACTICE** is the same session without the list: your call from the whole
+playbook, no clock, no downs, no turnover to lose, and the ball back on the same
+spot for the next snap. It is where a play gets learned without a game being spent
+on it.
+
+**THREE-ON-ONE GAUNTLET** is the drill a throw-off already is — one man with the
+ball and three gunners coming for him, nobody else on the field — run five times.
+Every return is scored by the ground you made: thirty yards is a point, sixty is
+two, the house is six.
+
+All three are played on the practice field with the league's first two clubs, and
+the pause menu inside them is the game's: same resume, same controls page, same
+lens.
 
 **CUSTOMIZATION** is the league's paperwork, and it is for every club rather than
 only the one you are about to play: pick a club off the thirty-two and the screen
