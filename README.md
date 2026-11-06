@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.83-windows-x86_64.zip` from the
+Grab `7on7-v0.25.84-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -217,7 +217,19 @@ AI is playing him. It is the same read a passer gets in real life, and it is set
 he commits, so a defender who goes for the pick and misses still looked like a man
 going for the pick.
 
-The depth charts and rosters live under **ROSTER** on the start screen.
+**ROSTER** on the start screen holds every club's depth chart and roster.
+**CUSTOMIZATION** holds the create modes:
+
+- **CREATE A TEAM** — fifty save slots. Pick an empty one and set the city, the
+  team name, the division, the primary and accent colours, the jersey pattern and
+  the attributes. The mark is cut from the name and kept unique, and every created
+  club is dealt a fresh roster of its own men, so it never fields another club's
+  players. A created club turns up in every picker the built clubs do.
+- **EDIT A UNIFORM** — repaint any club's home and away kits, colour by colour,
+  with a pattern and a restore row. The kit is worn wherever that club plays.
+
+What you make is kept in `custom.txt` beside the settings and read back at
+start-up.
 
 **PRACTICE** asks the same question the tutorial does — offense, defense or both —
 and then which book to run and how hard the other lot should play, and gives you the

@@ -1022,11 +1022,33 @@ pub fn club_kits(spec: &Club) -> (Uniform, Uniform) {
         spec.pattern,
         club_mark(spec.name),
     );
-    if spec.white_home {
+    let (mut home, mut away) = if spec.white_home {
         (white, colour)
     } else {
         (colour, white)
+    };
+    // A kit the player repainted wins over the one the club came with: it is the
+    // shirt that hangs in the locker, not a preference.
+    if let Some(e) = crate::custom::kit(spec.abbr) {
+        let numbers = |on: Rgb| {
+            if on.luma() > 150.0 {
+                Rgb::hex(0x14161A)
+            } else {
+                Rgb::WHITE
+            }
+        };
+        home.jersey = e.home_jersey;
+        home.numbers = numbers(e.home_jersey);
+        home.shorts = e.home_shorts;
+        home.jersey_accent = e.home_accent;
+        home.pattern = e.pattern;
+        away.jersey = e.away_jersey;
+        away.numbers = numbers(e.away_jersey);
+        away.shorts = e.away_shorts;
+        away.jersey_accent = e.away_accent;
+        away.pattern = e.pattern;
     }
+    (home, away)
 }
 
 pub fn team_from_spec(spec: Club) -> Team {
@@ -1091,7 +1113,9 @@ mod balaclava_tests {
 /// The sixteen clubs of the league, four to a division. Cities are real; every
 /// nickname, mark and colour set here is invented, so nothing on a jersey
 /// belongs to a club somebody already owns.
-pub fn clubs() -> Vec<Club> {
+/// The clubs that came with the game. The league is these; a created club is
+/// added beside them by [`clubs`].
+pub fn built_in_clubs() -> Vec<Club> {
     use JerseyPattern::*;
     vec![
         // North
@@ -1135,6 +1159,16 @@ pub fn clubs() -> Vec<Club> {
         Club { city: "Portland", name: "Timberline", abbr: "POR", division: Division::West, primary: Rgb::hex(0x1E4A34), secondary: Rgb::hex(0x12301F), accent: Rgb::hex(0xE0E7F1), pattern: ShoulderStripe, book: Book::Zone, seed: 0xA7F1_001F, white_home: false, level: 5 },
         Club { city: "Salt Lake", name: "Summit", abbr: "SLC", division: Division::West, primary: Rgb::hex(0x4A3A6B), secondary: Rgb::hex(0x2C2244), accent: Rgb::hex(0xF2F2EC), pattern: Hoops, book: Book::Zone, seed: 0xA7F1_0020, white_home: false, level: 7 },
     ]
+}
+
+/// Every club the player can pick: the league, then whatever they made.
+///
+/// One list, so a created club is available in the exhibition picker, the drills,
+/// the season and the roster screen without any of them knowing it exists.
+pub fn clubs() -> Vec<Club> {
+    let mut all = built_in_clubs();
+    all.extend(crate::custom::custom_clubs());
+    all
 }
 
 /// The league, rosters and all, in the order the clubs are listed.

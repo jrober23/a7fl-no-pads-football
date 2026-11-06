@@ -112,6 +112,7 @@ enum Start {
     Exhibition,
     Season,
     Modes,
+    Roster,
     Customize,
     Settings,
     Quit,
@@ -140,6 +141,9 @@ pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> O
                         return Some(Front::Drill(kind, kick, difficulty));
                     }
                 }
+            }
+            Start::Roster => {
+                roster_grid(view, &mut pad)?;
             }
             Start::Customize => {
                 customize_screen(view, &mut pad)?;
@@ -305,19 +309,21 @@ fn beat() {
 /// first, and it is laid out corner to corner on the grid rather than in a list
 /// of numbers that only means anything on one canvas.
 fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
-    const LABELS: [&str; 6] = [
+    const LABELS: [&str; 7] = [
         "EXHIBITION",
         "SEASON",
         "MORE MODES",
         "ROSTER",
+        "CUSTOMIZATION",
         "SETTINGS",
         "QUIT",
     ];
-    const NOTES: [&str; 6] = [
+    const NOTES: [&str; 7] = [
         "ONE GAME, PICKED IN A MINUTE",
         "A CLUB, A LEAGUE, A SEASON",
         "TUTORIAL, PRACTICE, THE GAUNTLET",
         "DEPTH CHART AND ROSTER FOR EVERY CLUB",
+        "MAKE A CLUB, REPAINT A KIT",
         "CAMERA, LENS AND DISPLAY",
         "CLOSE THE GAME",
     ];
@@ -387,7 +393,7 @@ fn start_screen(
     pad: &mut Option<&mut Pad>,
     _settings: &mut Settings,
 ) -> Option<Start> {
-    const ITEMS: usize = 6;
+    const ITEMS: usize = 7;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -421,8 +427,9 @@ fn start_screen(
                 0 => Start::Exhibition,
                 1 => Start::Season,
                 2 => Start::Modes,
-                3 => Start::Customize,
-                4 => Start::Settings,
+                3 => Start::Roster,
+                4 => Start::Customize,
+                5 => Start::Settings,
                 _ => Start::Quit,
             });
         }
@@ -986,11 +993,11 @@ fn game_setup(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settin
 }
 
 // ---------------------------------------------------------------------------
-// Customization: every club's depth chart and roster
+// Roster: every club's depth chart and roster
 // ---------------------------------------------------------------------------
 
 /// The clubs, four across, with their ratings. A opens a club's roster.
-fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+fn roster_grid(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
     let all = clubs();
     let ratings: Vec<TeamRatings> = all.iter().map(|c| c.profile(1).0).collect();
     let mut sel = 0usize;
@@ -1530,6 +1537,551 @@ fn exhibition(
         venue,
         book,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Customization: clubs of the player's own, and repainted kits
+// ---------------------------------------------------------------------------
+
+/// Where the created clubs and repainted kits are kept: beside the settings, so
+/// one directory holds everything the player has saved.
+fn custom_path() -> std::path::PathBuf {
+    Settings::path().with_file_name("custom.txt")
+}
+
+fn save_custom() {
+    let path = custom_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(path, nopads_core::custom::text());
+}
+
+/// Read what the player made, before the first menu is drawn.
+pub fn load_custom() {
+    if let Ok(text) = std::fs::read_to_string(custom_path()) {
+        nopads_core::custom::parse(&text);
+    }
+}
+
+/// The city names a created club can be given. A pad has no keyboard, so a name
+/// is picked off a list; it is a list, not a limit, and it is long enough that
+/// fifty clubs do not read as copies of one another.
+const CITIES: [&str; 16] = [
+    "Springfield",
+    "Fresno",
+    "Bakersfield",
+    "Tulsa",
+    "Wichita",
+    "Omaha",
+    "Boise",
+    "Reno",
+    "Tacoma",
+    "Akron",
+    "Toledo",
+    "Dayton",
+    "Mobile",
+    "Shreveport",
+    "Lubbock",
+    "Amarillo",
+];
+
+const NICKNAMES: [&str; 16] = [
+    "Expansion",
+    "Vinegaroons",
+    "Dust",
+    "Ironbacks",
+    "Stampede",
+    "Drifters",
+    "Roughnecks",
+    "Wranglers",
+    "Outlaws",
+    "Gamblers",
+    "Pioneers",
+    "Ravens",
+    "Comets",
+    "Foundry",
+    "Thunder",
+    "Storm",
+];
+
+fn step_index(i: usize, len: usize, d: i8) -> usize {
+    ((i as isize + d as isize).rem_euclid(len as isize)) as usize
+}
+
+fn nearest_palette(c: Rgb) -> usize {
+    nopads_core::custom::PALETTE
+        .iter()
+        .enumerate()
+        .min_by_key(|(_, (_, p))| {
+            let d = (p.r as i32 - c.r as i32).abs()
+                + (p.g as i32 - c.g as i32).abs()
+                + (p.b as i32 - c.b as i32).abs();
+            d
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
+}
+
+fn pattern_index(p: nopads_core::team::JerseyPattern) -> usize {
+    nopads_core::custom::PATTERNS
+        .iter()
+        .position(|q| *q == p)
+        .unwrap_or(0)
+}
+
+/// Two choices: a club to make, or a kit to repaint.
+fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+    const ITEMS: [(&str, &str); 2] = [
+        ("CREATE A TEAM", "FIFTY SLOTS FOR A CLUB OF YOUR OWN, IN ANY MODE"),
+        ("EDIT A UNIFORM", "REPAINT THE HOME AND AWAY KITS OF ANY CLUB"),
+    ];
+    let mut pick = 0usize;
+    let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, ITEMS.len(), -d);
+            }
+        }
+        slide.step(pick, dt);
+        if input.pressed.a {
+            match pick {
+                0 => {
+                    team_slots(view, pad)?;
+                }
+                _ => {
+                    uniform_pick(view, pad)?;
+                }
+            }
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
+        let rows: Vec<(&str, String)> = ITEMS
+            .iter()
+            .map(|(name, _)| (*name, String::new()))
+            .collect();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut frame,
+            "CUSTOMIZATION",
+            "MAKE SOMETHING OF YOUR OWN",
+            &rows,
+            &slide,
+            ITEMS[pick].1,
+            "[UP/DOWN] CHOOSE   [A] SELECT   [B] BACK",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// The fifty slots, five across and ten down. A opens the slot, X empties it.
+fn team_slots(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+    let mut sel = 0usize;
+    let mut nav_x = Repeat::default();
+    let mut nav_y = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 {
+                sel = step_index(sel % 5, 5, d) + (sel / 5) * 5;
+            }
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                let row = step_index(sel / 5, 10, -d);
+                sel = row * 5 + sel % 5;
+            }
+        }
+        if input.pressed.x {
+            nopads_core::custom::set_team(sel, None);
+            save_custom();
+        }
+        if input.pressed.a {
+            if team_editor(view, pad, sel)? {
+                save_custom();
+            }
+            view.reset();
+            last = Instant::now();
+        }
+        let saved = nopads_core::custom::saved_teams();
+        let mut frame = Frame::new(UI_W, UI_H);
+        night(&mut frame);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, "CREATE A TEAM", ui::T_BODY, ui::ACCENT);
+        ui::caption(
+            &mut frame,
+            UI_W as i32 / 2 - ui::tracked_width("FIFTY SLOTS. PICK ONE AND BUILD A CLUB.", ui::T_CAPTION, 1) / 2,
+            40,
+            "FIFTY SLOTS. PICK ONE AND BUILD A CLUB.",
+            dim(),
+        );
+        for i in 0..nopads_core::custom::TEAM_SLOTS {
+            let col = (i % 5) as i32;
+            let row = (i / 5) as i32;
+            let x = 40 + col * 112;
+            let y = 62 + row * 24;
+            let on = i == sel;
+            let filled = saved.get(i).and_then(|t| t.as_ref());
+            frame.rounded_rect(
+                x,
+                y,
+                104,
+                20,
+                5,
+                if on { panel().lerp(accent(), 0.10) } else { panel() },
+            );
+            if on {
+                frame.fill_rect(x, y, 104, 2, accent());
+            }
+            let text = match filled {
+                Some(t) => format!("{:02} {}", i + 1, t.abbr),
+                None => format!("{:02} --", i + 1),
+            };
+            frame.text_shadowed(
+                x + 8,
+                y + 6,
+                &text,
+                1,
+                if on { paper() } else { dim() },
+                1,
+            );
+        }
+        footer(&mut frame, "[STICK] SLOT   [A] EDIT   [X] CLEAR   [B] BACK");
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// One club, a row at a time. Returns true when it was saved.
+fn team_editor(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    slot: usize,
+) -> Option<bool> {
+    use nopads_core::custom::{CustomTeam, PALETTE, PATTERNS};
+    let saved = nopads_core::custom::team(slot);
+    let mut city = saved
+        .as_ref()
+        .and_then(|t| CITIES.iter().position(|c| c.eq_ignore_ascii_case(&t.city)))
+        .unwrap_or(slot % CITIES.len());
+    let mut name = saved
+        .as_ref()
+        .and_then(|t| NICKNAMES.iter().position(|c| c.eq_ignore_ascii_case(&t.name)))
+        .unwrap_or(slot % NICKNAMES.len());
+    let mut division = saved.as_ref().map(|t| t.division).unwrap_or(Division::North);
+    let mut primary = saved.as_ref().map(|t| nearest_palette(t.primary)).unwrap_or(2);
+    let mut accent = saved.as_ref().map(|t| nearest_palette(t.accent)).unwrap_or(4);
+    let mut pattern = saved
+        .as_ref()
+        .map(|t| pattern_index(t.pattern))
+        .unwrap_or(0);
+    let mut level = saved.as_ref().map(|t| t.level).unwrap_or(4);
+
+    const ROWS: [&str; 7] = [
+        "CITY",
+        "TEAM NAME",
+        "DIVISION",
+        "PRIMARY COLOUR",
+        "ACCENT COLOUR",
+        "JERSEY PATTERN",
+        "ATTRIBUTES",
+    ];
+    let mut row = 0usize;
+    let mut nav_y = Repeat::default();
+    let mut nav_x = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(false);
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                row = wrap(row, ROWS.len(), -d);
+            }
+        }
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 {
+                match row {
+                    0 => city = step_index(city, CITIES.len(), d),
+                    1 => name = step_index(name, NICKNAMES.len(), d),
+                    2 => {
+                        let i = Division::ALL
+                            .iter()
+                            .position(|x| *x == division)
+                            .unwrap_or(0);
+                        division = Division::ALL[step_index(i, Division::ALL.len(), d)];
+                    }
+                    3 => primary = step_index(primary, PALETTE.len(), d),
+                    4 => accent = step_index(accent, PALETTE.len(), d),
+                    5 => pattern = step_index(pattern, PATTERNS.len(), d),
+                    _ => level = (level + d as i32).clamp(-2, 12),
+                }
+            }
+        }
+        slide.step(row, dt);
+        if input.pressed.a {
+            let mut t = CustomTeam::blank(slot);
+            t.city = CITIES[city].to_string();
+            t.name = NICKNAMES[name].to_string();
+            t.abbr = "EXP".to_string();
+            t.division = division;
+            t.primary = PALETTE[primary].1;
+            t.accent = PALETTE[accent].1;
+            t.secondary = PALETTE[12].1;
+            t.pattern = PATTERNS[pattern];
+            t.level = level;
+            nopads_core::custom::set_team(slot, Some(t));
+            return Some(true);
+        }
+        let values = [
+            CITIES[city].to_uppercase(),
+            NICKNAMES[name].to_uppercase(),
+            division.label().to_string(),
+            PALETTE[primary].0.to_string(),
+            PALETTE[accent].0.to_string(),
+            nopads_core::custom::pattern_name(PATTERNS[pattern]).to_uppercase(),
+            format!("{} / 10", level.clamp(1, 10)),
+        ];
+        let rows: Vec<(&str, String)> = ROWS
+            .iter()
+            .zip(values.iter())
+            .map(|(label, value)| (*label, value.clone()))
+            .collect();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut frame,
+            &format!("SLOT {:02}", slot + 1),
+            "A NEW CLUB GETS A FRESH SET OF MEN OF ITS OWN",
+            &rows,
+            &slide,
+            "FRESH PLAYERS EVERY TIME. [LEFT/RIGHT] CHANGE THE ROW.",
+            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] SAVE   [B] BACK",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// Which club's kit is being repainted.
+fn uniform_pick(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+    let all = clubs();
+    let mut sel = 0usize;
+    let mut nav = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        if let d = nav.step(input.stick.x, dt) {
+            if d != 0 {
+                sel = wrap(sel, all.len(), d);
+            }
+        }
+        if input.pressed.a {
+            kit_editor(view, pad, &all[sel])?;
+            view.reset();
+            last = Instant::now();
+        }
+        let club = &all[sel];
+        let mut frame = Frame::new(UI_W, UI_H);
+        night(&mut frame);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, "EDIT A UNIFORM", ui::T_BODY, ui::ACCENT);
+        ui::caption(
+            &mut frame,
+            UI_W as i32 / 2 - ui::tracked_width("HOME AND AWAY KITS, FOR ANY CLUB", ui::T_CAPTION, 1) / 2,
+            40,
+            "HOME AND AWAY KITS, FOR ANY CLUB",
+            dim(),
+        );
+        badge(&mut frame, 320, 120, 64, club, true);
+        centered_in(&mut frame, 320, 166, &club.city.to_uppercase(), 2, paper());
+        centered_in(&mut frame, 320, 186, &club.name.to_uppercase(), 1, club.accent);
+        let painted = nopads_core::custom::kit(club.abbr).is_some();
+        centered_in(
+            &mut frame,
+            320,
+            210,
+            if painted { "REPAINTED" } else { "AS IT SHIPPED" },
+            1,
+            if painted { accent() } else { dim() },
+        );
+        footer(&mut frame, "[LEFT/RIGHT] CLUB   [A] EDIT THE KIT   [B] BACK");
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// One club's two kits, a colour at a time.
+fn kit_editor(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Option<()> {
+    use nopads_core::custom::{KitEdit, PALETTE, PATTERNS};
+    use nopads_core::team::JerseyPattern;
+
+    /// The editor works in palette slots rather than colours: a pad steps
+    /// through a short list of names, and the slot is what a name stands for.
+    #[derive(Clone, Copy)]
+    struct KitDraft {
+        home_jersey: usize,
+        home_shorts: usize,
+        home_accent: usize,
+        away_jersey: usize,
+        away_shorts: usize,
+        away_accent: usize,
+        pattern: JerseyPattern,
+    }
+
+    let (home, away) = nopads_core::team::club_kits(club);
+    let base = nopads_core::custom::kit(club.abbr);
+    let mut draft = KitDraft {
+        home_jersey: nearest_palette(base.map(|k| k.home_jersey).unwrap_or(home.jersey)),
+        home_shorts: nearest_palette(base.map(|k| k.home_shorts).unwrap_or(home.shorts)),
+        home_accent: nearest_palette(base.map(|k| k.home_accent).unwrap_or(home.jersey_accent)),
+        away_jersey: nearest_palette(base.map(|k| k.away_jersey).unwrap_or(away.jersey)),
+        away_shorts: nearest_palette(base.map(|k| k.away_shorts).unwrap_or(away.shorts)),
+        away_accent: nearest_palette(base.map(|k| k.away_accent).unwrap_or(away.jersey_accent)),
+        pattern: base.map(|k| k.pattern).unwrap_or(home.pattern),
+    };
+    const ROWS: [&str; 8] = [
+        "HOME JERSEY",
+        "HOME SHORTS",
+        "HOME ACCENT",
+        "AWAY JERSEY",
+        "AWAY SHORTS",
+        "AWAY ACCENT",
+        "PATTERN",
+        "RESTORE THE CLUB'S KIT",
+    ];
+    let mut row = 0usize;
+    let mut nav_y = Repeat::default();
+    let mut nav_x = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                row = wrap(row, ROWS.len(), -d);
+            }
+        }
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 {
+                let set = |i: &mut usize| *i = step_index(*i, PALETTE.len(), d);
+                match row {
+                    0 => set(&mut draft.home_jersey),
+                    1 => set(&mut draft.home_shorts),
+                    2 => set(&mut draft.home_accent),
+                    3 => set(&mut draft.away_jersey),
+                    4 => set(&mut draft.away_shorts),
+                    5 => set(&mut draft.away_accent),
+                    6 => {
+                        draft.pattern = PATTERNS[step_index(
+                            PATTERNS.iter().position(|p| *p == draft.pattern).unwrap_or(0),
+                            PATTERNS.len(),
+                            d,
+                        )]
+                    }
+                    _ => {}
+                }
+            }
+        }
+        slide.step(row, dt);
+        if input.pressed.a {
+            if row == ROWS.len() - 1 {
+                nopads_core::custom::set_kit(club.abbr, None);
+            } else {
+                nopads_core::custom::set_kit(
+                    club.abbr,
+                    Some(KitEdit {
+                        home_jersey: PALETTE[draft.home_jersey].1,
+                        home_shorts: PALETTE[draft.home_shorts].1,
+                        home_accent: PALETTE[draft.home_accent].1,
+                        away_jersey: PALETTE[draft.away_jersey].1,
+                        away_shorts: PALETTE[draft.away_shorts].1,
+                        away_accent: PALETTE[draft.away_accent].1,
+                        pattern: draft.pattern,
+                    }),
+                );
+            }
+            save_custom();
+            return Some(());
+        }
+        // The rows read back through the palette, so the editor shows a name
+        // rather than a number for the colour it is on.
+        let values = [
+            PALETTE[draft.home_jersey].0.to_string(),
+            PALETTE[draft.home_shorts].0.to_string(),
+            PALETTE[draft.home_accent].0.to_string(),
+            PALETTE[draft.away_jersey].0.to_string(),
+            PALETTE[draft.away_shorts].0.to_string(),
+            PALETTE[draft.away_accent].0.to_string(),
+            nopads_core::custom::pattern_name(draft.pattern).to_uppercase(),
+            "BACK TO THE SHIPPED KIT".to_string(),
+        ];
+        let rows: Vec<(&str, String)> = ROWS
+            .iter()
+            .zip(values.iter())
+            .map(|(label, value)| (*label, value.clone()))
+            .collect();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut frame,
+            &format!("{} {}", club.city.to_uppercase(), club.name.to_uppercase()),
+            "THE KIT IS WORN WHEREVER THIS CLUB PLAYS",
+            &rows,
+            &slide,
+            "A KIT CHANGE IS SAVED AS SOON AS IT IS MADE.",
+            "[UP/DOWN] ROW   [LEFT/RIGHT] COLOUR   [A] SAVE   [B] BACK",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
 }
 
 /// The two clubs and the side of the ball, which every mode asks for: home

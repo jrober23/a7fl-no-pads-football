@@ -901,6 +901,9 @@ fn cmd_arcade(args: &[String]) {
         std::thread::sleep(std::time::Duration::from_millis(900));
     } else {
         loop {
+        // What the player has made is part of the league: it is read before the
+        // first menu, so a created club is on every picker from the start.
+        menu::load_custom();
         match menu::run(&mut view, pad.as_mut(), &mut settings) {
             Some(menu::Front::Friendly(kick)) => {
                 let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed, false);
