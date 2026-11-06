@@ -76,9 +76,10 @@ const THROW_OFF: [Row; 4] = [
     row("WRAP UP / DIVE AT THE RETURNER", "[A] / [X]"),
 ];
 
-const DEFENSE_BEFORE: [Row; 4] = [
+const DEFENSE_BEFORE: [Row; 5] = [
     row("WALK UP TO THE LINE", "[STICK]"),
     row("PREVIEW YOUR CALL - HOLD", "[LT]"),
+    row("PRESS OR OFF THE RECEIVERS - TAP", "[LT]"),
     row("CHECK TO ANOTHER CALL", "[RB]"),
     row("TIMEOUT", "[SELECT]"),
 ];

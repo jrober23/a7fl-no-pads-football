@@ -4285,6 +4285,12 @@ impl<'p> SnapCaller<PlaySim<'p>> for DefenseSnap<'_> {
             // shot over the whole field, and while it is down the defense's
             // assignments are on the grass instead of the offense's routes.
             sim.set_preview(sim.phase == Phase::PreSnap && input.held.preview);
+            // The same trigger is the technique at the line: a tap puts the
+            // corners up on the receivers, another tap backs them off.
+            if sim.phase == Phase::PreSnap && input.pressed.preview {
+                let press = !sim.press();
+                sim.set_press(press);
+            }
         }
 
         // RB checks the defense at the line: three calls at a time over the
@@ -4413,7 +4419,7 @@ impl<'p> SnapCaller<PlaySim<'p>> for DefenseSnap<'_> {
             ));
         } else if sim.phase == Phase::PreSnap {
             lines.push(
-                "  WALK UP TO THE LINE   HOLD [LT] PREVIEW YOUR CALL   [RB] CHECK   [B] SWITCH   [SELECT] CAMERA"
+                "  WALK UP TO THE LINE   HOLD [LT] PREVIEW   TAP [LT] PRESS/OFF   [RB] CHECK   [B] SWITCH"
                     .to_string(),
             );
         } else {

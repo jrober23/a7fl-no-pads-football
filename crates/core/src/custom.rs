@@ -265,15 +265,31 @@ pub fn book_name(book: Book) -> &'static str {
         Book::Power => "Power",
         Book::Zone => "Zone",
         Book::Balanced => "Balanced",
-        Book::Custom => "Custom",
+        Book::Custom(_) => "Custom",
     }
 }
 
+/// The book as it is written down: a designed book carries its shelf slot, so a
+/// club that runs the second book still runs the second book after a restart.
+pub fn book_token(book: Book) -> String {
+    if let Book::Custom(slot) = book {
+        return format!("Custom{}", slot);
+    }
+    book_name(book).to_string()
+}
+
 fn parse_book(text: &str) -> Option<Book> {
+    let text = text.trim();
+    if let Some(slot) = text.strip_prefix("Custom").or_else(|| text.strip_prefix("custom")) {
+        if slot.is_empty() {
+            return Some(Book::Custom(0));
+        }
+        return slot.parse::<u8>().ok().map(Book::Custom);
+    }
     Book::ALL
         .iter()
         .copied()
-        .find(|b| book_name(*b).eq_ignore_ascii_case(text.trim()))
+        .find(|b| book_name(*b).eq_ignore_ascii_case(text))
 }
 
 /// The whole store as text: one line a club, one line a kit.
@@ -296,7 +312,7 @@ pub fn text() -> String {
             hex(t.secondary),
             hex(t.accent),
             pattern_name(t.pattern),
-            book_name(t.book),
+            book_token(t.book),
         ));
         out.push_str(&format!(
             "{}|{}|{}\n",
@@ -447,16 +463,13 @@ pub fn clear() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::MutexGuard;
 
     /// The store is one saved thing, so the tests take it one at a time: four
     /// tests clearing the same table in parallel is four tests reading each
     /// other's clubs.
     fn store() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        crate::design::test_store_lock()
     }
 
     #[test]

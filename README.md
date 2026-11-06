@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.86-windows-x86_64.zip` from the
+Grab `7on7-v0.25.87-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -227,17 +227,19 @@ going for the pick.
   players. A created club turns up in every picker the built clubs do.
 - **EDIT A UNIFORM** — repaint any club's home and away kits, colour by colour,
   with a pattern and a restore row. The kit is worn wherever that club plays.
-- **DESIGN A PLAYBOOK** — draw one from a blank sheet, or start from a copy of
-  any book the league runs and change it. The offense is a grid of circles and
-  the defense a grid of X's: pick a man up with A, carry him with the stick and
-  set him down with A again. The line rules are enforced as you draw — two
-  linemen on the line of scrimmage and the quarterback behind them — and the
-  screen says so under the field. A book holds two to five formations a side,
-  and each formation one to nine plays: a play is a path drawn for each of the
-  four eligible men, and on a run the back's path is the ball. The defense holds
-  two to five fronts, each with one to nine calls off it, the call being the
-  coverage behind the front you drew. Once the book is legal it is **MY
-  PLAYBOOK** wherever books are picked, and a created club can carry it.
+- **DESIGN A PLAYBOOK** — a shelf of up to six books, each one named. Start one
+  from a blank sheet or from a copy of any book the league runs, then change
+  anything. Every spot carries its job and Y changes which job stands there, so
+  any of the seven can line up anywhere the rules allow, with the line rule and
+  the quarterback checked while you draw. A play is drawn with the stick: A puts
+  the pen down, every yard you walk the path picks up a waypoint, and A lifts it
+  again. The defense is drawn the same way: a front of X's, then a call whose
+  coverage you draw defender by defender, each drop a path on the same grid. A
+  book holds two to five formations a side, each with one to nine plays, and two
+  to five fronts, each with one to nine calls. Y renames a book, a formation, a
+  play, a front or a call from the screen that lists it. Once a book is legal it
+  is **MY PLAYBOOK** in the book picker, and a created club can carry it. On
+  defense at the line, tap **LT** to press the corners or back them off.
 
 What you make — the clubs, the kits and the playbook — is kept in `custom.txt`
 beside the settings and read back at start-up.

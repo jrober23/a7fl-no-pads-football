@@ -1221,6 +1221,10 @@ pub struct DefCall {
     pub blitzers: Vec<DefRole>,
     /// Extra rushers means fewer defenders in coverage; 7 total per side.
     pub press: bool,
+    /// Drops drawn on the call sheet, one path a man, in yards past the line of
+    /// scrimmage. A man with a path here goes where the player drew him instead
+    /// of where the coverage would send him.
+    pub drops: Vec<(DefRole, Vec<Vec2>)>,
 }
 
 impl DefCall {
@@ -1292,6 +1296,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Balanced,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "PRESS BAIL",
@@ -1300,6 +1305,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![],
             press: true,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 2 ZONE",
@@ -1308,6 +1314,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Balanced,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 3 ZONE",
@@ -1316,6 +1323,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Conservative,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 4 ZONE",
@@ -1324,6 +1332,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Conservative,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "MIKE BLITZ",
@@ -1332,6 +1341,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "WILL BLITZ",
@@ -1340,6 +1350,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Will],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "ALL OUT BLITZ",
@@ -1348,6 +1359,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike, DefRole::Will],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "GOAL LINE BEAR",
@@ -1356,6 +1368,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike],
             press: true,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 2 TAMPA",
@@ -1364,6 +1377,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Conservative,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 0 BLITZ",
@@ -1372,6 +1386,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Mike, DefRole::Will],
             press: true,
+            drops: Vec::new(),
         },
         DefCall {
             name: "FIRE ZONE",
@@ -1380,6 +1395,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![DefRole::Will],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 3 MATCH",
@@ -1388,6 +1404,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Balanced,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
         DefCall {
             name: "HEAVY TITE",
@@ -1396,6 +1413,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Aggressive,
             blitzers: vec![],
             press: true,
+            drops: Vec::new(),
         },
         DefCall {
             name: "COVER 4 QUARTERS",
@@ -1404,6 +1422,7 @@ pub fn defensive_playbook() -> Vec<DefCall> {
             run_fit: RunFit::Conservative,
             blitzers: vec![],
             press: false,
+            drops: Vec::new(),
         },
     ]
 }
@@ -1439,12 +1458,14 @@ pub enum Book {
     Zone,
     /// Nothing left out: the whole catalog, both ways.
     Balanced,
-    /// The book the player designed himself.
-    Custom,
+    /// A book the player designed himself: the number is its slot on the shelf.
+    Custom(u8),
 }
 
 impl Book {
-    pub const ALL: [Book; 8] = [
+    /// The league's own books. The player's shelf is listed by the menu rather
+    /// than here, because it changes while the game is running.
+    pub const ALL: [Book; 7] = [
         Book::WestCoast,
         Book::AirRaid,
         Book::Vertical,
@@ -1452,7 +1473,6 @@ impl Book {
         Book::Power,
         Book::Zone,
         Book::Balanced,
-        Book::Custom,
     ];
 
     pub fn index(self) -> usize {
@@ -1464,7 +1484,7 @@ impl Book {
             Book::Power => 4,
             Book::Zone => 5,
             Book::Balanced => 6,
-            Book::Custom => 7,
+            Book::Custom(slot) => 7 + slot as usize,
         }
     }
 
@@ -1477,7 +1497,7 @@ impl Book {
             Book::Power => "POWER RUN",
             Book::Zone => "ZONE RUN",
             Book::Balanced => "BALANCED",
-            Book::Custom => "MY PLAYBOOK",
+            Book::Custom(slot) => crate::design::book_name(slot as usize),
         }
     }
 
@@ -1491,7 +1511,7 @@ impl Book {
             Book::Power => "GAP RUNS, ISOLATION, AND THE PLAY ACTION OFF THEM",
             Book::Zone => "OUTSIDE ZONE, BOOTS AND THE CUT BLOCK",
             Book::Balanced => "EVERY DESIGN IN THE LEAGUE, BOTH SIDES OF THE BALL",
-            Book::Custom => "THE BOOK YOU DREW: FORMATIONS, PLAYS, FRONTS AND CALLS",
+            Book::Custom(_) => "THE BOOK YOU DREW: FORMATIONS, PLAYS, FRONTS AND CALLS",
         }
     }
 
@@ -1594,7 +1614,7 @@ impl Book {
                 "WIDE ZONE",
             ],
             Book::Balanced => &[],
-            Book::Custom => &[],
+            Book::Custom(_) => &[],
         }
     }
 
@@ -1650,7 +1670,7 @@ impl Book {
                 "COVER 2 ZONE",
             ],
             Book::Balanced => &[],
-            Book::Custom => &[],
+            Book::Custom(_) => &[],
         }
     }
 }
@@ -1669,8 +1689,8 @@ pub const SHARED_CALLS: [&str; 4] =
 /// The offense one club's book gives it, in catalog order so the call sheet
 /// reads the same way every week.
 pub fn playbook_for(book: Book) -> Vec<Play> {
-    if book == Book::Custom {
-        let drawn = crate::design::offense_plays();
+    if let Book::Custom(slot) = book {
+        let drawn = crate::design::offense_plays_at(slot as usize);
         // A book that is not legal yet is not a book: the league's own plays are
         // the fallback rather than an empty call sheet.
         return if drawn.is_empty() { playbook() } else { drawn };
@@ -1687,8 +1707,8 @@ pub fn playbook_for(book: Book) -> Vec<Play> {
 
 /// The defense one club's book gives it, on the same terms.
 pub fn defensive_playbook_for(book: Book) -> Vec<DefCall> {
-    if book == Book::Custom {
-        let drawn = crate::design::defense_calls();
+    if let Book::Custom(slot) = book {
+        let drawn = crate::design::defense_calls_at(slot as usize);
         return if drawn.is_empty() {
             defensive_playbook()
         } else {
@@ -2030,7 +2050,7 @@ mod book_tests {
     fn every_book_has_the_shared_plays_and_enough_of_its_own() {
         // A designed book is the player's, not a league scheme: it has whatever
         // he drew in it.
-        for book in Book::ALL.into_iter().filter(|b| *b != Book::Custom) {
+        for book in Book::ALL {
             let off = playbook_for(book);
             let def = defensive_playbook_for(book);
             assert!(off.len() >= 12, "{} has {} plays", book.label(), off.len());
@@ -2065,7 +2085,7 @@ mod book_tests {
             for b in Book::ALL {
                 // A designed book is not a scheme: it is whatever was drawn,
                 // which on a machine with no drawing in it is the whole catalog.
-                if a == b || a == Book::Balanced || b == Book::Balanced || a == Book::Custom || b == Book::Custom {
+                if a == b || a == Book::Balanced || b == Book::Balanced {
                     continue;
                 }
                 let (one, two) = (playbook_for(a), playbook_for(b));

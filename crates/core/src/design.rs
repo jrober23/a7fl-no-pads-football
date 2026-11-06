@@ -1,16 +1,19 @@
-//! The playbook the player designs: formations drawn as circles, fronts drawn as
-//! X's, and the plays and calls that hang off them.
+//! The playbooks the player designs: formations drawn as circles, fronts drawn as
+//! X's, the plays and calls that hang off them, and the coverage drawn behind each
+//! call.
 //!
-//! The designs are kept as the player draws them, on a yard grid behind and ahead
-//! of the line of scrimmage, and are turned into the [`Play`] and [`DefCall`] the
-//! simulation runs only when a game asks for them. That means the editor can hold
-//! a half-finished book without the league ever noticing, and the moment the book
-//! is legal it is the book a club can take into a game.
+//! A player keeps a shelf of books, each with its own name, and every book is
+//! seven men on a yard grid with a job written on each spot. The designs are kept
+//! as they are drawn and are turned into the [`Play`] and [`DefCall`] the
+//! simulation runs only when a game asks for them, so a half-finished book on the
+//! shelf never bothers the league: the moment a book is legal it is a book a club
+//! can carry into a game.
 //!
 //! The line rules are enforced here rather than in the screen: two linemen on the
 //! line of scrimmage and the quarterback behind them, which is the shape every
 //! play in the league already has.
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 
@@ -18,6 +21,9 @@ use crate::math::Vec2;
 use crate::playbook::{
     Assign, Book, Coverage, DefCall, DefFront, DefRole, Formation, OffRole, Play, PlayFamily, RunFit,
 };
+
+/// How many books the shelf holds. Each one gets a slot on the pad and a name.
+pub const MAX_BOOKS: usize = 6;
 
 /// The shape a designed book has to be: two to five of each, one to nine under
 /// each of them.
@@ -32,19 +38,40 @@ pub const MAX_PLAYS: usize = 9;
 pub const GRID_X: (i8, i8) = (-8, 12);
 pub const GRID_Y: (i8, i8) = (-13, 13);
 
-/// The four men a route can be drawn for, in the order their paths are kept.
-pub const RECEIVERS: [OffRole; 4] = [OffRole::Back, OffRole::Slot, OffRole::WideL, OffRole::WideR];
-
-pub fn route_slot(role: OffRole) -> Option<usize> {
-    RECEIVERS.iter().position(|r| *r == role)
+/// A formation or front is named to the game by one number: the book it belongs
+/// to in the high bits and its place in the book in the low three. Eight
+/// formations a book is more than the five the editor allows, so the packing has
+/// room to spare and the number fits a `u8` the same way a `Custom` id always has.
+pub fn form_id(book: usize, formation: usize) -> u8 {
+    ((book * 8) + formation) as u8
 }
 
+pub fn front_id(book: usize, front: usize) -> u8 {
+    ((book * 8) + front) as u8
+}
+
+pub fn id_book(id: u8) -> usize {
+    id as usize / 8
+}
+
+pub fn id_slot(id: u8) -> usize {
+    id as usize % 8
+}
+
+/// One formation: seven spots on the grid and the job standing on each of them.
+///
+/// The spots are indexed by where they are on the field, not by the job, so any
+/// of the seven can stand anywhere: the player picks who stands on a spot rather
+/// than being handed a quarterback's spot and a guard's spot.
 #[derive(Clone, Debug, PartialEq)]
-pub struct DesignFormation {
+pub struct FormationDesign {
     pub name: String,
-    /// One spot a man, indexed by [`OffRole::index`].
     pub spots: [Vec2; 7],
+    pub roles: [OffRole; 7],
 }
+
+/// The old name for [`FormationDesign`], kept short for the screens.
+pub type DesignFormation = FormationDesign;
 
 impl DesignFormation {
     /// A formation laid out from one the league already runs: a starting point,
@@ -57,6 +84,7 @@ impl DesignFormation {
         DesignFormation {
             name: p.formation.label().to_string(),
             spots,
+            roles: OffRole::ALL,
         }
     }
 
@@ -68,7 +96,22 @@ impl DesignFormation {
         DesignFormation {
             name: format!("FORMATION {}", index + 1),
             spots,
+            roles: OffRole::ALL,
         }
+    }
+
+    /// The spot a job stands on.
+    pub fn alignment(&self, role: OffRole) -> Vec2 {
+        self.spots[self.slot_of(role)]
+    }
+
+    /// Which spot a job stands on, or his own index if the roles are somehow
+    /// not a set of seven.
+    pub fn slot_of(&self, role: OffRole) -> usize {
+        self.roles
+            .iter()
+            .position(|r| *r == role)
+            .unwrap_or_else(|| role.index())
     }
 }
 
@@ -76,9 +119,9 @@ impl DesignFormation {
 pub struct DesignPlay {
     pub name: String,
     pub family: PlayFamily,
-    /// The drawn path for each of [`RECEIVERS`], in yards from the line of
-    /// scrimmage. Empty means he stays in and blocks.
-    pub routes: [Vec<Vec2>; 4],
+    /// The drawn path for each spot, in yards from the line of scrimmage. Empty
+    /// means the man on that spot stays in and blocks.
+    pub routes: [Vec<Vec2>; 7],
 }
 
 impl DesignPlay {
@@ -86,20 +129,20 @@ impl DesignPlay {
         DesignPlay {
             name,
             family: PlayFamily::QuickPass,
-            routes: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+            routes: Default::default(),
         }
     }
 
     /// A play copied out of a book the league already runs, with its waypoints
-    /// moved from the receiver's shoulders onto the field.
+    /// moved from the man's shoulders onto the field.
     pub fn from_play(p: &Play, form: &DesignFormation) -> DesignPlay {
-        let mut routes: [Vec<Vec2>; 4] = Default::default();
-        for role in RECEIVERS {
-            let Some(slot) = route_slot(role) else { continue };
+        let mut routes: [Vec<Vec2>; 7] = Default::default();
+        for role in OffRole::ALL {
             let Some(points) = p.assignment(role).and_then(assign_points) else {
                 continue;
             };
-            let spot = form.spots[role.index()];
+            let spot = form.alignment(role);
+            let slot = form.slot_of(role);
             routes[slot] = points
                 .iter()
                 .map(|q| grid(Vec2::new(spot.x + q.x, spot.y + q.y)))
@@ -115,6 +158,10 @@ impl DesignPlay {
     pub fn has_path(&self) -> bool {
         self.routes.iter().any(|r| !r.is_empty())
     }
+
+    pub fn path(&self, slot: usize) -> &[Vec2] {
+        self.routes.get(slot).map(|r| r.as_slice()).unwrap_or(&[])
+    }
 }
 
 fn assign_points(a: &Assign) -> Option<Vec<Vec2>> {
@@ -127,11 +174,13 @@ fn assign_points(a: &Assign) -> Option<Vec<Vec2>> {
     }
 }
 
+/// One front: seven spots and the job standing on each, the same way a formation
+/// is built, plus the coverage each of them plays behind it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesignFront {
     pub name: String,
-    /// One spot a defender, indexed by [`DefRole::index`].
     pub spots: [Vec2; 7],
+    pub roles: [DefRole; 7],
 }
 
 impl DesignFront {
@@ -143,6 +192,7 @@ impl DesignFront {
         DesignFront {
             name: call.front.label().to_string(),
             spots,
+            roles: DefRole::ALL,
         }
     }
 
@@ -158,14 +208,49 @@ impl DesignFront {
                 Vec2::new(6.0, 10.0),
                 Vec2::new(10.0, 0.0),
             ],
+            roles: DefRole::ALL,
         }
+    }
+
+    pub fn spot(&self, role: DefRole) -> Vec2 {
+        self.spots[self.slot_of(role)]
+    }
+
+    pub fn slot_of(&self, role: DefRole) -> usize {
+        self.roles
+            .iter()
+            .position(|r| *r == role)
+            .unwrap_or_else(|| role.index())
     }
 }
 
+/// One call off a front: the coverage the seven play, whether the corners press,
+/// and the drop drawn for each of them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DesignCall {
     pub name: String,
     pub coverage: Coverage,
+    /// Corners at the line with their hands on the receiver, rather than off
+    /// with a cushion.
+    pub press: bool,
+    /// The drop drawn for each spot of the front, in yards past the line of
+    /// scrimmage. Empty means the coverage decides where he goes.
+    pub drops: [Vec<Vec2>; 7],
+}
+
+impl DesignCall {
+    pub fn blank(name: String, coverage: Coverage) -> DesignCall {
+        DesignCall {
+            name,
+            coverage,
+            press: coverage == Coverage::ManPress,
+            drops: Default::default(),
+        }
+    }
+
+    pub fn has_drop(&self) -> bool {
+        self.drops.iter().any(|d| !d.is_empty())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -196,7 +281,7 @@ impl DesignBook {
         let defense = vec![DesignFront::blank(0), DesignFront::blank(1)];
         let calls = defense
             .iter()
-            .map(|_| vec![DesignCall { name: "COVER 1".to_string(), coverage: Coverage::ManFree }])
+            .map(|_| vec![DesignCall::blank("COVER 1".to_string(), Coverage::ManFree)])
             .collect();
         DesignBook {
             name: "MY PLAYBOOK".to_string(),
@@ -253,6 +338,8 @@ impl DesignBook {
             calls[i].push(DesignCall {
                 name: d.name.to_string(),
                 coverage: d.coverage,
+                press: d.press,
+                drops: Default::default(),
             });
         }
 
@@ -266,7 +353,10 @@ impl DesignBook {
         }
         while defense.len() < MIN_FORMATIONS {
             let f = DesignFront::blank(defense.len());
-            calls.push(vec![DesignCall { name: "COVER 1".to_string(), coverage: Coverage::ManFree }]);
+            calls.push(vec![DesignCall::blank(
+                "COVER 1".to_string(),
+                Coverage::ManFree,
+            )]);
             defense.push(f);
         }
         DesignBook {
@@ -284,6 +374,9 @@ impl DesignBook {
     /// game.
     pub fn problems(&self) -> Vec<String> {
         let mut out = Vec::new();
+        if self.name.trim().is_empty() {
+            out.push("THE BOOK NEEDS A NAME".to_string());
+        }
         if self.offense.len() < MIN_FORMATIONS || self.offense.len() > MAX_FORMATIONS {
             out.push(format!(
                 "OFFENSE NEEDS {} TO {} FORMATIONS",
@@ -297,8 +390,11 @@ impl DesignBook {
             ));
         }
         for (i, f) in self.offense.iter().enumerate() {
-            if let Some(why) = formation_problem(&f.spots) {
+            if let Some(why) = formation_problem_roles(&f.spots, &f.roles) {
                 out.push(format!("{}: {}", f.name, why));
+            }
+            if !roles_are_seven(f.roles.iter().map(|r| r.index())) {
+                out.push(format!("{}: TWO MEN CANNOT PLAY ONE JOB", f.name));
             }
             let plays = self.plays.get(i).map(|p| p.as_slice()).unwrap_or(&[]);
             if plays.len() < MIN_PLAYS || plays.len() > MAX_PLAYS {
@@ -311,11 +407,17 @@ impl DesignBook {
                 if !p.has_path() {
                     out.push(format!("{}: EVERY PLAY NEEDS A DRAWN PATH", p.name));
                 }
+                if p.name.trim().is_empty() {
+                    out.push(format!("{}: A PLAY NEEDS A NAME", f.name));
+                }
             }
         }
         for (i, f) in self.defense.iter().enumerate() {
             if let Some(why) = front_problem(&f.spots) {
                 out.push(format!("{}: {}", f.name, why));
+            }
+            if !roles_are_seven(f.roles.iter().map(|r| r.index())) {
+                out.push(format!("{}: TWO MEN CANNOT PLAY ONE JOB", f.name));
             }
             let calls = self.calls.get(i).map(|c| c.as_slice()).unwrap_or(&[]);
             if calls.len() < MIN_PLAYS || calls.len() > MAX_PLAYS {
@@ -323,6 +425,11 @@ impl DesignBook {
                     "{} NEEDS {} TO {} CALLS",
                     f.name, MIN_PLAYS, MAX_PLAYS
                 ));
+            }
+            for c in calls {
+                if c.name.trim().is_empty() {
+                    out.push(format!("{}: A CALL NEEDS A NAME", f.name));
+                }
             }
         }
         out
@@ -345,10 +452,22 @@ impl DesignBook {
 /// The two rules of an offensive formation, plus the one thing that makes a
 /// drawing unreadable: two men standing on the same spot.
 pub fn formation_problem(spots: &[Vec2; 7]) -> Option<&'static str> {
-    let qb = spots[OffRole::Qb.index()];
-    let lg = spots[OffRole::Lg.index()];
-    let rg = spots[OffRole::Rg.index()];
-    if lg.x != 0.0 || rg.x != 0.0 {
+    // The line rule follows the job, not the spot: whichever two men are wearing
+    // the guards' numbers are the two who have to be on the line.
+    formation_problem_roles(spots, &OffRole::ALL)
+}
+
+/// The same rules, read through the jobs standing on the spots.
+pub fn formation_problem_roles(spots: &[Vec2; 7], roles: &[OffRole; 7]) -> Option<&'static str> {
+    let at = |role: OffRole| {
+        roles
+            .iter()
+            .position(|r| *r == role)
+            .map(|i| spots[i])
+            .unwrap_or(Vec2::ZERO)
+    };
+    let qb = at(OffRole::Qb);
+    if at(OffRole::Lg).x != 0.0 || at(OffRole::Rg).x != 0.0 {
         return Some("TWO LINEMEN MUST BE ON THE LINE OF SCRIMMAGE");
     }
     if qb.x >= 0.0 {
@@ -373,6 +492,19 @@ pub fn front_problem(spots: &[Vec2; 7]) -> Option<&'static str> {
         return Some("TWO MEN CANNOT STAND ON ONE SPOT");
     }
     None
+}
+
+fn roles_are_seven(indices: impl Iterator<Item = usize>) -> bool {
+    let mut seen = [false; 7];
+    let mut n = 0;
+    for i in indices {
+        if i >= 7 || seen[i] {
+            return false;
+        }
+        seen[i] = true;
+        n += 1;
+    }
+    n == 7
 }
 
 fn inside(spots: &[Vec2; 7], defense: bool) -> bool {
@@ -402,17 +534,30 @@ fn grid(v: Vec2) -> Vec2 {
 }
 
 // ---------------------------------------------------------------------------
-// The store
+// The shelf
 // ---------------------------------------------------------------------------
 
-fn store() -> &'static Mutex<Option<DesignBook>> {
-    static BOOK: OnceLock<Mutex<Option<DesignBook>>> = OnceLock::new();
-    BOOK.get_or_init(|| Mutex::new(None))
+#[derive(Clone)]
+struct Library {
+    books: Vec<DesignBook>,
+    current: usize,
 }
 
-fn labels() -> &'static Mutex<(Vec<&'static str>, Vec<&'static str>)> {
-    static LABELS: OnceLock<Mutex<(Vec<&'static str>, Vec<&'static str>)>> = OnceLock::new();
-    LABELS.get_or_init(|| Mutex::new((Vec::new(), Vec::new())))
+#[derive(Default)]
+struct Labels {
+    books: Vec<&'static str>,
+    forms: BTreeMap<u8, &'static str>,
+    fronts: BTreeMap<u8, &'static str>,
+}
+
+fn store() -> &'static Mutex<Option<Library>> {
+    static BOOKS: OnceLock<Mutex<Option<Library>>> = OnceLock::new();
+    BOOKS.get_or_init(|| Mutex::new(None))
+}
+
+fn labels() -> &'static Mutex<Labels> {
+    static LABELS: OnceLock<Mutex<Labels>> = OnceLock::new();
+    LABELS.get_or_init(|| Mutex::new(Labels::default()))
 }
 
 fn generation() -> u64 {
@@ -425,42 +570,161 @@ fn bump() {
     GEN.fetch_add(1, Ordering::Relaxed);
 }
 
-pub fn book() -> Option<DesignBook> {
-    store().lock().ok().and_then(|b| b.clone())
+fn lock_store() -> std::sync::MutexGuard<'static, Option<Library>> {
+    store().lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// True when there is a book and it can be run: what the pickers ask before they
-/// offer it.
-pub fn has_book() -> bool {
-    book().map(|b| b.is_legal()).unwrap_or(false)
-}
-
-/// Keep a book. The labels the playbook hands to the rest of the game are
-/// settled here, against the names as they were when the book was saved.
-pub fn set(book: Option<DesignBook>) {
-    let names: Vec<&'static str> = book
-        .as_ref()
-        .map(|b| b.offense.iter().map(|f| leak(&f.name)).collect())
-        .unwrap_or_default();
-    let fronts: Vec<&'static str> = book
-        .as_ref()
-        .map(|b| b.defense.iter().map(|f| leak(&f.name)).collect())
-        .unwrap_or_default();
-    if let Ok(mut l) = labels().lock() {
-        *l = (names, fronts);
+/// Settle the names the playbook hands to the rest of the game, and tell the
+/// caches the shelf moved.
+fn publish(snapshot: &Option<Library>) {
+    let mut l = Labels::default();
+    if let Some(lib) = snapshot {
+        for (bi, b) in lib.books.iter().enumerate() {
+            l.books.push(leak(&b.name));
+            for (fi, f) in b.offense.iter().enumerate() {
+                l.forms.insert(form_id(bi, fi), leak(&f.name));
+            }
+            for (fi, f) in b.defense.iter().enumerate() {
+                l.fronts.insert(front_id(bi, fi), leak(&f.name));
+            }
+        }
     }
-    if let Ok(mut b) = store().lock() {
-        *b = book;
+    if let Ok(mut labels) = labels().lock() {
+        *labels = l;
     }
     bump();
 }
 
-pub fn clear() {
-    set(None);
+fn mutate<R>(f: impl FnOnce(&mut Option<Library>) -> R) -> R {
+    let (out, snapshot) = {
+        let mut guard = lock_store();
+        let out = f(&mut guard);
+        (out, guard.clone())
+    };
+    publish(&snapshot);
+    out
 }
 
 fn leak(s: &str) -> &'static str {
     Box::leak(s.to_string().into_boxed_str())
+}
+
+/// The whole shelf, for a screen that wants to list it.
+pub fn shelf() -> Vec<DesignBook> {
+    lock_store()
+        .as_ref()
+        .map(|l| l.books.clone())
+        .unwrap_or_default()
+}
+
+pub fn count() -> usize {
+    lock_store().as_ref().map(|l| l.books.len()).unwrap_or(0)
+}
+
+pub fn current() -> Option<usize> {
+    lock_store().as_ref().map(|l| l.current)
+}
+
+/// The book being edited.
+pub fn book() -> Option<DesignBook> {
+    let guard = lock_store();
+    let lib = guard.as_ref()?;
+    lib.books.get(lib.current).cloned()
+}
+
+pub fn book_at(index: usize) -> Option<DesignBook> {
+    lock_store()
+        .as_ref()
+        .and_then(|l| l.books.get(index).cloned())
+}
+
+/// True when there is a legal book on the shelf: what the pickers ask before
+/// they offer one.
+pub fn has_book() -> bool {
+    shelf().iter().any(|b| b.is_legal())
+}
+
+pub fn has_book_at(index: usize) -> bool {
+    book_at(index).map(|b| b.is_legal()).unwrap_or(false)
+}
+
+pub fn has_book_named(_book: u8) -> bool {
+    has_book()
+}
+
+/// Put a book on the shelf and make it the one being edited.
+pub fn add(book: DesignBook) -> usize {
+    mutate(|lib| {
+        let shelf = lib.get_or_insert_with(|| Library {
+            books: Vec::new(),
+            current: 0,
+        });
+        if shelf.books.len() >= MAX_BOOKS {
+            return shelf.current;
+        }
+        shelf.books.push(book);
+        shelf.current = shelf.books.len() - 1;
+        shelf.current
+    })
+}
+
+/// Replace the book being edited. With an empty shelf this is how a book gets
+/// there in the first place, which is what the tests and the old single-book
+/// screens do.
+pub fn set(book: Option<DesignBook>) {
+    mutate(|lib| match book {
+        Some(b) => {
+            let shelf = lib.get_or_insert_with(|| Library {
+                books: Vec::new(),
+                current: 0,
+            });
+            if let Some(slot) = shelf.books.get_mut(shelf.current) {
+                *slot = b;
+            } else if shelf.books.len() < MAX_BOOKS {
+                shelf.books.push(b);
+                shelf.current = shelf.books.len() - 1;
+            }
+        }
+        None => {
+            *lib = None;
+        }
+    });
+}
+
+pub fn select(index: usize) {
+    mutate(|lib| {
+        if let Some(shelf) = lib {
+            shelf.current = index.min(shelf.books.len().saturating_sub(1));
+        }
+    });
+}
+
+pub fn remove(index: usize) {
+    mutate(|lib| {
+        if let Some(shelf) = lib {
+            if index < shelf.books.len() {
+                shelf.books.remove(index);
+            }
+            if shelf.books.is_empty() {
+                *lib = None;
+            } else {
+                shelf.current = shelf.current.min(shelf.books.len() - 1);
+            }
+        }
+    });
+}
+
+pub fn clear() {
+    mutate(|lib| *lib = None);
+}
+
+/// The name of a book on the shelf, for the picker.
+pub fn book_name(index: usize) -> &'static str {
+    labels()
+        .lock()
+        .ok()
+        .and_then(|l| l.books.get(index).copied())
+        .unwrap_or("MY PLAYBOOK")
 }
 
 /// The name of a designed formation, for the playbook card and the diagrams.
@@ -468,7 +732,7 @@ pub fn formation_name(id: u8) -> &'static str {
     labels()
         .lock()
         .ok()
-        .and_then(|l| l.0.get(id as usize).copied())
+        .and_then(|l| l.forms.get(&id).copied())
         .unwrap_or("CUSTOM")
 }
 
@@ -476,21 +740,21 @@ pub fn front_name(id: u8) -> &'static str {
     labels()
         .lock()
         .ok()
-        .and_then(|l| l.1.get(id as usize).copied())
+        .and_then(|l| l.fronts.get(&id).copied())
         .unwrap_or("CUSTOM")
 }
 
 /// Where a designed formation stands one man, relative to the line of scrimmage.
 pub fn formation_spot(id: u8, role: OffRole) -> Vec2 {
-    book()
-        .and_then(|b| b.offense.get(id as usize).map(|f| f.spots[role.index()]))
+    book_at(id_book(id))
+        .and_then(|b| b.offense.get(id_slot(id)).map(|f| f.alignment(role)))
         .unwrap_or(Vec2::new(0.0, 0.0))
 }
 
 /// Where a designed front stands one man, in field coordinates.
 pub fn front_spot(id: u8, role: DefRole, los: f32, direction: i8) -> Vec2 {
-    let s = book()
-        .and_then(|b| b.defense.get(id as usize).map(|f| f.spots[role.index()]))
+    let s = book_at(id_book(id))
+        .and_then(|b| b.defense.get(id_slot(id)).map(|f| f.spot(role)))
         .unwrap_or(Vec2::new(0.0, 0.0));
     Vec2::new(los + direction as f32 * s.x, s.y)
 }
@@ -499,23 +763,47 @@ pub fn front_spot(id: u8, role: DefRole, los: f32, direction: i8) -> Vec2 {
 // Turning designs into the game's plays
 // ---------------------------------------------------------------------------
 
-/// The designed offense, as plays the simulation runs.
-pub fn offense_plays() -> Vec<Play> {
-    let Some(book) = book() else {
+/// The designed offense of one book, as plays the simulation runs.
+pub fn offense_plays_at(index: usize) -> Vec<Play> {
+    let Some(book) = book_at(index) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     for (fi, form) in book.offense.iter().enumerate() {
-        let form_name = leak(&form.name);
         for (pi, p) in book.plays_of(fi).iter().enumerate() {
-            let name = leak(&format!("{} {}", form.name, pi + 1));
-            out.push(design_play(name, form_name, fi, form, p));
+            let name = if p.name.trim().is_empty() {
+                leak(&format!("{} {}", form.name, pi + 1))
+            } else {
+                leak(&p.name)
+            };
+            let concept = leak(&form.name);
+            out.push(design_play(
+                name,
+                concept,
+                form_id(index, fi),
+                form,
+                p,
+            ));
         }
     }
     out
 }
 
-fn design_play(name: &'static str, concept: &'static str, fi: usize, form: &DesignFormation, p: &DesignPlay) -> Play {
+/// The designed offense of the book being edited.
+pub fn offense_plays() -> Vec<Play> {
+    match current() {
+        Some(i) => offense_plays_at(i),
+        None => Vec::new(),
+    }
+}
+
+fn design_play(
+    name: &'static str,
+    concept: &'static str,
+    id: u8,
+    form: &DesignFormation,
+    p: &DesignPlay,
+) -> Play {
     let pass = p.family.is_pass();
     let drop = match p.family {
         PlayFamily::QuickPass | PlayFamily::Screen => 3.0,
@@ -523,65 +811,84 @@ fn design_play(name: &'static str, concept: &'static str, fi: usize, form: &Desi
         _ => 0.0,
     };
     let mut assignments: Vec<(OffRole, Assign)> = Vec::new();
-    assignments.push((
-        OffRole::Qb,
-        Assign::PassBlock {
-            slide: 0.0,
-            max_depth: if pass { drop } else { 1.0 },
-        },
-    ));
-    for role in [OffRole::Lg, OffRole::Rg] {
-        assignments.push((
-            role,
-            if pass {
-                Assign::PassBlock { slide: 0.0, max_depth: -1.0 }
-            } else {
-                Assign::RunBlock {
-                    aim: Vec2::new(2.0, if role == OffRole::Lg { -1.0 } else { 1.0 }),
-                    seal: false,
-                }
-            },
-        ));
-    }
-    for role in RECEIVERS {
-        let Some(slot) = route_slot(role) else { continue };
-        let spot = form.spots[role.index()];
+    for slot in 0..7 {
+        let role = form.roles[slot];
+        let spot = form.spots[slot];
         let drawn = &p.routes[slot];
-        if drawn.is_empty() {
-            assignments.push((
-                role,
-                Assign::PassBlock { slide: 0.0, max_depth: -1.0 },
-            ));
-            continue;
-        }
         let rel: Vec<Vec2> = drawn
             .iter()
             .map(|q| Vec2::new(q.x - spot.x, q.y - spot.y))
             .collect();
-        if pass {
-            let depth = rel
-                .iter()
-                .map(|q| q.x)
-                .fold(0.0f32, f32::max)
-                .max(0.0) as u8;
-            assignments.push((role, Assign::Route { points: rel, depth }));
-        } else if role == OffRole::Back {
-            assignments.push((role, Assign::Carry { points: rel }));
-        } else {
-            assignments.push((
-                role,
-                Assign::RunBlock {
-                    aim: rel.first().copied().unwrap_or(Vec2::new(1.0, 0.0)),
-                    seal: false,
-                },
-            ));
+        match role {
+            OffRole::Qb => {
+                assignments.push((
+                    role,
+                    Assign::PassBlock {
+                        slide: 0.0,
+                        max_depth: if pass { drop } else { 1.0 },
+                    },
+                ));
+            }
+            OffRole::Lg | OffRole::Rg => {
+                assignments.push((
+                    role,
+                    if pass {
+                        Assign::PassBlock {
+                            slide: 0.0,
+                            max_depth: -1.0,
+                        }
+                    } else {
+                        Assign::RunBlock {
+                            aim: rel
+                                .first()
+                                .copied()
+                                .unwrap_or(Vec2::new(
+                                    2.0,
+                                    if spot.y < 0.0 { -1.0 } else { 1.0 },
+                                )),
+                            seal: false,
+                        }
+                    },
+                ));
+            }
+            _ => {
+                if pass {
+                    if drawn.is_empty() {
+                        assignments.push((
+                            role,
+                            Assign::PassBlock {
+                                slide: 0.0,
+                                max_depth: -1.0,
+                            },
+                        ));
+                    } else {
+                        let depth = rel
+                            .iter()
+                            .map(|q| q.x)
+                            .fold(0.0f32, f32::max)
+                            .max(0.0)
+                            .ceil() as u8;
+                        assignments.push((role, Assign::Route { points: rel, depth }));
+                    }
+                } else if role == OffRole::Back && !drawn.is_empty() {
+                    assignments.push((role, Assign::Carry { points: rel }));
+                } else {
+                    assignments.push((
+                        role,
+                        Assign::RunBlock {
+                            aim: rel.first().copied().unwrap_or(Vec2::new(1.0, 0.0)),
+                            seal: false,
+                        },
+                    ));
+                }
+            }
         }
     }
     Play {
         name,
         concept,
         family: p.family,
-        formation: Formation::Custom(fi as u8),
+        formation: Formation::Custom(id),
         drop,
         run_side: 0,
         flip: false,
@@ -589,70 +896,88 @@ fn design_play(name: &'static str, concept: &'static str, fi: usize, form: &Desi
     }
 }
 
-/// The designed defense, as calls the simulation runs.
-pub fn defense_calls() -> Vec<DefCall> {
-    let Some(book) = book() else {
+/// The designed defense of one book, as calls the simulation runs.
+pub fn defense_calls_at(index: usize) -> Vec<DefCall> {
+    let Some(book) = book_at(index) else {
         return Vec::new();
     };
     let mut out = Vec::new();
-    for (fi, _) in book.defense.iter().enumerate() {
+    for (fi, front) in book.defense.iter().enumerate() {
         for c in book.calls_of(fi) {
+            let mut drops: Vec<(DefRole, Vec<Vec2>)> = Vec::new();
+            for slot in 0..7 {
+                if !c.drops[slot].is_empty() {
+                    drops.push((front.roles[slot], c.drops[slot].clone()));
+                }
+            }
             out.push(DefCall {
                 name: leak(&c.name),
-                front: DefFront::Custom(fi as u8),
+                front: DefFront::Custom(front_id(index, fi)),
                 coverage: c.coverage,
                 run_fit: RunFit::Balanced,
                 blitzers: Vec::new(),
-                press: c.coverage == Coverage::ManPress,
+                press: c.press || c.coverage == Coverage::ManPress,
+                drops,
             });
         }
     }
     out
 }
 
-/// The AI's own copy of the designed offense, rebuilt when the book changes.
-pub fn cached_offense() -> &'static [Play] {
-    static CACHE: Mutex<Option<(u64, &'static [Play])>> = Mutex::new(None);
-    let now = generation();
-    if let Ok(mut c) = CACHE.lock() {
-        if let Some((g, b)) = *c {
-            if g == now {
-                return b;
-            }
-        }
-        let mut plays = offense_plays();
-        if plays.is_empty() {
-            // A club saved on this book before the book was cleared still has to
-            // call something: the league's own plays are the floor.
-            plays = crate::playbook::playbook();
-        }
-        let fresh: &'static [Play] = Box::leak(plays.into_boxed_slice());
-        *c = Some((now, fresh));
-        fresh
-    } else {
-        Box::leak(offense_plays().into_boxed_slice())
+/// The designed defense of the book being edited.
+pub fn defense_calls() -> Vec<DefCall> {
+    match current() {
+        Some(i) => defense_calls_at(i),
+        None => Vec::new(),
     }
 }
 
-pub fn cached_defense() -> &'static [DefCall] {
-    static CACHE: Mutex<Option<(u64, &'static [DefCall])>> = Mutex::new(None);
+/// The AI's own copy of one book's offense, rebuilt when the shelf changes.
+pub fn cached_offense(index: usize) -> &'static [Play] {
+    static CACHE: Mutex<Vec<Option<(u64, &'static [Play])>>> = Mutex::new(Vec::new());
+    cached(
+        &CACHE,
+        index,
+        offense_plays_at,
+        crate::playbook::playbook as fn() -> Vec<Play>,
+    )
+}
+
+pub fn cached_defense(index: usize) -> &'static [DefCall] {
+    static CACHE: Mutex<Vec<Option<(u64, &'static [DefCall])>>> = Mutex::new(Vec::new());
+    cached(
+        &CACHE,
+        index,
+        defense_calls_at,
+        crate::playbook::defensive_playbook as fn() -> Vec<DefCall>,
+    )
+}
+
+fn cached<T: Clone + 'static>(
+    cache: &Mutex<Vec<Option<(u64, &'static [T])>>>,
+    index: usize,
+    build: fn(usize) -> Vec<T>,
+    fallback: fn() -> Vec<T>,
+) -> &'static [T] {
     let now = generation();
-    if let Ok(mut c) = CACHE.lock() {
-        if let Some((g, b)) = *c {
-            if g == now {
-                return b;
-            }
-        }
-        let mut calls = defense_calls();
-        if calls.is_empty() {
-            calls = crate::playbook::defensive_playbook();
-        }
-        let fresh: &'static [DefCall] = Box::leak(calls.into_boxed_slice());
-        *c = Some((now, fresh));
-        fresh
-    } else {
-        Box::leak(defense_calls().into_boxed_slice())
+    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.len() <= index {
+        guard.resize(index + 1, None);
     }
+    if let Some((g, cached)) = guard[index] {
+        if g == now {
+            return cached;
+        }
+    }
+    let mut made = build(index);
+    if made.is_empty() {
+        // A club saved on this book before the shelf changed still has to call
+        // something: the league's own book is the floor.
+        made = fallback();
+    }
+    let fresh: &'static [T] = Box::leak(made.into_boxed_slice());
+    guard[index] = Some((now, fresh));
+    fresh
 }
 
 // ---------------------------------------------------------------------------
@@ -708,7 +1033,7 @@ fn parse_coverage(s: &str) -> Option<Coverage> {
 }
 
 fn word(s: &str) -> String {
-    s.replace(' ', "_")
+    s.trim().replace(' ', "_")
 }
 
 fn unword(s: &str) -> String {
@@ -716,64 +1041,143 @@ fn unword(s: &str) -> String {
 }
 
 fn spot_text(p: Vec2) -> String {
-    format!("{},{}", p.x as i32, p.y as i32)
+    format!("{},{},", p.x as i32, p.y as i32)
 }
 
 fn parse_spot(s: &str) -> Option<Vec2> {
+    let s = s.trim_end_matches(',');
     let (x, y) = s.split_once(',')?;
-    Some(Vec2::new(x.parse::<i32>().ok()? as f32, y.parse::<i32>().ok()? as f32))
+    Some(Vec2::new(
+        x.parse::<i32>().ok()? as f32,
+        y.parse::<i32>().ok()? as f32,
+    ))
 }
 
-/// The designed book as lines for the save file, after the clubs and kits.
-pub fn text() -> String {
-    let Some(book) = book() else {
-        return String::new();
-    };
-    let mut out = String::from("# The playbook: formations, plays, fronts and calls.\n");
-    out.push_str(&format!("book {} {}\n", word(&book.source), word(&book.name)));
-    for (i, f) in book.offense.iter().enumerate() {
-        let spots: Vec<String> = f.spots.iter().map(|s| spot_text(*s)).collect();
-        out.push_str(&format!("off {} {} {}\n", i, word(&f.name), spots.join(" ")));
+fn routes_text(routes: &[Vec<Vec2>; 7]) -> String {
+    // A semicolon between waypoints and a pipe between men: neither can be a
+    // space, or the line would split inside a route.
+    routes
+        .iter()
+        .map(|r| r.iter().map(|q| spot_text(*q)).collect::<Vec<_>>().join(";"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
+fn parse_routes(text: &str) -> [Vec<Vec2>; 7] {
+    let mut out: [Vec<Vec2>; 7] = Default::default();
+    for (slot, lane) in text.split('|').enumerate().take(7) {
+        out[slot] = lane.split(';').filter_map(parse_spot).collect();
     }
-    for (fi, plays) in book.plays.iter().enumerate() {
-        for p in plays {
-            // A semicolon between waypoints and a pipe between men: neither
-            // can be a space, or the line would split inside a route.
-            let mut parts = Vec::new();
-            for route in &p.routes {
-                parts.push(route.iter().map(|q| spot_text(*q)).collect::<Vec<_>>().join(";"));
-            }
+    out
+}
+
+/// The shelf as lines for the save file, after the clubs and kits.
+pub fn text() -> String {
+    let shelf = shelf();
+    if shelf.is_empty() {
+        return String::new();
+    }
+    let current = current().unwrap_or(0);
+    let mut out = String::from("# The playbooks: books, formations, plays, fronts and calls.\n");
+    out.push_str(&format!("books {} {}\n", shelf.len(), current));
+    for (bi, book) in shelf.iter().enumerate() {
+        out.push_str(&format!(
+            "book2 {} {} {}\n",
+            bi,
+            word(if book.source.is_empty() {
+                "SCRATCH"
+            } else {
+                &book.source
+            }),
+            word(&book.name)
+        ));
+        for (i, f) in book.offense.iter().enumerate() {
+            let spots: Vec<String> = f.spots.iter().map(|s| spot_text(*s)).collect();
+            let roles: Vec<String> = f.roles.iter().map(|r| r.index().to_string()).collect();
             out.push_str(&format!(
-                "play {} {} {} {}\n",
-                fi,
-                word(&p.name),
-                family_name(p.family),
-                parts.join("|")
+                "off2 {} {} {} {} {}\n",
+                bi,
+                i,
+                word(&f.name),
+                spots.join(" "),
+                roles.join(" ")
             ));
         }
-    }
-    for (i, f) in book.defense.iter().enumerate() {
-        let spots: Vec<String> = f.spots.iter().map(|s| spot_text(*s)).collect();
-        out.push_str(&format!("front {} {} {}\n", i, word(&f.name), spots.join(" ")));
-    }
-    for (fi, calls) in book.calls.iter().enumerate() {
-        for c in calls {
+        for (fi, plays) in book.plays.iter().enumerate() {
+            for p in plays {
+                out.push_str(&format!(
+                    "play2 {} {} {} {} {}\n",
+                    bi,
+                    fi,
+                    word(&p.name),
+                    family_name(p.family),
+                    routes_text(&p.routes)
+                ));
+            }
+        }
+        for (i, f) in book.defense.iter().enumerate() {
+            let spots: Vec<String> = f.spots.iter().map(|s| spot_text(*s)).collect();
+            let roles: Vec<String> = f.roles.iter().map(|r| r.index().to_string()).collect();
             out.push_str(&format!(
-                "call {} {} {}\n",
-                fi,
-                word(&c.name),
-                coverage_name(c.coverage)
+                "front2 {} {} {} {} {}\n",
+                bi,
+                i,
+                word(&f.name),
+                spots.join(" "),
+                roles.join(" ")
             ));
+        }
+        for (fi, calls) in book.calls.iter().enumerate() {
+            for c in calls {
+                out.push_str(&format!(
+                    "call2 {} {} {} {} {} {}\n",
+                    bi,
+                    fi,
+                    word(&c.name),
+                    coverage_name(c.coverage),
+                    u8::from(c.press),
+                    routes_text(&c.drops)
+                ));
+            }
         }
     }
     out
 }
 
-/// Read the designed book back. A line that does not parse is skipped, on the
-/// same rule as the rest of the save file: nothing a player typed by hand should
-/// stop the game starting.
+/// Read the shelf back. Lines that do not parse are skipped, on the same rule as
+/// the rest of the save file: nothing a player typed by hand should stop the
+/// game starting. The single-book lines a previous version wrote are read too,
+/// so a book drawn before the shelf existed is still there.
 pub fn parse(text: &str) {
-    let mut book: Option<DesignBook> = None;
+    let mut books: Vec<Option<DesignBook>> = Vec::new();
+    let mut legacy: Option<DesignBook> = None;
+    let mut current: usize = 0;
+
+    fn entry(books: &mut Vec<Option<DesignBook>>, slot: usize) -> &mut DesignBook {
+        while books.len() <= slot {
+            let n = books.len();
+            books.push(Some(DesignBook {
+                name: format!("BOOK {}", n + 1),
+                source: "SCRATCH".to_string(),
+                offense: Vec::new(),
+                plays: Vec::new(),
+                defense: Vec::new(),
+                calls: Vec::new(),
+            }));
+        }
+        if books[slot].is_none() {
+            books[slot] = Some(DesignBook {
+                name: format!("BOOK {}", slot + 1),
+                source: "SCRATCH".to_string(),
+                offense: Vec::new(),
+                plays: Vec::new(),
+                defense: Vec::new(),
+                calls: Vec::new(),
+            });
+        }
+        books[slot].as_mut().expect("just filled")
+    }
+
     for line in text.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -781,11 +1185,138 @@ pub fn parse(text: &str) {
         }
         let mut parts = line.split_whitespace();
         match parts.next() {
+            Some("books") => {
+                let _ = parts.next();
+                if let Some(c) = parts.next().and_then(|s| s.parse::<usize>().ok()) {
+                    current = c;
+                }
+            }
+            Some("book2") => {
+                let (Some(bi), Some(source), Some(name)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                let Some(bi) = bi.parse::<usize>().ok() else {
+                    continue;
+                };
+                let b = entry(&mut books, bi);
+                b.source = unword(source);
+                b.name = unword(name);
+            }
+            Some("off2") | Some("front2") => {
+                let defense = line.starts_with("front2");
+                let (Some(bi), Some(_i), Some(name)) =
+                    (parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                let Some(bi) = bi.parse::<usize>().ok() else {
+                    continue;
+                };
+                let rest: Vec<&str> = parts.collect();
+                if rest.len() != 14 {
+                    continue;
+                }
+                let spots: Vec<Vec2> = rest[..7].iter().filter_map(|s| parse_spot(s)).collect();
+                let roles: Vec<usize> = rest[7..]
+                    .iter()
+                    .filter_map(|s| s.parse::<usize>().ok())
+                    .collect();
+                if spots.len() != 7 || roles.len() != 7 {
+                    continue;
+                }
+                let mut arr = [Vec2::new(0.0, 0.0); 7];
+                arr.copy_from_slice(&spots);
+                if roles.iter().any(|r| *r >= 7) {
+                    continue;
+                }
+                let b = entry(&mut books, bi);
+                if defense {
+                    let mut roles_out = DefRole::ALL;
+                    for (slot, r) in roles.iter().enumerate() {
+                        roles_out[slot] = DefRole::ALL[*r];
+                    }
+                    b.defense.push(DesignFront {
+                        name: unword(name),
+                        spots: arr,
+                        roles: roles_out,
+                    });
+                    b.calls.push(Vec::new());
+                } else {
+                    let mut roles_out = OffRole::ALL;
+                    for (slot, r) in roles.iter().enumerate() {
+                        roles_out[slot] = OffRole::ALL[*r];
+                    }
+                    b.offense.push(DesignFormation {
+                        name: unword(name),
+                        spots: arr,
+                        roles: roles_out,
+                    });
+                    b.plays.push(Vec::new());
+                }
+            }
+            Some("play2") => {
+                let (Some(bi), Some(fi), Some(name), Some(fam)) =
+                    (parts.next(), parts.next(), parts.next(), parts.next())
+                else {
+                    continue;
+                };
+                let (Some(bi), Some(fi), Some(family)) = (
+                    bi.parse::<usize>().ok(),
+                    fi.parse::<usize>().ok(),
+                    parse_family(fam),
+                ) else {
+                    continue;
+                };
+                let Some(routes) = parts.next() else { continue };
+                let b = entry(&mut books, bi);
+                if let Some(list) = b.plays.get_mut(fi) {
+                    if list.len() < MAX_PLAYS {
+                        list.push(DesignPlay {
+                            name: unword(name),
+                            family,
+                            routes: parse_routes(routes),
+                        });
+                    }
+                }
+            }
+            Some("call2") => {
+                let (Some(bi), Some(fi), Some(name), Some(cov), Some(press), Some(drops)) = (
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                    parts.next(),
+                ) else {
+                    continue;
+                };
+                let (Some(bi), Some(fi), Some(coverage)) = (
+                    bi.parse::<usize>().ok(),
+                    fi.parse::<usize>().ok(),
+                    parse_coverage(cov),
+                ) else {
+                    continue;
+                };
+                let b = entry(&mut books, bi);
+                if let Some(list) = b.calls.get_mut(fi) {
+                    if list.len() < MAX_PLAYS {
+                        list.push(DesignCall {
+                            name: unword(name),
+                            coverage,
+                            press: press != "0",
+                            drops: parse_routes(drops),
+                        });
+                    }
+                }
+            }
+            // The single-book lines of the first version.
             Some("book") => {
                 let (Some(source), Some(name)) = (parts.next(), parts.next()) else {
                     continue;
                 };
-                book = Some(DesignBook {
+                legacy = Some(DesignBook {
                     name: unword(name),
                     source: unword(source),
                     offense: Vec::new(),
@@ -795,7 +1326,7 @@ pub fn parse(text: &str) {
                 });
             }
             Some("off") => {
-                let Some(b) = book.as_mut() else { continue };
+                let Some(b) = legacy.as_mut() else { continue };
                 let (Some(_i), Some(name)) = (parts.next(), parts.next()) else {
                     continue;
                 };
@@ -808,11 +1339,12 @@ pub fn parse(text: &str) {
                 b.offense.push(DesignFormation {
                     name: unword(name),
                     spots: arr,
+                    roles: OffRole::ALL,
                 });
                 b.plays.push(Vec::new());
             }
             Some("front") => {
-                let Some(b) = book.as_mut() else { continue };
+                let Some(b) = legacy.as_mut() else { continue };
                 let (Some(_i), Some(name)) = (parts.next(), parts.next()) else {
                     continue;
                 };
@@ -825,11 +1357,12 @@ pub fn parse(text: &str) {
                 b.defense.push(DesignFront {
                     name: unword(name),
                     spots: arr,
+                    roles: DefRole::ALL,
                 });
                 b.calls.push(Vec::new());
             }
             Some("play") => {
-                let Some(b) = book.as_mut() else { continue };
+                let Some(b) = legacy.as_mut() else { continue };
                 let (Some(fi), Some(name), Some(fam)) = (parts.next(), parts.next(), parts.next())
                 else {
                     continue;
@@ -838,8 +1371,12 @@ pub fn parse(text: &str) {
                     continue;
                 };
                 let Some(routes) = parts.next() else { continue };
-                let mut drawn: [Vec<Vec2>; 4] = Default::default();
-                for (slot, lane) in routes.split('|').enumerate().take(4) {
+                // The old lanes were the four eligible jobs in the order the
+                // book listed them; they are the same four spots by default.
+                let lanes: Vec<&str> = routes.split('|').collect();
+                let mut drawn: [Vec<Vec2>; 7] = Default::default();
+                for (n, lane) in lanes.into_iter().take(4).enumerate() {
+                    let slot = [3usize, 4, 5, 6][n];
                     drawn[slot] = lane.split(';').filter_map(parse_spot).collect();
                 }
                 if let Some(list) = b.plays.get_mut(fi) {
@@ -853,7 +1390,7 @@ pub fn parse(text: &str) {
                 }
             }
             Some("call") => {
-                let Some(b) = book.as_mut() else { continue };
+                let Some(b) = legacy.as_mut() else { continue };
                 let (Some(fi), Some(name), Some(cov)) = (parts.next(), parts.next(), parts.next())
                 else {
                     continue;
@@ -864,90 +1401,245 @@ pub fn parse(text: &str) {
                 };
                 if let Some(list) = b.calls.get_mut(fi) {
                     if list.len() < MAX_PLAYS {
-                        list.push(DesignCall {
-                            name: unword(name),
-                            coverage,
-                        });
+                        list.push(DesignCall::blank(unword(name), coverage));
                     }
                 }
             }
             _ => {}
         }
     }
-    if let Some(book) = book {
-        set(Some(book));
+
+    let mut shelf: Vec<DesignBook> = books.into_iter().flatten().collect();
+    // A book from the old format is a book, unless the file also has a shelf.
+    if shelf.is_empty() {
+        if let Some(old) = legacy {
+            shelf.push(old);
+        }
     }
+    shelf.truncate(MAX_BOOKS);
+    if shelf.is_empty() {
+        return;
+    }
+    let current = current.min(shelf.len() - 1);
+    mutate(|lib| {
+        *lib = Some(Library {
+            books: shelf,
+            current,
+        });
+    });
+}
+
+/// The saved store is one thing, so every test that touches it takes this lock.
+#[cfg(test)]
+pub(crate) fn test_store_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::sync::{Mutex, MutexGuard};
 
     fn store_lock() -> MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
+        test_store_lock()
+    }
+
+    /// Give every play in the book a drawn path, so the book is legal.
+    fn draw_paths(book: &mut DesignBook) {
+        for (fi, plays) in book.plays.iter_mut().enumerate() {
+            let spot = book.offense[fi].spots[3];
+            for p in plays {
+                if !p.has_path() {
+                    p.routes[3] = vec![Vec2::new(spot.x + 2.0, spot.y + 1.0)];
+                }
+            }
+        }
     }
 
     #[test]
-    fn a_book_copied_from_a_league_book_is_legal_once_its_plays_are_drawn() {
+    fn a_book_copied_from_a_league_book_is_legal_and_runs() {
         let _store = store_lock();
         clear();
-        let mut book = DesignBook::from_built_in(Book::WestCoast);
+        let book = DesignBook::from_built_in(Book::WestCoast);
         assert!(book.offense.len() >= MIN_FORMATIONS);
         assert!(book.offense.len() <= MAX_FORMATIONS);
         assert!(book.defense.len() >= MIN_FORMATIONS);
-        // The copied plays carry their routes, so the book is runnable as it
-        // arrives: no drawing needed before a club can use it.
         assert!(book.problems().is_empty(), "{:?}", book.problems());
         assert!(book.plays.iter().all(|p| !p.is_empty()));
-        // Every formation has the line the rulebook asks for.
-        for f in &book.offense {
-            assert_eq!(f.spots[OffRole::Lg.index()].x, 0.0);
-            assert_eq!(f.spots[OffRole::Rg.index()].x, 0.0);
-            assert!(f.spots[OffRole::Qb.index()].x < 0.0);
-        }
-        // ...and the plays it makes are plays the simulation can run.
-        set(Some(book.clone()));
-        let plays = offense_plays();
+        assert!(book.plays_of(0).iter().all(|p| p.has_path()));
+
+        let i = add(book);
+        let plays = offense_plays_at(i);
         assert!(!plays.is_empty());
         assert!(plays.iter().all(|p| p.assignments.len() == 7));
-        assert!(plays.iter().any(|p| matches!(p.assignment(OffRole::WideL), Some(Assign::Route { .. }))));
+        assert!(plays
+            .iter()
+            .any(|p| matches!(p.assignment(OffRole::WideL), Some(Assign::Route { .. }))));
+        // The formation is named by the book it belongs to, not by a single slot.
+        assert_eq!(plays[0].formation, Formation::Custom(form_id(i, 0)));
         clear();
     }
 
     #[test]
     fn a_formation_without_two_men_on_the_line_is_refused() {
-        let mut f = DesignFormation::blank(0, Formation::Pistol);
-        assert!(formation_problem(&f.spots).is_none());
-        // Slide a guard off the line: the book now breaks the rule of thumb.
-        f.spots[OffRole::Lg.index()] = Vec2::new(-1.0, -1.0);
+        let f = DesignFormation::blank(0, Formation::Pistol);
+        assert!(formation_problem_roles(&f.spots, &f.roles).is_none());
+        let mut g = f.clone();
+        g.spots[OffRole::Lg.index()] = Vec2::new(-1.0, -1.0);
         assert_eq!(
-            formation_problem(&f.spots),
+            formation_problem_roles(&g.spots, &g.roles),
             Some("TWO LINEMEN MUST BE ON THE LINE OF SCRIMMAGE")
         );
-        let mut g = DesignFormation::blank(0, Formation::Pistol);
-        g.spots[OffRole::Qb.index()] = Vec2::new(2.0, 0.0);
+        let mut h = f.clone();
+        h.spots[OffRole::Qb.index()] = Vec2::new(2.0, 0.0);
         assert_eq!(
-            formation_problem(&g.spots),
+            formation_problem_roles(&h.spots, &h.roles),
             Some("THE QUARTERBACK MUST BE BEHIND THE LINE")
         );
     }
 
     #[test]
-    fn the_shapes_the_editor_enforces_are_the_shapes_it_saves() {
+    fn the_line_rule_follows_the_job_and_not_the_spot() {
         let _store = store_lock();
         clear();
-        let mut full = DesignBook::from_built_in(Book::Balanced);
-        // Trim to the limit the editor allows and save it.
-        full.offense.truncate(MAX_FORMATIONS);
-        full.plays.truncate(MAX_FORMATIONS);
-        full.defense.truncate(MAX_FORMATIONS);
-        full.calls.truncate(MAX_FORMATIONS);
-        assert!(full.problems().is_empty(), "{:?}", full.problems());
-        set(Some(full.clone()));
+        let mut form = DesignFormation::blank(0, Formation::Pistol);
+        // The guards' jobs move onto the wide men's spots, and the wide men's
+        // jobs onto the guards' spots.
+        let lg = form.slot_of(OffRole::Lg);
+        let wide = form.slot_of(OffRole::WideL);
+        form.roles.swap(lg, wide);
+        // In the pistol the wide man is on the line, so the guard's job still
+        // has a man on the line and the rule still holds.
+        assert_eq!(form.alignment(OffRole::Lg).x, 0.0);
+        assert!(formation_problem_roles(&form.spots, &form.roles).is_none());
+        // Walk the man wearing the guard's job off the line: the spot the guard
+        // was born on is still on the line, and the rule still breaks.
+        let guard_now = form.slot_of(OffRole::Lg);
+        form.spots[guard_now] = Vec2::new(-1.0, -1.0);
+        assert_eq!(
+            formation_problem_roles(&form.spots, &form.roles),
+            Some("TWO LINEMEN MUST BE ON THE LINE OF SCRIMMAGE")
+        );
+
+        // A route is drawn on the spot the man is standing on, not on the job's
+        // old home, so a job moved around the board keeps his own path.
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        let slot = book.offense[0].slot_of(OffRole::Back);
+        let spot = book.offense[0].spots[slot];
+        book.offense[0].roles.swap(slot, 0);
+        let slot = book.offense[0].slot_of(OffRole::Back);
+        let spot_now = book.offense[0].spots[slot];
+        book.plays[0][0].routes[slot] = vec![Vec2::new(spot_now.x + 4.0, spot_now.y + 2.0)];
+        let i = add(book);
+        let plays = offense_plays_at(i);
+        match plays[0].assignment(OffRole::Back) {
+            Some(Assign::Route { points, .. }) => {
+                assert_eq!(points[0], Vec2::new(4.0, 2.0))
+            }
+            Some(Assign::Carry { points }) => assert_eq!(points[0], Vec2::new(4.0, 2.0)),
+            other => panic!("the drawn route did not become a path: {other:?}"),
+        }
+        let _ = spot;
+        clear();
+    }
+
+    #[test]
+    fn a_play_can_be_named_and_the_name_is_what_the_game_calls_it() {
+        let _store = store_lock();
+        clear();
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        book.plays[0][0].name = "MESH RIGHT".to_string();
+        book.plays[0][0].routes[3] = vec![Vec2::new(4.0, 1.0)];
+        book.offense[0].name = "TRIPS LEFT".to_string();
+        assert!(book.problems().is_empty(), "{:?}", book.problems());
+        let i = add(book);
+        let plays = offense_plays_at(i);
+        assert_eq!(plays[0].name, "MESH RIGHT");
+        assert_eq!(plays[0].concept, "TRIPS LEFT");
+        assert_eq!(formation_name(form_id(i, 0)), "TRIPS LEFT");
+        clear();
+    }
+
+    #[test]
+    fn a_drawn_coverage_becomes_a_drop_the_defense_can_play() {
+        let _store = store_lock();
+        clear();
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        let slot = book.defense[0].slot_of(DefRole::Mike);
+        let spot = book.defense[0].spots[slot];
+        book.calls[0][0].drops[slot] = vec![Vec2::new(spot.x + 6.0, spot.y + 2.0)];
+        book.calls[0][0].name = "MIKE DROP".to_string();
+        book.calls[0][0].press = true;
+        assert!(book.problems().is_empty(), "{:?}", book.problems());
+        let i = add(book);
+        let calls = defense_calls_at(i);
+        assert_eq!(calls[0].name, "MIKE DROP");
+        assert!(calls[0].press);
+        let (role, path) = calls[0]
+            .drops
+            .iter()
+            .find(|(r, _)| *r == DefRole::Mike)
+            .expect("the drawn drop was lost");
+        assert_eq!(*role, DefRole::Mike);
+        assert_eq!(path, &vec![Vec2::new(spot.x + 6.0, spot.y + 2.0)]);
+        clear();
+    }
+
+    #[test]
+    fn several_books_live_on_the_shelf_side_by_side() {
+        let _store = store_lock();
+        clear();
+        let mut a = DesignBook::blank();
+        draw_paths(&mut a);
+        a.name = "AIR BOOK".to_string();
+        a.plays[0][0].name = "AIR MESH".to_string();
+        a.plays[0][0].routes[0] = vec![Vec2::new(3.0, 1.0)];
+        let mut b = DesignBook::blank();
+        draw_paths(&mut b);
+        b.name = "RUN BOOK".to_string();
+        b.plays[0][0].name = "POWER LEFT".to_string();
+        b.plays[0][0].routes[0] = vec![Vec2::new(1.0, 0.0)];
+        let ia = add(a);
+        let ib = add(b);
+        assert_ne!(ia, ib);
+        assert_eq!(count(), 2);
+        assert_eq!(book_name(ia), "AIR BOOK");
+        assert_eq!(book_name(ib), "RUN BOOK");
+        assert_eq!(formation_name(form_id(ib, 0)), "FORMATION 1");
+        // The two books make different plays, and the caches tell them apart.
+        let pa = cached_offense(ia);
+        let pb = cached_offense(ib);
+        assert_ne!(pa[0].name, pb[0].name);
+        assert_eq!(pa[0].formation, Formation::Custom(form_id(ia, 0)));
+        assert_eq!(pb[0].formation, Formation::Custom(form_id(ib, 0)));
+        // Removing one leaves the other where it was.
+        remove(ia);
+        assert_eq!(count(), 1);
+        assert_eq!(book_name(0), "RUN BOOK");
+        clear();
+    }
+
+    #[test]
+    fn the_shelf_survives_the_save_file() {
+        let _store = store_lock();
+        clear();
+        let mut made = DesignBook::from_built_in(Book::Balanced);
+        made.offense.truncate(MAX_FORMATIONS);
+        made.plays.truncate(MAX_FORMATIONS);
+        made.defense.truncate(MAX_FORMATIONS);
+        made.calls.truncate(MAX_FORMATIONS);
+        made.name = "BACKYARD".to_string();
+        made.plays[0][0].name = "MY BEST PLAY".to_string();
+        made.calls[0][0].press = true;
+        made.offense[0].roles.swap(0, 3);
+        assert!(made.problems().is_empty(), "{:?}", made.problems());
+        add(made.clone());
 
         let written = text();
         clear();
@@ -955,43 +1647,39 @@ mod tests {
         parse(&written);
 
         let back = book().expect("the book came back empty");
-        assert_eq!(back.offense.len(), full.offense.len());
-        assert_eq!(back.defense.len(), full.defense.len());
-        assert_eq!(back.offense[0].name, full.offense[0].name);
-        assert_eq!(back.offense[0].spots, full.offense[0].spots);
-        assert_eq!(back.plays[0].len(), full.plays[0].len());
-        assert_eq!(back.calls[0].len(), full.calls[0].len());
-        assert_eq!(back.plays[0][0].routes, full.plays[0][0].routes);
+        assert_eq!(back.name, "BACKYARD");
+        assert_eq!(back.offense.len(), made.offense.len());
+        assert_eq!(back.defense.len(), made.defense.len());
+        assert_eq!(back.offense[0].name, made.offense[0].name);
+        assert_eq!(back.offense[0].spots, made.offense[0].spots);
+        assert_eq!(back.offense[0].roles, made.offense[0].roles);
+        assert_eq!(back.plays[0][0].name, "MY BEST PLAY");
+        assert_eq!(back.plays[0][0].routes, made.plays[0][0].routes);
+        assert_eq!(back.calls[0][0].press, true);
         assert!(has_book());
         clear();
     }
 
     #[test]
-    fn a_designed_play_stands_where_it_was_drawn_and_is_not_in_a_built_formation() {
+    fn a_book_from_the_first_version_still_loads() {
         let _store = store_lock();
         clear();
-        let mut book = DesignBook::blank();
-        // Draw the first play of the first formation: the back runs a flat, the
-        // slot goes deep.
-        let spots = book.offense[0].spots;
-        book.plays[0][0].routes[0] = vec![Vec2::new(1.0, 3.0), Vec2::new(3.0, 6.0)];
-        book.plays[0][0].routes[1] = vec![Vec2::new(6.0, 4.0), Vec2::new(14.0, 4.0)];
-        book.plays[1][0].routes[0] = vec![Vec2::new(4.0, 0.0)];
-        set(Some(book));
-
-        let plays = offense_plays();
-        let p = &plays[0];
-        assert_eq!(p.formation, Formation::Custom(0));
-        assert_eq!(p.alignment(OffRole::Qb), spots[OffRole::Qb.index()]);
-        assert_eq!(p.alignment(OffRole::WideL), spots[OffRole::WideL.index()]);
-        let route = match p.assignment(OffRole::Slot) {
-            Some(Assign::Route { points, .. }) => points.clone(),
-            other => panic!("the drawn route did not become a route: {other:?}"),
-        };
-        // The waypoints are relative to the slot's shoulders, not the line.
-        let spot = spots[OffRole::Slot.index()];
-        assert_eq!(route[1], Vec2::new(14.0 - spot.x, 4.0 - spot.y));
-        assert_eq!(p.formation.label(), "FORMATION 1");
+        let old = "\
+book WestCoast MY_PLAYBOOK
+off 0 FORMATION_1 0,-3, 0,-1, 0,1, -4,0, -1,3, 0,-12, 0,12,
+play 0 ZONE_READ QuickPass 1,0;3,0|4,2||
+front 0 FRONT_1 1,-2, 1,2, 3,0, 4,3, 6,-10, 6,10, 10,0,
+call 0 COVER_1 ManFree
+";
+        parse(old);
+        let b = book().expect("the old book did not load");
+        assert_eq!(b.name, "MY PLAYBOOK");
+        assert_eq!(b.offense.len(), 1);
+        assert_eq!(b.plays[0].len(), 1);
+        // The four old lanes land on the four eligible spots.
+        assert_eq!(b.plays[0][0].routes[3].len(), 2);
+        assert_eq!(b.plays[0][0].routes[4].len(), 1);
+        assert_eq!(b.defense[0].roles, DefRole::ALL);
         clear();
     }
 
@@ -1002,9 +1690,5 @@ mod tests {
         book.plays.truncate(1);
         let problems = book.problems();
         assert!(problems.iter().any(|p| p.contains("OFFENSE NEEDS")));
-        let book = DesignBook::blank();
-        for f in &book.offense {
-            assert_eq!(f.spots[OffRole::Lg.index()].x, 0.0);
-        }
     }
 }

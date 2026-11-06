@@ -292,6 +292,9 @@ pub enum CoverageJob {
     DeepZone { y: f32, depth: f32 },
     UnderZone { y: f32, depth: f32 },
     Spy(usize),
+    /// A drop drawn on the call sheet: he follows the path he was given instead
+    /// of one the coverage picked for him.
+    Drop,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -967,7 +970,32 @@ impl<'a> PlaySim<'a> {
                 self.players[i].job = CoverageJob::Rush;
             }
         }
-        let mut available: Vec<usize> = (7..14).filter(|i| !rushers.contains(i)).collect();
+        // A drop drawn on the call sheet is where that man goes. The front stands
+        // where it was drawn and the path is his, so the coverage behind the front
+        // is the coverage the player drew rather than the one the call implies.
+        let mut covered: Vec<usize> = Vec::new();
+        for i in 7..14 {
+            let role = DefRole::ALL[self.players[i].role_index];
+            let drawn = self
+                .def
+                .drops
+                .iter()
+                .find(|(r, path)| *r == role && !path.is_empty())
+                .map(|(_, path)| path.clone());
+            if let Some(path) = drawn {
+                let (los, ball_y, dirf) = (self.los, self.setup.ball_y, self.dirf());
+                self.players[i].route = path
+                    .iter()
+                    .map(|q| Vec2::new(los + dirf * q.x, ball_y + q.y))
+                    .collect();
+                self.players[i].waypoint = 0;
+                self.players[i].job = CoverageJob::Drop;
+                covered.push(i);
+            }
+        }
+        let mut available: Vec<usize> = (7..14)
+            .filter(|i| !rushers.contains(i) && !covered.contains(i))
+            .collect();
         // Prefer cornerbacks and safeties for coverage duty, linebackers last.
         let rank = |sim: &PlaySim, i: usize| -> u8 {
             match DefRole::ALL[sim.players[i].role_index] {
@@ -1054,6 +1082,35 @@ impl<'a> PlaySim<'a> {
                 self.los + self.dirf() * depth,
                 clamp(self.setup.ball_y + y, -FIELD_HALF_WIDTH + 1.0, FIELD_HALF_WIDTH - 1.0),
             );
+        }
+
+        // Press puts the corners up on the man across from them whether the men
+        // behind them are in man or zone: that is the technique, and it is the
+        // thing the trigger at the line changes.
+        if self.def.press {
+            for i in 7..14 {
+                let role = DefRole::ALL[self.players[i].role_index];
+                if !matches!(role, DefRole::CbL | DefRole::CbR) {
+                    continue;
+                }
+                if self.players[i].job == CoverageJob::Drop {
+                    continue;
+                }
+                let mine = self.players[i].pos.y;
+                let across = self
+                    .eligible_indices()
+                    .into_iter()
+                    .min_by(|&a, &b| {
+                        let da = (self.players[a].pos.y - mine).abs();
+                        let db = (self.players[b].pos.y - mine).abs();
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                let y = across.map(|e| self.players[e].pos.y).unwrap_or(mine);
+                self.players[i].pos = Vec2::new(
+                    self.los + self.dirf() * 1.1,
+                    clamp(y, -FIELD_HALF_WIDTH + 0.8, FIELD_HALF_WIDTH - 0.8),
+                );
+            }
         }
     }
 
@@ -2504,6 +2561,35 @@ impl<'a> PlaySim<'a> {
                         self.hold_zone(i, y, depth, dt);
                     }
                 }
+                CoverageJob::Drop => {
+                    if let Some(landing) = ball_landing {
+                        let spd = self.speed_cap(i);
+                        self.steer(i, landing, spd, dt);
+                    } else {
+                        let next = self.players[i]
+                            .route
+                            .get(self.players[i].waypoint)
+                            .copied();
+                        match next {
+                            Some(t) => {
+                                let spd = self.speed_cap(i) * 0.9;
+                                self.steer(i, t, spd, dt);
+                                if self.players[i].pos.dist(t) < 0.55 {
+                                    self.players[i].waypoint += 1;
+                                }
+                            }
+                            None => {
+                                // At the end of the drawn drop, he plays the ball:
+                                // a drawn path is where a man goes, not a leash.
+                                if let Some(c) = carrier {
+                                    let spd = self.speed_cap(i);
+                                    let t = self.players[c].pos;
+                                    self.steer(i, t, spd, dt);
+                                }
+                            }
+                        }
+                    }
+                }
                 CoverageJob::Spy(target) => {
                     let pos = self.players[target].pos;
                     let spd = self.speed_cap(i) * 0.9;
@@ -3779,6 +3865,37 @@ impl<'a> PlaySim<'a> {
             t: self.t,
             text: format!("Defense checks to {name}"),
         });
+    }
+
+    /// Press or off the receivers: the trigger at the line.
+    ///
+    /// The corners are lined up across from the man in front of them with a
+    /// hand's worth of cushion, and the defense is re-lined in place: the offense
+    /// keeps the ground it is standing on, because it is the defense that is
+    /// changing its mind. Only before the snap.
+    pub fn set_press(&mut self, press: bool) {
+        if self.phase != Phase::PreSnap || self.def.press == press {
+            return;
+        }
+        self.def.press = press;
+        self.assign_coverage();
+        self.capture_presnap();
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!(
+                "Corners {}",
+                if press {
+                    "press at the line"
+                } else {
+                    "off the receivers"
+                }
+            ),
+        });
+    }
+
+    /// Whether the corners are up at the line.
+    pub fn press(&self) -> bool {
+        self.def.press
     }
 
     pub fn set_human_defender(&mut self, who: Option<usize>) {
@@ -5143,6 +5260,63 @@ mod tests {
             break;
         }
         assert!(seen, "the count never caught the offense in 200 seeds");
+    }
+
+    #[test]
+    fn the_trigger_flips_the_corners_between_press_and_off() {
+        let (off, def) = teams();
+        let book = playbook();
+        let call = defensive_playbook()
+            .into_iter()
+            .find(|d| !d.press && d.coverage.is_man())
+            .expect("no off man call");
+        let s = setup(40.0, 1, 10.0, 9);
+        let mut sim = PlaySim::new(&off, &def, &book[0], &call, &s);
+        let corner = |sim: &PlaySim| {
+            (7..14)
+                .find(|&i| DefRole::ALL[sim.players[i].role_index] == DefRole::CbL)
+                .map(|i| sim.players[i].pos.x)
+                .expect("no left corner")
+        };
+        let off_first = corner(&sim);
+        assert!(!sim.press());
+        sim.set_press(true);
+        assert!(sim.press());
+        let pressed = corner(&sim);
+        assert!(
+            pressed < off_first - 1.0,
+            "press should be up at the line: {pressed} against {off_first}"
+        );
+        sim.set_press(false);
+        assert!(!sim.press());
+        assert!((corner(&sim) - off_first).abs() < 0.01, "the corner did not back off again");
+        // After the snap the corners are committed.
+        sim.request_snap();
+        sim.set_press(true);
+        assert!(!sim.press(), "a snap should end the technique change");
+    }
+
+    #[test]
+    fn a_drop_drawn_on_the_call_sheet_is_where_the_defender_goes() {
+        let (off, def) = teams();
+        let book = playbook();
+        let mut call = defensive_playbook()
+            .into_iter()
+            .find(|d| d.coverage == Coverage::Cover2)
+            .expect("no cover two");
+        call.drops = vec![(DefRole::Safety, vec![Vec2::new(9.0, -6.0)])];
+        let s = setup(40.0, 1, 10.0, 21);
+        let sim = PlaySim::new(&off, &def, &book[0], &call, &s);
+        let safety = (7..14)
+            .find(|&i| DefRole::ALL[sim.players[i].role_index] == DefRole::Safety)
+            .expect("no safety");
+        assert_eq!(sim.players[safety].job, CoverageJob::Drop);
+        let path = sim.players[safety].route.clone();
+        assert_eq!(path.len(), 1, "the drawn drop was not laid out: {path:?}");
+        assert!(
+            (path[0].x - (s.los + 9.0)).abs() < 0.01,
+            "the drop is not nine yards past the line: {path:?}"
+        );
     }
 
     #[test]

@@ -30,8 +30,8 @@ pub fn defense_book() -> &'static [DefCall] {
 
 /// The offense a club runs: its own book, not the league's whole catalog.
 pub fn offense_book_for(book: Book) -> &'static [Play] {
-    if book == Book::Custom {
-        return crate::design::cached_offense();
+    if let Book::Custom(slot) = book {
+        return crate::design::cached_offense(slot as usize);
     }
     let all = OFF_BOOKS.get_or_init(|| Book::ALL.iter().map(|b| playbook_for(*b)).collect());
     &all[book.index()]
@@ -39,8 +39,8 @@ pub fn offense_book_for(book: Book) -> &'static [Play] {
 
 /// The defense a club plays.
 pub fn defense_book_for(book: Book) -> &'static [DefCall] {
-    if book == Book::Custom {
-        return crate::design::cached_defense();
+    if let Book::Custom(slot) = book {
+        return crate::design::cached_defense(slot as usize);
     }
     let all =
         DEF_BOOKS.get_or_init(|| Book::ALL.iter().map(|b| defensive_playbook_for(*b)).collect());

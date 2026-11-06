@@ -722,6 +722,14 @@ impl Broadcast {
                     Vec2::new(sim.los + dirf * depth.max(1.0), y),
                     Some(4.5),
                 ),
+                // A drawn drop: the line goes where the sheet sends him.
+                CoverageJob::Drop => (
+                    p.route.last().copied().unwrap_or(Vec2::new(
+                        p.pos.x + dirf * 3.5,
+                        p.pos.y,
+                    )),
+                    None,
+                ),
                 _ => (Vec2::new(p.pos.x + dirf * 3.5, p.pos.y), None),
             };
             if let (Some((x0, y0, _)), Some((x1, y1, _))) = (

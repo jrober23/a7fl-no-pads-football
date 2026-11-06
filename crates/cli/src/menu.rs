@@ -2097,11 +2097,14 @@ fn kit_editor(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Optio
 }
 
 // ---------------------------------------------------------------------------
-// The playbook editor: formations of circles, fronts of X's, and the plays drawn
-// on them
+// The playbook editor: a shelf of books, formations of circles, fronts of X's,
+// the plays drawn on them and the coverage drawn behind each call.
 // ---------------------------------------------------------------------------
 
-use nopads_core::design::{self, DesignBook, DesignCall, DesignPlay, MAX_FORMATIONS, MAX_PLAYS};
+use nopads_core::design::{
+    self, DesignBook, DesignCall, DesignFormation, DesignFront, DesignPlay, MAX_BOOKS,
+    MAX_FORMATIONS, MAX_PLAYS,
+};
 use nopads_core::math::Vec2;
 use nopads_core::playbook::{Coverage, DefRole, Formation, OffRole, PlayFamily};
 
@@ -2157,6 +2160,48 @@ fn cursor_box(frame: &mut Frame, x: i8, y: i8) {
     frame.fill_rect(px + r, py - r, 1, r * 2, ui::ACCENT);
 }
 
+/// The jobs on the seven spots, as the screen keeps them: the index into the
+/// job's own list, so one board can be drawn for either side of the ball.
+fn off_bits(roles: &[OffRole; 7]) -> [u8; 7] {
+    let mut out = [0u8; 7];
+    for (i, r) in roles.iter().enumerate() {
+        out[i] = r.index() as u8;
+    }
+    out
+}
+
+fn def_bits(roles: &[DefRole; 7]) -> [u8; 7] {
+    let mut out = [0u8; 7];
+    for (i, r) in roles.iter().enumerate() {
+        out[i] = r.index() as u8;
+    }
+    out
+}
+
+fn off_roles(bits: &[u8; 7]) -> [OffRole; 7] {
+    let mut out = OffRole::ALL;
+    for (i, b) in bits.iter().enumerate() {
+        out[i] = OffRole::ALL[(*b as usize).min(6)];
+    }
+    out
+}
+
+fn def_roles(bits: &[u8; 7]) -> [DefRole; 7] {
+    let mut out = DefRole::ALL;
+    for (i, b) in bits.iter().enumerate() {
+        out[i] = DefRole::ALL[(*b as usize).min(6)];
+    }
+    out
+}
+
+fn job_label(bits: &[u8; 7], slot: usize, defense: bool) -> &'static str {
+    if defense {
+        DefRole::ALL[(bits[slot] as usize).min(6)].label()
+    } else {
+        OffRole::ALL[(bits[slot] as usize).min(6)].label()
+    }
+}
+
 fn draw_field(frame: &mut Frame, defense: bool) {
     night(frame);
     frame.fill_rect(
@@ -2187,10 +2232,16 @@ fn draw_field(frame: &mut Frame, defense: bool) {
     frame.fill_rect(los - 1, FIELD_T, 3, FIELD_B - FIELD_T, ui::EDGE);
 }
 
-fn draw_men(frame: &mut Frame, spots: &[Vec2; 7], sel: Option<usize>, defense: bool) {
-    for role in OffRole::ALL {
-        let (px, py) = field_px(spots[role.index()].x, spots[role.index()].y);
-        let lit = sel == Some(role.index());
+fn draw_men(
+    frame: &mut Frame,
+    spots: &[Vec2; 7],
+    roles: &[u8; 7],
+    sel: Option<usize>,
+    defense: bool,
+) {
+    for slot in 0..7 {
+        let (px, py) = field_px(spots[slot].x, spots[slot].y);
+        let lit = sel == Some(slot);
         let color = if lit { ui::ACCENT } else { ui::PAPER };
         if defense {
             cross(frame, px, py, if lit { 6 } else { 5 }, color);
@@ -2201,18 +2252,14 @@ fn draw_men(frame: &mut Frame, spots: &[Vec2; 7], sel: Option<usize>, defense: b
             ring(frame, px, py, 10, ui::ACCENT);
         }
         // His job, beside him: a circle is a man, and the lettering is which man.
-        let label = if defense {
-            DefRole::ALL[role.index()].label()
-        } else {
-            role.label()
-        };
+        let label = job_label(roles, slot, defense);
         frame.text_shadowed(px + 13, py - 3, label, 1, color, 1);
     }
 }
 
-fn draw_routes(frame: &mut Frame, spots: &[Vec2; 7], routes: &[Vec<Vec2>; 4], sel: usize) {
-    for (slot, role) in design::RECEIVERS.iter().enumerate() {
-        let spot = spots[role.index()];
+fn draw_routes(frame: &mut Frame, spots: &[Vec2; 7], routes: &[Vec<Vec2>; 7], sel: usize) {
+    for slot in 0..7 {
+        let spot = spots[slot];
         let color = if slot == sel { ui::ACCENT } else { ui::GOOD };
         let mut prev = field_px(spot.x, spot.y);
         for p in &routes[slot] {
@@ -2224,13 +2271,32 @@ fn draw_routes(frame: &mut Frame, spots: &[Vec2; 7], routes: &[Vec<Vec2>; 4], se
     }
 }
 
+fn draw_drops(frame: &mut Frame, spots: &[Vec2; 7], drops: &[Vec<Vec2>; 7], sel: usize) {
+    for slot in 0..7 {
+        if drops[slot].is_empty() {
+            continue;
+        }
+        let spot = spots[slot];
+        let color = if slot == sel { ui::ACCENT } else { ui::GOOD };
+        let mut prev = field_px(spot.x, spot.y);
+        for p in &drops[slot] {
+            let next = field_px(p.x, p.y);
+            frame.line(prev.0, prev.1, next.0, next.1, color, 2);
+            prev = next;
+        }
+        ring(frame, prev.0, prev.1, 4, color);
+    }
+}
+
 /// Draw one formation or front on the grid. A picks up the man under the
-/// cursor, the stick carries him, A sets him down.
+/// cursor, the stick carries him, A sets him down, Y changes which job stands
+/// on the spot he is on.
 fn spots_editor(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     title: &str,
     spots: &mut [Vec2; 7],
+    roles: &mut [u8; 7],
     defense: bool,
 ) -> Option<()> {
     let mut sel = 0usize;
@@ -2260,8 +2326,8 @@ fn spots_editor(
                 cursor.1 = (cursor.1 - d).clamp(design::GRID_Y.0, design::GRID_Y.1);
             }
         }
+        let cell = Vec2::new(cursor.0 as f32, cursor.1 as f32);
         if input.pressed.a {
-            let cell = Vec2::new(cursor.0 as f32, cursor.1 as f32);
             if !held {
                 if let Some(i) = spots.iter().position(|s| *s == cell) {
                     sel = i;
@@ -2272,26 +2338,41 @@ fn spots_editor(
                 held = false;
             }
         }
+        // Y gives the man under the cursor the next job across, swapping with
+        // whoever was doing it: the seven jobs stay seven jobs.
+        if input.pressed.y {
+            let under = if held {
+                Some(sel)
+            } else {
+                spots.iter().position(|s| *s == cell)
+            };
+            if let Some(here) = under {
+                let next = (roles[here] + 1) % 7;
+                if let Some(other) = roles.iter().position(|r| *r == next) {
+                    roles.swap(here, other);
+                }
+                sel = here;
+            }
+        }
         let problem = if defense {
             design::front_problem(spots)
         } else {
-            design::formation_problem(spots)
+            design::formation_problem_roles(spots, &off_roles(roles))
         };
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, defense);
-        draw_men(&mut frame, spots, Some(sel), defense);
+        draw_men(&mut frame, spots, roles, Some(sel), defense);
         cursor_box(&mut frame, cursor.0, cursor.1);
         ui::heading(&mut frame, UI_W as i32 / 2, 16, title, ui::T_BODY, ui::ACCENT);
-        let man = if defense {
-            DefRole::ALL[sel].label()
-        } else {
-            OffRole::ALL[sel].label()
-        };
         centered_in(
             &mut frame,
             320,
             40,
-            &format!("{} {}", if held { "CARRYING" } else { "SET" }, man),
+            &format!(
+                "{} {}  -  [Y] CHANGES THE JOB",
+                if held { "CARRYING" } else { "SET" },
+                job_label(roles, sel, defense)
+            ),
             1,
             if held { accent() } else { dim() },
         );
@@ -2313,9 +2394,9 @@ fn spots_editor(
         footer(
             &mut frame,
             if held {
-                "[STICK] CARRY HIM   [A] SET HIM DOWN   [B] DONE"
+                "[STICK] CARRY HIM   [A] SET HIM DOWN   [Y] JOB   [B] DONE"
             } else {
-                "[STICK] CURSOR   [A] PICK UP A MAN   [B] DONE"
+                "[STICK] CURSOR   [A] PICK UP A MAN   [Y] JOB   [B] DONE"
             },
         );
         if !view.show_ui(&mut frame, &[]) {
@@ -2325,18 +2406,273 @@ fn spots_editor(
     }
 }
 
-/// Draw the four eligible men's paths on one formation. A puts a waypoint down
-/// at the cursor, X moves to the next man, Y flips the play between a pass and a
-/// run, Select wipes the path being drawn.
+/// Draw one man's path with the stick. A puts the pen down, every yard the stick
+/// walks the path picks up a waypoint, A lifts the pen again.
 fn play_editor(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
-    form: &nopads_core::design::DesignFormation,
+    form: &DesignFormation,
     play: &mut DesignPlay,
 ) -> Option<()> {
-    let start = form.spots[design::RECEIVERS[0].index()];
+    let bits = off_bits(&form.roles);
     let mut sel = 0usize;
-    let mut cursor = (start.x as i8, start.y as i8);
+    let mut cursor = (form.spots[0].x as i8, form.spots[0].y as i8);
+    let mut pen = false;
+    let mut nav_x = Repeat::default();
+    let mut nav_y = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        let mut moved = false;
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 {
+                cursor.0 = (cursor.0 + d).clamp(design::GRID_X.0, design::GRID_X.1);
+                moved = true;
+            }
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                cursor.1 = (cursor.1 - d).clamp(design::GRID_Y.0, design::GRID_Y.1);
+                moved = true;
+            }
+        }
+        let cell = Vec2::new(cursor.0 as f32, cursor.1 as f32);
+        if input.pressed.x {
+            sel = (sel + 1) % 7;
+            let spot = form.spots[sel];
+            cursor = (spot.x as i8, spot.y as i8);
+            pen = false;
+        }
+        if input.pressed.y {
+            play.family = if play.family.is_pass() {
+                PlayFamily::RunInside
+            } else {
+                PlayFamily::QuickPass
+            };
+        }
+        if input.pressed.select {
+            play.routes[sel].clear();
+            pen = false;
+        }
+        if input.pressed.a {
+            pen = !pen;
+            if pen {
+                if play.routes[sel].is_empty() {
+                    let spot = form.spots[sel];
+                    play.routes[sel].push(Vec2::new(spot.x, spot.y));
+                }
+                if play.routes[sel].last() != Some(&cell) {
+                    play.routes[sel].push(cell);
+                }
+            }
+        }
+        if pen && moved && play.routes[sel].last() != Some(&cell) {
+            // One waypoint a yard as the stick walks: the path is what the thumb
+            // drew, not a line between two far corners.
+            play.routes[sel].push(cell);
+        }
+        let role = form.roles[sel];
+        let drawn = play.has_path();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, false);
+        draw_routes(&mut frame, &form.spots, &play.routes, sel);
+        draw_men(&mut frame, &form.spots, &bits, None, false);
+        if let Some(p) = play.routes[sel].last() {
+            let a = field_px(p.x, p.y);
+            let b = field_px(cursor.0 as f32, cursor.1 as f32);
+            frame.line(a.0, a.1, b.0, b.1, accent().lerp(backdrop(), 0.55), 1);
+        }
+        cursor_box(&mut frame, cursor.0, cursor.1);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &play.name, ui::T_BODY, ui::ACCENT);
+        centered_in(
+            &mut frame,
+            320,
+            40,
+            &format!(
+                "DRAWING {} - {} - {}",
+                role.label(),
+                if play.family.is_pass() { "PASS" } else { "RUN" },
+                if pen { "PEN DOWN" } else { "PEN UP" }
+            ),
+            1,
+            if pen { accent() } else { dim() },
+        );
+        match (drawn, play.family.is_pass()) {
+            (false, _) => centered_in(
+                &mut frame,
+                320,
+                FIELD_B + 10,
+                "EVERY PLAY NEEDS A DRAWN PATH: [A] PUTS THE PEN DOWN",
+                1,
+                ui::DANGER,
+            ),
+            (true, true) => centered_in(
+                &mut frame,
+                320,
+                FIELD_B + 10,
+                "EVERY YARD YOU DRAW IS A WAYPOINT: THE ROUTE STARTS AT HIS FEET",
+                1,
+                dim(),
+            ),
+            (true, false) => centered_in(
+                &mut frame,
+                320,
+                FIELD_B + 10,
+                "ON A RUN THE BACK'S PATH IS THE BALL; THE OTHERS BLOCK ALONG THEIRS",
+                1,
+                dim(),
+            ),
+        }
+        footer(
+            &mut frame,
+            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// Draw the coverage behind a call: the same pen, one defender at a time, with
+/// the press toggle on the button beside it.
+fn call_editor(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    front: &DesignFront,
+    call: &mut DesignCall,
+) -> Option<()> {
+    let bits = def_bits(&front.roles);
+    let mut sel = 0usize;
+    let mut cursor = (front.spots[0].x as i8, front.spots[0].y as i8);
+    let mut pen = false;
+    let mut nav_x = Repeat::default();
+    let mut nav_y = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        let mut moved = false;
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 {
+                cursor.0 = (cursor.0 + d).clamp(0, design::GRID_X.1);
+                moved = true;
+            }
+        }
+        if let d = nav_y.step(input.stick.y, dt) {
+            if d != 0 {
+                cursor.1 = (cursor.1 - d).clamp(design::GRID_Y.0, design::GRID_Y.1);
+                moved = true;
+            }
+        }
+        let cell = Vec2::new(cursor.0 as f32, cursor.1 as f32);
+        if input.pressed.x {
+            sel = (sel + 1) % 7;
+            let spot = front.spots[sel];
+            cursor = (spot.x as i8, spot.y as i8);
+            pen = false;
+        }
+        if input.pressed.y {
+            call.press = !call.press;
+        }
+        if input.pressed.select {
+            call.drops[sel].clear();
+            pen = false;
+        }
+        if input.pressed.a {
+            pen = !pen;
+            if pen {
+                if call.drops[sel].is_empty() {
+                    let spot = front.spots[sel];
+                    call.drops[sel].push(Vec2::new(spot.x, spot.y));
+                }
+                if call.drops[sel].last() != Some(&cell) {
+                    call.drops[sel].push(cell);
+                }
+            }
+        }
+        if pen && moved && call.drops[sel].last() != Some(&cell) {
+            call.drops[sel].push(cell);
+        }
+        let role = front.roles[sel];
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, true);
+        draw_drops(&mut frame, &front.spots, &call.drops, sel);
+        draw_men(&mut frame, &front.spots, &bits, Some(sel), true);
+        if let Some(p) = call.drops[sel].last() {
+            let a = field_px(p.x, p.y);
+            let b = field_px(cursor.0 as f32, cursor.1 as f32);
+            frame.line(a.0, a.1, b.0, b.1, accent().lerp(backdrop(), 0.55), 1);
+        }
+        cursor_box(&mut frame, cursor.0, cursor.1);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &call.name, ui::T_BODY, ui::ACCENT);
+        centered_in(
+            &mut frame,
+            320,
+            40,
+            &format!(
+                "{} - {} - {} - {}",
+                role.label(),
+                call.coverage.label(),
+                if call.press { "PRESS" } else { "OFF" },
+                if pen { "PEN DOWN" } else { "PEN UP" }
+            ),
+            1,
+            if pen { accent() } else { dim() },
+        );
+        centered_in(
+            &mut frame,
+            320,
+            FIELD_B + 10,
+            if call.has_drop() {
+                "DRAW WHERE HE DROPS: THE COVERAGE FOLLOWS THE PATH YOU DREW"
+            } else {
+                "NO DROP DRAWN: THE COVERAGE PICKS WHERE HE GOES"
+            },
+            1,
+            if call.has_drop() { dim() } else { ui::DANGER },
+        );
+        footer(
+            &mut frame,
+            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PRESS/OFF   [SELECT] WIPE   [B] DONE",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Naming: a pad has no keyboard, so the letters are on the screen
+// ---------------------------------------------------------------------------
+
+const KEY_ROWS: [&str; 6] = ["ABCDEF", "GHIJKL", "MNOPQR", "STUVWX", "YZ0123", "456789"];
+const KEY_ACTIONS: [&str; 3] = ["SPACE", "DEL", "DONE"];
+const NAME_MAX: usize = 14;
+
+fn text_editor(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    title: &str,
+    prompt: &str,
+    text: &mut String,
+) -> Option<()> {
+    let mut row = 0usize;
+    let mut col = 0usize;
     let mut nav_x = Repeat::default();
     let mut nav_y = Repeat::default();
     let mut last = Instant::now();
@@ -2351,90 +2687,87 @@ fn play_editor(
         }
         if let d = nav_x.step(input.stick.x, dt) {
             if d != 0 {
-                cursor.0 = (cursor.0 + d).clamp(design::GRID_X.0, design::GRID_X.1);
+                col = step_index(col, 6, d);
             }
         }
         if let d = nav_y.step(input.stick.y, dt) {
             if d != 0 {
-                cursor.1 = (cursor.1 - d).clamp(design::GRID_Y.0, design::GRID_Y.1);
+                row = step_index(row, 7, -d);
             }
         }
-        if input.pressed.x {
-            sel = (sel + 1) % design::RECEIVERS.len();
-            let spot = form.spots[design::RECEIVERS[sel].index()];
-            cursor = (spot.x as i8, spot.y as i8);
-        }
-        if input.pressed.y {
-            play.family = if play.family.is_pass() {
-                PlayFamily::RunInside
-            } else {
-                PlayFamily::QuickPass
-            };
-        }
-        if input.pressed.select {
-            play.routes[sel].clear();
+        if input.pressed.start {
+            return Some(());
         }
         if input.pressed.a {
-            let cell = Vec2::new(cursor.0 as f32, cursor.1 as f32);
-            if play.routes[sel].last() != Some(&cell) {
-                play.routes[sel].push(cell);
+            if row < KEY_ROWS.len() {
+                if let Some(ch) = KEY_ROWS[row].chars().nth(col) {
+                    if text.len() < NAME_MAX {
+                        text.push(ch);
+                    }
+                }
+            } else {
+                match col {
+                    0 => {
+                        if text.len() < NAME_MAX && !text.is_empty() {
+                            text.push(' ');
+                        }
+                    }
+                    1 => {
+                        text.pop();
+                    }
+                    _ => return Some(()),
+                }
             }
         }
-        let role = design::RECEIVERS[sel];
-        let drawn = play.has_path();
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_field(&mut frame, false);
-        draw_routes(&mut frame, &form.spots, &play.routes, sel);
-        draw_men(&mut frame, &form.spots, None, false);
-        // A live guide from the last waypoint to the cursor.
-        if let Some(p) = play.routes[sel].last() {
-            let a = field_px(p.x, p.y);
-            let b = field_px(cursor.0 as f32, cursor.1 as f32);
-            frame.line(a.0, a.1, b.0, b.1, accent().lerp(backdrop(), 0.55), 1);
+        night(&mut frame);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, title, ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, prompt, 1, dim());
+        let shown = format!("[ {} ]", text);
+        centered_in(&mut frame, 320, 62, &shown, 1, ui::PAPER);
+        let x0 = 110;
+        let y0 = 96;
+        let cw = 70;
+        let chh = 30;
+        for (r, keys) in KEY_ROWS.iter().enumerate() {
+            for (c, ch) in keys.chars().enumerate() {
+                let x = x0 + c as i32 * cw;
+                let y = y0 + r as i32 * chh;
+                let lit = row == r && col == c;
+                frame.fill_rect(x, y, 60, 20, if lit { ui::ACCENT } else { Rgb::hex(0x1B2430) });
+                frame.text_shadowed(
+                    x + 24,
+                    y + 4,
+                    &ch.to_string(),
+                    1,
+                    if lit { ui::INK } else { ui::PAPER },
+                    1,
+                );
+            }
         }
-        cursor_box(&mut frame, cursor.0, cursor.1);
-        ui::heading(&mut frame, UI_W as i32 / 2, 16, &play.name, ui::T_BODY, ui::ACCENT);
-        centered_in(
-            &mut frame,
-            320,
-            40,
-            &format!(
-                "DRAWING {} - {}",
-                role.label(),
-                if play.family.is_pass() { "PASS" } else { "RUN" }
-            ),
-            1,
-            if drawn { accent() } else { dim() },
-        );
-        match (drawn, play.family.is_pass()) {
-            (false, _) => centered_in(
-                &mut frame,
-                320,
-                FIELD_B + 10,
-                "EVERY PLAY NEEDS A DRAWN PATH",
+        for (c, action) in KEY_ACTIONS.iter().enumerate() {
+            let x = x0 + c as i32 * 140;
+            let y = y0 + 6 * chh;
+            let lit = row == 6 && col == c;
+            frame.fill_rect(
+                x,
+                y,
+                130,
+                20,
+                if lit { ui::ACCENT } else { Rgb::hex(0x1B2430) },
+            );
+            frame.text_shadowed(
+                x + 12,
+                y + 4,
+                action,
                 1,
-                ui::DANGER,
-            ),
-            (true, true) => centered_in(
-                &mut frame,
-                320,
-                FIELD_B + 10,
-                "A PATH IS A ROUTE, STARTING FROM WHERE THE MAN LINES UP",
+                if lit { ui::INK } else { ui::PAPER },
                 1,
-                dim(),
-            ),
-            (true, false) => centered_in(
-                &mut frame,
-                320,
-                FIELD_B + 10,
-                "THE BACK'S PATH IS THE RUN; THE OTHERS BLOCK ALONG THEIRS",
-                1,
-                dim(),
-            ),
+            );
         }
         footer(
             &mut frame,
-            "[STICK] CURSOR   [A] WAYPOINT   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
+            "[STICK] LETTERS   [A] TYPE   [B] KEEP IT AS IT IS   [START] DONE",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2442,6 +2775,20 @@ fn play_editor(
         beat();
     }
 }
+
+fn name_something(view: &mut View, pad: &mut Option<&mut Pad>, what: &str, name: &mut String) -> Option<()> {
+    text_editor(
+        view,
+        pad,
+        &format!("NAME THE {}", what),
+        "STICK TO A LETTER, [A] TO TYPE IT",
+        name,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// The shelf of books
+// ---------------------------------------------------------------------------
 
 fn keep_book(book: &DesignBook) {
     design::set(Some(book.clone()));
@@ -2460,11 +2807,7 @@ fn book_status(book: &DesignBook) -> (String, Rgb) {
 
 /// Where a designed book starts: a blank sheet or a copy of one the league runs.
 fn start_book(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
-    let books: Vec<Book> = Book::ALL
-        .iter()
-        .copied()
-        .filter(|b| *b != Book::Custom)
-        .collect();
+    let books: Vec<Book> = Book::ALL.to_vec();
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -2513,14 +2856,19 @@ fn start_book(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             } else {
                 DesignBook::from_built_in(books[pick - 1])
             };
-            keep_book(&made);
+            if design::count() >= MAX_BOOKS {
+                return Some(());
+            }
+            let i = design::add(made);
+            design::select(i);
+            save_custom();
             return Some(());
         }
         beat();
     }
 }
 
-/// The three things a book has, and the way to throw it away.
+/// The shelf: every book the player has drawn, and the way to start another.
 fn design_hub(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
     let mut pick = 0usize;
     let mut nav = Repeat::default();
@@ -2535,30 +2883,28 @@ fn design_hub(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         if input.pressed.b {
             return Some(());
         }
-        let book = design::book();
-        let (rows, note) = match &book {
-            None => (
-                vec![("START A PLAYBOOK", "BLANK OR FROM A BOOK".to_string())],
-                "NOTHING DRAWN YET".to_string(),
-            ),
-            Some(b) => {
+        let books = design::shelf();
+        let mut rows: Vec<(&str, String)> = Vec::new();
+        if books.is_empty() {
+            rows.push(("START A PLAYBOOK", "BLANK OR FROM A BOOK".to_string()));
+        } else {
+            for b in &books {
                 let (status, _) = book_status(b);
-                (
-                    vec![
-                        (
-                            "OFFENSE",
-                            format!("{} / {} FORMATIONS", b.offense.len(), MAX_FORMATIONS),
-                        ),
-                        (
-                            "DEFENSE",
-                            format!("{} / {} FRONTS", b.defense.len(), MAX_FORMATIONS),
-                        ),
-                        ("START OVER", b.source.to_uppercase()),
-                        ("CLEAR THE PLAYBOOK", String::new()),
-                    ],
-                    status,
-                )
+                let note = match status.as_str() {
+                    "READY: A CLUB CAN TAKE THIS BOOK INTO A GAME" => "READY".to_string(),
+                    other => other.to_string(),
+                };
+                rows.push((b.name.as_str(), note));
             }
+            if books.len() < MAX_BOOKS {
+                rows.push(("NEW PLAYBOOK", String::new()));
+            }
+        }
+        let note = if books.is_empty() {
+            "NOTHING DRAWN YET".to_string()
+        } else {
+            let b = &books[pick.min(books.len().saturating_sub(1))];
+            book_status(b).0
         };
         if let d = nav.step(input.stick.y, dt) {
             if d != 0 {
@@ -2567,14 +2913,117 @@ fn design_hub(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         slide.step(pick, dt);
         if input.pressed.a {
-            match (&book, pick) {
-                (None, _) => start_book(view, pad)?,
-                (Some(_), 0) => offense_list(view, pad)?,
-                (Some(_), 1) => defense_list(view, pad)?,
-                (Some(_), 2) => start_book(view, pad)?,
-                (Some(_), _) => {
-                    design::set(None);
+            if books.is_empty() || pick >= books.len() {
+                start_book(view, pad)?;
+            } else {
+                design::select(pick);
+                book_menu(view, pad, pick)?;
+            }
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
+        if input.pressed.y && !books.is_empty() && pick < books.len() {
+            let mut name = books[pick].name.clone();
+            name_something(view, pad, "BOOK", &mut name)?;
+            let mut b = books[pick].clone();
+            b.name = name;
+            design::select(pick);
+            design::set(Some(b));
+            save_custom();
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
+        if input.pressed.x && !books.is_empty() && pick < books.len() {
+            design::remove(pick);
+            save_custom();
+            pick = pick.min(design::count().saturating_sub(1));
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut frame,
+            "PLAYBOOKS",
+            "EACH BOOK CARRIES ITS OWN PLAYS, FRONTS AND COVERAGE",
+            &rows,
+            &slide,
+            &note,
+            "[UP/DOWN] PICK   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
+/// One book's three doors.
+fn book_menu(view: &mut View, pad: &mut Option<&mut Pad>, index: usize) -> Option<()> {
+    let mut pick = 0usize;
+    let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(());
+        }
+        let Some(book) = design::book_at(index) else {
+            return Some(());
+        };
+        let (status, _) = book_status(&book);
+        let rows = [
+            (
+                "OFFENSE",
+                format!(
+                    "{} / {} FORMATIONS - {} PLAYS",
+                    book.offense.len(),
+                    MAX_FORMATIONS,
+                    book.plays.iter().map(|p| p.len()).sum::<usize>()
+                ),
+            ),
+            (
+                "DEFENSE",
+                format!(
+                    "{} / {} FRONTS - {} CALLS",
+                    book.defense.len(),
+                    MAX_FORMATIONS,
+                    book.calls.iter().map(|c| c.len()).sum::<usize>()
+                ),
+            ),
+            ("RENAME THE BOOK", String::new()),
+            ("DELETE THE BOOK", String::new()),
+        ];
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, rows.len(), -d);
+            }
+        }
+        slide.step(pick, dt);
+        if input.pressed.a {
+            match pick {
+                0 => offense_list(view, pad)?,
+                1 => defense_list(view, pad)?,
+                2 => {
+                    let mut name = book.name.clone();
+                    name_something(view, pad, "BOOK", &mut name)?;
+                    let mut b = book.clone();
+                    b.name = name;
+                    design::select(index);
+                    design::set(Some(b));
                     save_custom();
+                }
+                _ => {
+                    design::remove(index);
+                    save_custom();
+                    return Some(());
                 }
             }
             view.reset();
@@ -2584,11 +3033,11 @@ fn design_hub(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         let mut frame = Frame::new(UI_W, UI_H);
         draw_option_screen(
             &mut frame,
-            "PLAYBOOK",
+            &book.name,
             "CIRCLES FOR THE OFFENSE, X'S FOR THE DEFENSE",
             &rows,
             &slide,
-            &note,
+            &status,
             "[UP/DOWN] PICK   [A] OPEN   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
@@ -2622,6 +3071,15 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
                 sel = wrap(sel, n.max(1), -d);
             }
         }
+        if input.pressed.y && sel < book.offense.len() {
+            let mut name = book.offense[sel].name.clone();
+            name_something(view, pad, "FORMATION", &mut name)?;
+            book.offense[sel].name = name;
+            keep_book(&book);
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
         if input.pressed.x && sel < book.offense.len() {
             book.offense.remove(sel);
             book.plays.remove(sel);
@@ -2634,17 +3092,21 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         if input.pressed.a {
             if sel < book.offense.len() {
                 let mut spots = book.offense[sel].spots;
-                spots_editor(view, pad, &format!("OFFENSE {}", sel + 1), &mut spots, false)?;
-                if spots != book.offense[sel].spots {
-                    book.offense[sel].spots = spots;
-                    keep_book(&book);
-                }
+                let mut roles = off_bits(&book.offense[sel].roles);
+                spots_editor(
+                    view,
+                    pad,
+                    &format!("OFFENSE {}", sel + 1),
+                    &mut spots,
+                    &mut roles,
+                    false,
+                )?;
+                book.offense[sel].spots = spots;
+                book.offense[sel].roles = off_roles(&roles);
+                keep_book(&book);
                 play_list(view, pad, &mut book, sel)?;
             } else if book.offense.len() < MAX_FORMATIONS {
-                let f = nopads_core::design::DesignFormation::blank(
-                    book.offense.len(),
-                    Formation::Pistol,
-                );
+                let f = DesignFormation::blank(book.offense.len(), Formation::Pistol);
                 let play = DesignPlay::blank(format!("{} 1", f.name));
                 book.offense.push(f);
                 book.plays.push(vec![play]);
@@ -2671,7 +3133,7 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             &rows,
             &slide,
             "EACH FORMATION CARRIES ONE TO NINE PLAYS",
-            "[UP/DOWN] FORMATION   [A] OPEN   [X] DELETE   [B] BACK",
+            "[UP/DOWN] FORMATION   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2706,6 +3168,15 @@ fn play_list(
                 sel = wrap(sel, n.max(1), -d);
             }
         }
+        if input.pressed.y && sel < plays {
+            let mut name = book.plays[fi][sel].name.clone();
+            name_something(view, pad, "PLAY", &mut name)?;
+            book.plays[fi][sel].name = name;
+            keep_book(book);
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
         if input.pressed.x && sel < plays {
             book.plays[fi].remove(sel);
             keep_book(book);
@@ -2737,11 +3208,11 @@ fn play_list(
         for p in book.plays_of(fi) {
             rows.push((
                 p.name.as_str(),
-                if p.family.is_pass() {
-                    "PASS".to_string()
-                } else {
-                    "RUN".to_string()
-                },
+                format!(
+                    "{} - {} WAYPOINTS",
+                    if p.family.is_pass() { "PASS" } else { "RUN" },
+                    p.routes.iter().map(|r| r.len()).sum::<usize>()
+                ),
             ));
         }
         if plays < MAX_PLAYS {
@@ -2751,11 +3222,11 @@ fn play_list(
         draw_option_screen(
             &mut frame,
             &book.offense[fi].name.clone(),
-            "ONE TO NINE PLAYS. DRAW EACH MAN'S PATH.",
+            "ONE TO NINE PLAYS. DRAW EACH MAN'S PATH WITH THE STICK.",
             &rows,
             &slide,
             "A RUN'S BACK PATH IS THE BALL; A PASS'S PATHS ARE THE ROUTES",
-            "[UP/DOWN] PLAY   [A] OPEN   [X] DELETE   [B] BACK",
+            "[UP/DOWN] PLAY   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2787,6 +3258,15 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
                 sel = wrap(sel, n.max(1), -d);
             }
         }
+        if input.pressed.y && sel < book.defense.len() {
+            let mut name = book.defense[sel].name.clone();
+            name_something(view, pad, "FRONT", &mut name)?;
+            book.defense[sel].name = name;
+            keep_book(&book);
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
         if input.pressed.x && sel < book.defense.len() {
             book.defense.remove(sel);
             book.calls.remove(sel);
@@ -2799,19 +3279,26 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         if input.pressed.a {
             if sel < book.defense.len() {
                 let mut spots = book.defense[sel].spots;
-                spots_editor(view, pad, &format!("DEFENSE {}", sel + 1), &mut spots, true)?;
-                if spots != book.defense[sel].spots {
-                    book.defense[sel].spots = spots;
-                    keep_book(&book);
-                }
+                let mut roles = def_bits(&book.defense[sel].roles);
+                spots_editor(
+                    view,
+                    pad,
+                    &format!("DEFENSE {}", sel + 1),
+                    &mut spots,
+                    &mut roles,
+                    true,
+                )?;
+                book.defense[sel].spots = spots;
+                book.defense[sel].roles = def_roles(&roles);
+                keep_book(&book);
                 call_list(view, pad, &mut book, sel)?;
             } else if book.defense.len() < MAX_FORMATIONS {
-                let f = nopads_core::design::DesignFront::blank(book.defense.len());
+                let f = DesignFront::blank(book.defense.len());
                 book.defense.push(f);
-                book.calls.push(vec![DesignCall {
-                    name: "COVER 1".to_string(),
-                    coverage: Coverage::ManFree,
-                }]);
+                book.calls.push(vec![DesignCall::blank(
+                    "COVER 1".to_string(),
+                    Coverage::ManFree,
+                )]);
                 keep_book(&book);
                 sel = book.defense.len() - 1;
             }
@@ -2835,7 +3322,7 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             &rows,
             &slide,
             "EACH FRONT CARRIES ONE TO NINE CALLS",
-            "[UP/DOWN] FRONT   [A] OPEN   [X] DELETE   [B] BACK",
+            "[UP/DOWN] FRONT   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2879,6 +3366,37 @@ fn call_list(
                 sel = wrap(sel, n.max(1), -d);
             }
         }
+        // Left and right change the coverage of the call under the bar, so the
+        // front can be tried with every coverage without drawing it again.
+        if let d = nav_x.step(input.stick.x, dt) {
+            if d != 0 && sel < calls {
+                let c = &mut book.calls[fi][sel];
+                let idx = COVERAGES
+                    .iter()
+                    .position(|x| *x == c.coverage)
+                    .unwrap_or(0);
+                let next = COVERAGES[step_index(idx, COVERAGES.len(), d)];
+                // A call still wearing its coverage's name is renamed with it.
+                if c.name == c.coverage.label() {
+                    c.name = next.label().to_string();
+                }
+                c.coverage = next;
+                c.press = next == Coverage::ManPress;
+                keep_book(book);
+                view.reset();
+                last = Instant::now();
+                continue;
+            }
+        }
+        if input.pressed.y && sel < calls {
+            let mut name = book.calls[fi][sel].name.clone();
+            name_something(view, pad, "CALL", &mut name)?;
+            book.calls[fi][sel].name = name;
+            keep_book(book);
+            view.reset();
+            last = Instant::now();
+            continue;
+        }
         if input.pressed.x && sel < calls {
             book.calls[fi].remove(sel);
             keep_book(book);
@@ -2892,54 +3410,18 @@ fn call_list(
                 if calls >= MAX_PLAYS {
                     continue;
                 }
-                book.calls[fi].push(DesignCall {
-                    name: COVERAGES[0].label().to_string(),
-                    coverage: COVERAGES[0],
-                });
+                book.calls[fi].push(DesignCall::blank(
+                    COVERAGES[0].label().to_string(),
+                    COVERAGES[0],
+                ));
                 keep_book(book);
+                sel = book.calls[fi].len() - 1;
             }
-            // Cycle the coverage of the chosen call: the front stands where it
-            // was drawn, the call is what the seven of them do behind it.
-            let mut idx = COVERAGES
-                .iter()
-                .position(|c| *c == book.calls[fi][sel].coverage)
-                .unwrap_or(0);
-            loop {
-                let now = Instant::now();
-                let dt = now.duration_since(last).as_secs_f32().min(0.1);
-                last = now;
-                let input = pad::mix(pad.as_deref_mut(), view.poll());
-                if input.pressed.b {
-                    break;
-                }
-                if let d = nav_x.step(input.stick.x, dt) {
-                    if d != 0 {
-                        idx = step_index(idx, COVERAGES.len(), d);
-                    }
-                }
-                slide.step(0, dt);
-                let rows = vec![("COVERAGE", COVERAGES[idx].label().to_string())];
-                let mut frame = Frame::new(UI_W, UI_H);
-                draw_option_screen(
-                    &mut frame,
-                    &book.defense[fi].name.clone(),
-                    "WHAT THE SEVEN OF THEM DO BEHIND THE FRONT",
-                    &rows,
-                    &slide,
-                    "MAN FREE, TWO DEEP, THREE DEEP, FOUR ACROSS, PRESS, GOAL LINE",
-                    "[LEFT/RIGHT] COVERAGE   [A] SAVE   [B] BACK",
-                );
-                if !view.show_ui(&mut frame, &[]) {
-                    return None;
-                }
-                if input.pressed.a {
-                    book.calls[fi][sel].coverage = COVERAGES[idx];
-                    book.calls[fi][sel].name = COVERAGES[idx].label().to_string();
-                    keep_book(book);
-                    break;
-                }
-                beat();
-            }
+            let front = book.defense[fi].clone();
+            let mut call = book.calls[fi][sel].clone();
+            call_editor(view, pad, &front, &mut call)?;
+            book.calls[fi][sel] = call;
+            keep_book(book);
             view.reset();
             last = Instant::now();
             continue;
@@ -2947,7 +3429,15 @@ fn call_list(
         slide.step(sel, dt);
         let mut rows: Vec<(&str, String)> = Vec::new();
         for c in book.calls_of(fi) {
-            rows.push((c.name.as_str(), String::new()));
+            rows.push((
+                c.name.as_str(),
+                format!(
+                    "{} - {}{}",
+                    c.coverage.label(),
+                    if c.press { "PRESS" } else { "OFF" },
+                    if c.has_drop() { " - DRAWN" } else { "" }
+                ),
+            ));
         }
         if calls < MAX_PLAYS {
             rows.push(("NEW CALL", String::new()));
@@ -2959,8 +3449,8 @@ fn call_list(
             "ONE TO NINE CALLS OFF THIS FRONT",
             &rows,
             &slide,
-            "THE FRONT STANDS WHERE YOU DREW IT; THE CALL IS THE COVERAGE",
-            "[UP/DOWN] CALL   [A] OPEN   [X] DELETE   [B] BACK",
+            "LEFT/RIGHT CHANGES THE COVERAGE; [A] DRAWS THE DROPS",
+            "[UP/DOWN] CALL   [LEFT/RIGHT] COVERAGE   [A] OPEN   [Y] RENAME   [X] DELETE",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2997,11 +3487,15 @@ fn choose_sides(
 /// Every book a side can take into a game: the league's, and the player's own
 /// once he has drawn a legal one.
 fn selectable_books() -> Vec<Book> {
-    Book::ALL
-        .iter()
-        .copied()
-        .filter(|b| *b != Book::Custom || nopads_core::design::has_book())
-        .collect()
+    // The league's books, then every book on the player's shelf that is legal
+    // enough to run: each one is its own entry in the picker.
+    let mut out: Vec<Book> = Book::ALL.to_vec();
+    for (i, book) in nopads_core::design::shelf().iter().enumerate() {
+        if book.is_legal() {
+            out.push(Book::Custom(i as u8));
+        }
+    }
+    out
 }
 
 fn step_book(current: Book, d: i8) -> Book {
@@ -4651,9 +5145,9 @@ mod tests {
         println!("wrote the side screen to {dir}");
     }
 
-    #[test]
-    /// A picture of the drawing boards: a formation of circles, a play with its
-    /// paths, and a front of X's.
+    /// A picture of the drawing boards: a formation of circles with a job on
+    /// every spot, a play drawn with the pen, a front of X's, and a coverage
+    /// drawn behind a call.
     #[test]
     fn the_drawing_boards_can_be_rendered_to_pictures() {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {
@@ -4665,51 +5159,95 @@ mod tests {
             canvas.blit_up(screen, UI_SCALE);
             nopads_render::write_png(format!("{dir}/{name}.png"), &canvas).expect("write png");
         };
-        let book = nopads_core::design::DesignBook::from_built_in(Book::WestCoast);
-        let form = &book.offense[0];
+        let mut book = DesignBook::from_built_in(Book::WestCoast);
+        book.offense[0].name = "TRIPS RIGHT".to_string();
+        let form = book.offense[0].clone();
+        let bits = off_bits(&form.roles);
+        let mut play = book.plays[0][0].clone();
+        play.name = "MESH AND WHEEL".to_string();
+        play.family = PlayFamily::QuickPass;
+        let slot = form.slot_of(OffRole::Slot);
+        let spot = form.spots[slot];
+        play.routes[slot] = (1..=8)
+            .map(|d| Vec2::new(spot.x + d as f32, spot.y + d as f32 * 0.5))
+            .collect();
+        let wide = form.slot_of(OffRole::WideL);
+        let wspot = form.spots[wide];
+        play.routes[wide] = (1..=10)
+            .map(|d| Vec2::new(wspot.x + d as f32, wspot.y - d as f32 * 0.9))
+            .collect();
 
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, false);
-        draw_men(&mut frame, &form.spots, Some(0), false);
+        draw_men(&mut frame, &form.spots, &bits, Some(0), false);
         cursor_box(&mut frame, form.spots[0].x as i8, form.spots[0].y as i8);
-        ui::heading(&mut frame, UI_W as i32 / 2, 16, "OFFENSE 1", ui::T_BODY, ui::ACCENT);
-        centered_in(&mut frame, 320, 40, "SET QB", 1, accent());
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &form.name, ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "SET QB - [Y] CHANGES THE JOB", 1, accent());
         centered_in(&mut frame, 320, FIELD_B + 10, "THE LINE IS LEGAL", 1, ui::GOOD);
-        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [B] DONE");
+        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [Y] JOB   [B] DONE");
         save("play_formation", &frame);
 
-        let play = &book.plays[0][0];
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, false);
-        draw_routes(&mut frame, &form.spots, &play.routes, 0);
-        draw_men(&mut frame, &form.spots, None, false);
-        cursor_box(&mut frame, 5, 4);
+        draw_routes(&mut frame, &form.spots, &play.routes, slot);
+        draw_men(&mut frame, &form.spots, &bits, None, false);
+        cursor_box(&mut frame, 6, 3);
         ui::heading(&mut frame, UI_W as i32 / 2, 16, &play.name, ui::T_BODY, ui::ACCENT);
-        centered_in(&mut frame, 320, 40, "DRAWING RB - PASS", 1, accent());
+        centered_in(&mut frame, 320, 40, "DRAWING TE - PASS - PEN DOWN", 1, accent());
         centered_in(
             &mut frame,
             320,
             FIELD_B + 10,
-            "A PATH IS A ROUTE, STARTING FROM WHERE THE MAN LINES UP",
+            "EVERY YARD YOU DRAW IS A WAYPOINT: THE ROUTE STARTS AT HIS FEET",
             1,
             dim(),
         );
         footer(
             &mut frame,
-            "[STICK] CURSOR   [A] WAYPOINT   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
+            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
         );
         save("play_routes", &frame);
 
-        let front = &book.defense[0];
+        let front = book.defense[0].clone();
+        let fbits = def_bits(&front.roles);
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, true);
-        draw_men(&mut frame, &front.spots, Some(5), true);
+        draw_men(&mut frame, &front.spots, &fbits, Some(5), true);
         cursor_box(&mut frame, front.spots[5].x as i8, front.spots[5].y as i8);
-        ui::heading(&mut frame, UI_W as i32 / 2, 16, "DEFENSE 1", ui::T_BODY, ui::ACCENT);
-        centered_in(&mut frame, 320, 40, "SET CB", 1, accent());
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &front.name, ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "SET CB - [Y] CHANGES THE JOB", 1, accent());
         centered_in(&mut frame, 320, FIELD_B + 10, "EVERY MAN IS SET", 1, ui::GOOD);
-        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [B] DONE");
+        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [Y] JOB   [B] DONE");
         save("play_front", &frame);
+
+        let mut call = book.calls[0][0].clone();
+        call.name = "COVER 2 CLOUD".to_string();
+        call.coverage = Coverage::Cover2;
+        let cb = front.slot_of(DefRole::CbL);
+        let cspot = front.spots[cb];
+        call.drops[cb] = (1..=9)
+            .map(|d| Vec2::new(cspot.x + d as f32, cspot.y - d as f32 * 0.5))
+            .collect();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, true);
+        draw_drops(&mut frame, &front.spots, &call.drops, cb);
+        draw_men(&mut frame, &front.spots, &fbits, Some(cb), true);
+        cursor_box(&mut frame, 8, -8);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &call.name, ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "CB - COVER 2 - OFF - PEN DOWN", 1, accent());
+        centered_in(
+            &mut frame,
+            320,
+            FIELD_B + 10,
+            "DRAW WHERE HE DROPS: THE COVERAGE FOLLOWS THE PATH YOU DREW",
+            1,
+            dim(),
+        );
+        footer(
+            &mut frame,
+            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PRESS/OFF   [SELECT] WIPE   [B] DONE",
+        );
+        save("play_coverage", &frame);
     }
 
     fn the_front_end_can_be_rendered_to_pictures() {
