@@ -908,11 +908,11 @@ fn cmd_arcade(args: &[String]) {
                 pad = p;
                 return;
             }
-            Some(menu::Front::Drill(kind, kick)) => {
+            Some(menu::Front::Drill(kind, kick, difficulty)) => {
                 // A drill hands the view back when the player leaves it, and the
                 // front end is where they land: the modes are a place to come
                 // back to, not a game to finish.
-                let (v, p) = play_drill(view, pad, &settings, kind, &kick, seed);
+                let (v, p) = play_drill(view, pad, &settings, kind, &kick, difficulty, seed);
                 view = v;
                 pad = p;
             }
@@ -1022,6 +1022,7 @@ fn play_drill(
     settings: &settings::Settings,
     kind: menu::DrillKind,
     kick: &menu::Kickoff,
+    difficulty: usize,
     seed: u64,
 ) -> (view::View, Option<pad::Pad>) {
     let mode = match kind {
@@ -1041,9 +1042,7 @@ fn play_drill(
     // drill is his, and the drills are written from the player's side of the
     // ball. The shirts are the ones picked on the way in.
     let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
-    game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
-        settings.difficulty,
-    ));
+    game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(difficulty));
     let mut arcade = arcade::Arcade::new(game, pad, view)
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
@@ -1053,7 +1052,7 @@ fn play_drill(
         .with_mode(mode)
         .with_track(track)
         .with_book(kick.book)
-        .with_contain(settings.difficulty != 0)
+        .with_contain(difficulty != 0)
         // The toss is shared: whoever won it brings the first one back.
         .with_first_return(if kick.receive { 0 } else { 1 });
     arcade.run();

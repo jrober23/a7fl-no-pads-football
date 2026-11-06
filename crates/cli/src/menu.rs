@@ -103,8 +103,9 @@ pub enum Front {
     /// A whole season, already scheduled.
     Season(Box<Season>),
     /// One of the sessions under MORE MODES: no clock, no season, a drill, on
-    /// the same clubs and the same book the game would have been played with.
-    Drill(DrillKind, Kickoff),
+    /// the same clubs and the same book the game would have been played with, and
+    /// the difficulty it was told to play against.
+    Drill(DrillKind, Kickoff, usize),
 }
 
 enum Start {
@@ -133,8 +134,10 @@ pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> O
             }
             Start::Modes => {
                 if let Some(kind) = modes_screen(view, &mut pad) {
-                    if let Some(kick) = drill_kickoff(view, &mut pad, kind) {
-                        return Some(Front::Drill(kind, kick));
+                    if let Some((kick, difficulty)) =
+                        drill_kickoff(view, &mut pad, kind, settings.difficulty)
+                    {
+                        return Some(Front::Drill(kind, kick, difficulty));
                     }
                 }
             }
@@ -565,6 +568,69 @@ fn track_screen(
                 2 => Some(Track::Both),
                 _ => None,
             };
+        }
+        beat();
+    }
+}
+
+/// The three difficulties, and what each one means on the field.
+const DIFFICULTIES: [(&str, &str); 3] = [
+    ("EASY", "THE GUNNERS COME AT THE RETURNER IN A LINE, AND THE AI SITS BACK"),
+    ("NORMAL", "THE GUNNERS CONTAIN: A LANE EITHER SIDE AND THE CHASE UP THE MIDDLE"),
+    ("HARD", "THE SAME CONTAINMENT, AND THE AI TAKES ITS SHOTS"),
+];
+
+fn draw_difficulty(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
+    let rows: Vec<(&str, String)> = DIFFICULTIES
+        .iter()
+        .map(|(name, _)| (*name, String::new()))
+        .collect();
+    let note = DIFFICULTIES
+        .get(pick)
+        .map(|(_, line)| *line)
+        .unwrap_or("");
+    draw_option_screen(
+        frame,
+        "DIFFICULTY",
+        "HOW HARD SHOULD THE OTHER LOT PLAY?",
+        &rows,
+        slide,
+        note,
+        "[UP/DOWN] DIFFICULTY   [A] TAKE IT   [B] BACK",
+    );
+}
+
+fn difficulty_screen(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    start: usize,
+) -> Option<usize> {
+    let mut pick = start.min(DIFFICULTIES.len() - 1);
+    let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(pick);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return None;
+        }
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, DIFFICULTIES.len(), -d);
+            }
+        }
+        slide.step(pick, dt);
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_difficulty(&mut frame, pick, &slide);
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        if input.pressed.a {
+            return Some(pick);
         }
         beat();
     }
@@ -1550,7 +1616,8 @@ fn drill_kickoff(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     kind: DrillKind,
-) -> Option<Kickoff> {
+    difficulty: usize,
+) -> Option<(Kickoff, usize)> {
     let all = clubs();
     let cards: Vec<Card> = all
         .iter()
@@ -1568,7 +1635,19 @@ fn drill_kickoff(
         })
         .collect();
     let sides = choose_sides(view, pad, &all, &cards)?;
-    let book = pick_book(view, pad, sides.yours)?;
+    // The gauntlet is a return drill: there is no book to run in it, so it does
+    // not ask for one. The sessions that do run plays ask which.
+    let book = match kind {
+        DrillKind::Gauntlet => all[sides.yours].book,
+        _ => pick_book(view, pad, sides.yours)?,
+    };
+    // How hard the other lot play is a question for the field, not a number
+    // buried in the settings screen: the drills that play against them ask it.
+    // The tutorial is a teaching session, so it keeps the settings' answer.
+    let chosen = match kind {
+        DrillKind::Practice(_) | DrillKind::Gauntlet => difficulty_screen(view, pad, difficulty)?,
+        DrillKind::Tutorial(_) => difficulty,
+    };
     // Only the gauntlet needs a toss: it decides who brings the first one back.
     // A tutorial or a practice session has already been told which side of the
     // ball it is playing, so the coin has nothing left to decide.
@@ -1576,15 +1655,18 @@ fn drill_kickoff(
         DrillKind::Gauntlet => coin_flip(view, pad, &all, sides.yours, sides.theirs, 0)?,
         _ => true,
     };
-    Some(Kickoff {
-        yours: sides.yours,
-        theirs: sides.theirs,
-        player_home: sides.player_home,
-        kits: sides.kits,
-        receive,
-        venue: 0,
-        book,
-    })
+    Some((
+        Kickoff {
+            yours: sides.yours,
+            theirs: sides.theirs,
+            player_home: sides.player_home,
+            kits: sides.kits,
+            receive,
+            venue: 0,
+            book,
+        },
+        chosen,
+    ))
 }
 
 /// Everything about a club the picker shows that is not its badge: the numbers
@@ -3195,6 +3277,10 @@ mod tests {
         let mut practice = Frame::new(UI_W, UI_H);
         draw_practice(&mut practice, 0, &ui::Slide::new(0));
         save("practice_tracks", &practice);
+
+        let mut difficulty = Frame::new(UI_W, UI_H);
+        draw_difficulty(&mut difficulty, 1, &ui::Slide::new(1));
+        save("difficulty", &difficulty);
 
         let (depth, roster) = depth_chart(&all[0]);
         let pages = roster.len().div_ceil(CHART_ROWS).max(1);

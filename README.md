@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.81-windows-x86_64.zip` from the
+Grab `7on7-v0.25.82-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -212,18 +212,22 @@ offense and then the defense. When the steps are done it tells you where the res
 of the controls live, which is the controls page on the pause menu.
 
 **PRACTICE** asks the same question the tutorial does — offense, defense or both —
-and then gives you the same session without the list: your call from your book, no
-clock, no downs, no turnover to lose, and the ball back on the same spot for the
-next snap. It is where a play gets learned without a game being spent on it. There
-is no toss in front of a practice session: the side of the ball is the choice, so
-there is nothing for a coin to decide. The toss is the gauntlet's, where it settles
-who brings the first return back.
+and then which book to run and how hard the other lot should play, and gives you the
+same session without the list: your call from your book, no clock, no downs, no
+turnover to lose, and the ball back on the same spot for the next snap. It is where
+a play gets learned without a game being spent on it. There is no toss in front of a
+practice session: the side of the ball is the choice, so there is nothing for a coin
+to decide. The toss is the gauntlet's, where it settles who brings the first return
+back.
 
 **THREE-ON-ONE GAUNTLET** is the drill a throw-off already is — one man with the
 ball and three gunners coming for him, nobody else on the field — played back and
-forth between the two clubs. The toss decides who brings the first one back; then
-the clubs alternate, five returns each player's side, one club's card against the
-other's. A return is scored by the ground it made: thirty yards is a point, sixty
+forth between the two clubs. There is no book to pick in it, because a return drill
+runs no plays: it asks for the two clubs, the side, the difficulty and the toss, and
+that is the whole card. Both ends of it are yours: you bring your club's returns
+back, and you throw the other club's off, so nothing in the drill is played by
+nobody. The toss decides who brings the first one back; then the clubs alternate,
+five returns each player's side, one club's card against the other's. A return is scored by the ground it made: thirty yards is a point, sixty
 is two, the house is six. If the five apiece leave a tie — or a lead of one —
 sudden death: more returns in pairs, and it takes a lead of two to end it.
 

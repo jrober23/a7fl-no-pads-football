@@ -709,6 +709,7 @@ impl Arcade {
                 is_try: false,
             };
             let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+            sim.difficulty = self.game.difficulty;
             sim.await_snap(true);
             let header = self.drill_header();
             let board = drill_board(&teams, yards_to_goal);
@@ -808,47 +809,44 @@ impl Arcade {
                 ThrowOffSim::new(&setup, &throwing, &receiving).with_contain(self.contain);
             let header = self.drill_header();
             let board = drill_board(&[receiving.clone(), throwing.clone()], 80.0);
-            let result = if returning == mine {
-                // The player's return, pad in hand, on the same picture as a game.
-                let mut caller = ThrowOffSnap {
-                    game: &mut self.game,
-                    my_team: mine,
-                    hold: 0.0,
-                    charging: false,
-                    aim_y: 0.0,
-                    armed: false,
-                    cover_pick: 0,
-                    cover_order: None,
-                };
-                let finished = snap_loop(
-                    &mut SnapScreen {
-                        sim: &mut sim,
-                        broadcast: &mut self.broadcast,
-                        view: &mut self.view,
-                        pad: self.pad.as_mut(),
-                        cam: &mut self.cam,
-                        flip_y: self.flip_y,
-                    },
-                    &mut caller,
-                    &header,
-                    &board,
-                );
-                if !finished {
-                    self.quit = true;
-                    return;
-                }
-                match sim.result.clone() {
-                    Some(result) => result,
-                    None => {
-                        turn += 1;
-                        continue;
-                    }
-                }
-            } else {
-                // Their return is the machine's. The drill is one man bringing it
-                // back for his club; the other club's answer is what makes it a
-                // scoreboard and not a score.
-                sim.run_to_completion()
+            // Both ends of the throw-off are the player's, the way they are in a
+            // game: when his club is receiving he brings it back, and when the
+            // other club is receiving he throws it off and they bring it back.
+            sim.human_thrower = setup.throwing_team == mine;
+            if !sim.human_thrower {
+                // The ball is coming at you: a beat to see the field before it goes.
+                sim.snap_delay = WATCH_SNAP_DELAY;
+            }
+            let mut caller = ThrowOffSnap {
+                game: &mut self.game,
+                my_team: mine,
+                hold: 0.0,
+                charging: false,
+                aim_y: 0.0,
+                armed: false,
+                cover_pick: 0,
+                cover_order: None,
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim: &mut sim,
+                    broadcast: &mut self.broadcast,
+                    view: &mut self.view,
+                    pad: self.pad.as_mut(),
+                    cam: &mut self.cam,
+                    flip_y: self.flip_y,
+                },
+                &mut caller,
+                &header,
+                &board,
+            );
+            if !finished {
+                self.quit = true;
+                return;
+            }
+            let Some(result) = sim.result.clone() else {
+                turn += 1;
+                continue;
             };
             let points = gauntlet_points(result.touchdown, result.return_yards);
             self.gauntlet[returning] += points;
@@ -859,9 +857,10 @@ impl Arcade {
             let over = both_had_five && turn % 2 == 0 && (lead >= 2 || turn >= CAP);
             let mut card = vec![
                 format!(
-                    "  {} POINT{} ON THE RETURN",
+                    "  {} POINT{} FOR {}",
                     points,
-                    if points == 1 { "" } else { "S" }
+                    if points == 1 { "" } else { "S" },
+                    self.game.teams[returning].abbr.to_uppercase()
                 ),
                 String::new(),
                 format!("  {}", result.description.to_uppercase()),
@@ -962,7 +961,10 @@ impl Arcade {
                 is_try: false,
             };
             let mut sim = PlaySim::new(&teams[1], &teams[0], &play, &def, &setup);
-            sim.await_snap(true);
+            sim.difficulty = self.game.difficulty;
+            // The offense is the machine's, so the snap is its own: waiting on a
+            // button here waited on a button nobody had, and the ball never went.
+            sim.await_snap(false);
             sim.set_human_defender(sim.nearest_defender());
             let header = self.drill_header();
             let board = drill_board(&teams, yards_to_goal);
