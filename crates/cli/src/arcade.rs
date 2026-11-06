@@ -1826,38 +1826,182 @@ enum PauseAction {
     Replay,
 }
 
+/// Where the pause menu's rows sit. A caller with no tape to run has no last
+/// play to watch, so every row under Resume moves up one.
+#[derive(Clone, Copy)]
+struct PauseSlots {
+    /// Whether the caller has a tape, which is what puts Replay in the list.
+    can_replay: bool,
+    items: usize,
+    replay: usize,
+    cam: usize,
+    lens: usize,
+    leave: usize,
+}
+
+fn pause_slots(can_replay: bool) -> PauseSlots {
+    let cam = if can_replay { 2 } else { 1 };
+    PauseSlots {
+        can_replay,
+        items: if can_replay { 5 } else { 4 },
+        replay: 1,
+        cam,
+        lens: cam + 1,
+        leave: cam + 2,
+    }
+}
+
+/// The pause menu as data. Everything the panel says is decided by these, and
+/// nothing else, which is what lets a phase of it be drawn -- and looked at --
+/// without a pad in hand.
+struct PausePanel<'a> {
+    slots: PauseSlots,
+    pick: usize,
+    cam: &'a str,
+    zoom: f32,
+    tilt: f32,
+    /// The lens sub-screen, over the frozen picture.
+    tuning: bool,
+    /// The quit prompt: 0 is the menu, 1 is the desktop.
+    leaving: Option<usize>,
+}
+
+impl PausePanel<'_> {
+    /// The panel as words. It is built once and used twice -- the picture and
+    /// the terminal page -- so the two can never disagree about what it says.
+    fn sheet(&self) -> PauseSheet<'_> {
+        if self.tuning {
+            PauseSheet {
+                title: "LENS",
+                rows: vec![
+                    ("ZOOM", format!("{:.2}", self.zoom)),
+                    ("TILT", format!("{:+.2}", self.tilt)),
+                ],
+                selected: None,
+                hint_line: "[STICK] ZOOM / TILT   [X] RESET   [A] DONE",
+            }
+        } else if let Some(choice) = self.leaving {
+            PauseSheet {
+                title: "LEAVE THIS GAME?",
+                rows: vec![
+                    ("BACK TO THE MENU", String::new()),
+                    ("QUIT THE GAME", String::new()),
+                ],
+                selected: Some(choice.min(1)),
+                hint_line: "[STICK] CHOOSE   [A] SELECT   [B] STAY",
+            }
+        } else {
+            let slots = self.slots;
+            let mut rows = vec![("RESUME", String::new())];
+            if slots.can_replay {
+                rows.push(("REPLAY", "LAST PLAY".to_string()));
+            }
+            rows.push(("CAMERA", self.cam.to_string()));
+            rows.push(("LENS", format!("{:.2} / {:+.2}", self.zoom, self.tilt)));
+            rows.push(("LEAVE GAME", String::new()));
+            PauseSheet {
+                title: "PAUSED",
+                rows,
+                selected: Some(self.pick),
+                hint_line: "[STICK] CHOOSE   [A] SELECT   [START] RESUME",
+            }
+        }
+    }
+
+    /// The same panel as a page of text, for the terminal, where a picture is
+    /// not the thing that reads.
+    fn lines(&self) -> Vec<String> {
+        let sheet = self.sheet();
+        let mut lines = vec![
+            String::new(),
+            format!("  {}", sheet.title),
+            String::new(),
+        ];
+        for (i, (label, value)) in sheet.rows.iter().enumerate() {
+            let mark = if sheet.selected == Some(i) { ">>" } else { "  " };
+            if value.is_empty() {
+                lines.push(format!("    {mark} {label}"));
+            } else {
+                lines.push(format!("    {mark} {label}    {value}"));
+            }
+        }
+        lines.push(String::new());
+        lines.push(format!("  {}", sheet.hint_line));
+        lines
+    }
+}
+
+/// The pause menu's words: what the picture draws and what the terminal prints.
+struct PauseSheet<'a> {
+    title: &'a str,
+    /// Each row's label and what it currently reads. A plain action has no
+    /// reading, only its name.
+    rows: Vec<(&'a str, String)>,
+    /// Which row the cursor is on, if the panel is a list at all.
+    selected: Option<usize>,
+    /// The button strip, in the bracketed form the kit parses.
+    hint_line: &'a str,
+}
+
 /// The menu, set over the frozen picture rather than on a page of their own.
-fn draw_pause_lines(frame: &mut nopads_render::Frame, lines: &[String]) {
-    // The one screen drawn straight onto the frozen picture rather than on a
-    // frame of its own, so its numbers are multiplied by the same factor the
-    // interface grid is scaled by, which puts the panel and its text where the
-    // 640-wide design had them.
+///
+/// Drawn on the interface's own 640-wide grid and then lifted onto the picture.
+/// The kit's rows, type and hint strip are designed at that size: drawn at the
+/// picture's size instead, the rows sat four pixels apart and the footnotes came
+/// out half the height of the row labels.
+fn draw_pause(frame: &mut nopads_render::Frame, sheet: &PauseSheet<'_>) {
+    use nopads_render::ui;
     let s = UI_SCALE as i32;
-    let line_h = 17 * s;
-    let w = 330 * s;
-    let h = lines.len() as i32 * line_h + 22 * s;
-    let x = ((frame.w as i32 - w) / 2).max(0);
-    let y0 = ((frame.h as i32 - h) / 2).max(0);
+    let mut page = frame.downsample(UI_SCALE);
+    let row_h = 26;
+    // Wide enough for the longest thing the panel has to say -- the quit
+    // question is wider than the menu's rows -- and never wider than the screen.
+    let mut w = 300;
+    w = w.max(
+        nopads_render::font::text_width(sheet.title, ui::T_BODY) as i32 + ui::S5 * 2 + ui::S3,
+    );
+    for (label, value) in &sheet.rows {
+        let need = ui::S4
+            + nopads_render::font::text_width(label, ui::T_LABEL) as i32
+            + ui::S4
+            + nopads_render::font::text_width(value, ui::T_LABEL) as i32
+            + ui::S4;
+        w = w.max(need);
+    }
+    let w = w.min(UI_W as i32 - ui::S6 * 2);
+    let head = 46;
+    let foot = 34;
+    let h = head + sheet.rows.len() as i32 * row_h + foot;
+    let x = ((UI_W as i32 - w) / 2).max(0);
+    let y = ((UI_H as i32 - h) / 2).max(0);
     // The same glass as the introduction cards: a pause is another thing the
     // game puts over a live picture, so it is the same piece of glass.
-    nopads_render::ui::glass(frame, x, y0, w, h, nopads_render::ui::ACCENT, 0.86);
-    for (i, line) in lines.iter().enumerate() {
-        let ly = y0 + 11 * s + i as i32 * line_h;
-        let text = line.trim();
-        if text.is_empty() {
-            continue;
+    ui::glass(&mut page, x, y, w, h, ui::ACCENT, 0.86);
+    page.text(x + ui::S5, y + ui::S4, sheet.title, ui::T_BODY, ui::ACCENT);
+    ui::divider(&mut page, x + ui::S5, y + head - ui::S3, w - ui::S5 * 2);
+    for (i, (label, value)) in sheet.rows.iter().enumerate() {
+        let ry = y + head + i as i32 * row_h;
+        let heat = if sheet.selected == Some(i) { 1.0 } else { 0.0 };
+        ui::row(
+            &mut page,
+            x + ui::S3,
+            ry,
+            w - ui::S3 * 2,
+            row_h - ui::S1,
+            label,
+            Some(value.as_str()),
+            heat,
+            ui::ACCENT,
+        );
+    }
+    let hints = ui::parse_hints(sheet.hint_line);
+    ui::hints(&mut page, x + w / 2, y + h - ui::S5, &hints);
+    // Only the panel is lifted up: the rest of the picture is already drawn at
+    // its own size, and resampling all of it would soften the field.
+    for py in y..(y + h).min(UI_H as i32) {
+        for px in x..(x + w).min(UI_W as i32) {
+            frame.fill_rect(px * s, py * s, s, s, page.get(px, py));
         }
-        if text.starts_with('[') {
-            let hints = nopads_render::ui::parse_hints(text);
-            nopads_render::ui::hints(frame, x + w / 2, ly + s / 2, &hints);
-            continue;
-        }
-        let ink = if i <= 1 || text.starts_with(">>") {
-            nopads_render::ui::ACCENT
-        } else {
-            nopads_render::ui::PAPER
-        };
-        frame.text_shadowed(x + 18 * s, ly, text, 2 * UI_SCALE, ink, 1);
     }
 }
 
@@ -1887,11 +2031,7 @@ fn pause_menu(
 ) -> PauseAction {
     // The replay sits under Resume when the caller has a tape to run: the pause
     // screen of a call sheet has no play behind it.
-    let items = if can_replay { 5 } else { 4 };
-    let replay_item = 1;
-    let cam_item = if can_replay { 2 } else { 1 };
-    let lens_item = cam_item + 1;
-    let leave_item = cam_item + 2;
+    let slots = pause_slots(can_replay);
     let mut nav = Nav::default();
     let mut pick = 0usize;
     // The lens sub-screen: the stick on the camera, the frozen picture in front
@@ -1958,74 +2098,35 @@ fn pause_menu(
             }
         } else {
             match nav.step(input.stick, dt) {
-                Some(Dir::Up) => pick = (pick + items - 1) % items,
-                Some(Dir::Down) => pick = (pick + 1) % items,
+                Some(Dir::Up) => pick = (pick + slots.items - 1) % slots.items,
+                Some(Dir::Down) => pick = (pick + 1) % slots.items,
                 _ => {}
             }
             if input.pressed.a {
                 match pick {
                     0 => break PauseAction::Resume,
-                    1 if can_replay => break PauseAction::Replay,
-                    p if p == cam_item => {
+                    p if can_replay && p == slots.replay => break PauseAction::Replay,
+                    p if p == slots.cam => {
                         *cam = (*cam + 1) % CAMS.len();
                         still = None;
                     }
-                    p if p == lens_item => tuning = true,
-                    p if p == leave_item => leaving = Some(0),
+                    p if p == slots.lens => tuning = true,
+                    p if p == slots.leave => leaving = Some(0),
                     _ => {}
                 }
             }
         }
         let (zoom, tilt) = broadcast.lens();
-        let mark = |on: bool| if on { ">>" } else { "  " };
-        let lines = if tuning {
-            vec![
-                String::new(),
-                "  LENS".to_string(),
-                String::new(),
-                format!("  ZOOM {zoom:.2}    TILT {tilt:+.2}"),
-                String::new(),
-                "  [STICK] ZOOM / TILT   [X] RESET   [A] DONE".to_string(),
-            ]
-        } else if let Some(choice) = leaving {
-            vec![
-                String::new(),
-                "  LEAVE THIS GAME?".to_string(),
-                String::new(),
-                format!("    {} BACK TO THE MENU", mark(choice == 0)),
-                format!("    {} QUIT THE GAME", mark(choice == 1)),
-                String::new(),
-                "  [STICK] CHOOSE   [A] SELECT   [B] STAY".to_string(),
-            ]
-        } else {
-            {
-                let mut lines = vec![
-                    String::new(),
-                    "  PAUSED".to_string(),
-                    String::new(),
-                    format!("    {} RESUME", mark(pick == 0)),
-                ];
-                if can_replay {
-                    lines.push(format!(
-                        "    {} REPLAY    LAST PLAY   [A] WATCH",
-                        mark(pick == replay_item)
-                    ));
-                }
-                lines.push(format!(
-                    "    {} CAMERA    {:<9}   [A] CHANGE",
-                    mark(pick == cam_item),
-                    cam_name(CAMS[*cam % CAMS.len()])
-                ));
-                lines.push(format!(
-                    "    {} LENS      {zoom:.2} / {tilt:+.2}   [A] ADJUST",
-                    mark(pick == lens_item)
-                ));
-                lines.push(format!("    {} LEAVE GAME", mark(pick == leave_item)));
-                lines.push(String::new());
-                lines.push("  [STICK] CHOOSE   [A] SELECT   [START] RESUME".to_string());
-                lines
-            }
+        let panel = PausePanel {
+            slots,
+            pick,
+            cam: cam_name(CAMS[*cam % CAMS.len()]),
+            zoom,
+            tilt,
+            tuning,
+            leaving,
         };
+        let lines = panel.lines();
         // The picture behind the menu, unless there is none or this is the
         // terminal, where a page of text is the only thing that reads.
         let mut shown = false;
@@ -2035,7 +2136,7 @@ fn pause_menu(
             }
             if let Some(base) = &still {
                 let mut frame = base.clone();
-                draw_pause_lines(&mut frame, &lines);
+                draw_pause(&mut frame, &panel.sheet());
                 shown = true;
                 if !view.show(&mut frame, &[]) {
                     break PauseAction::Quit;
@@ -4065,6 +4166,71 @@ mod tests {
 
     /// The tape plays at the rate it was recorded, the bumpers run it fast, and
     /// neither end runs off the end of it.
+    /// The pause menu is not one screen. A live snap has a tape under Resume, a
+    /// first snap does not, and the lens and the quit prompt replace the menu
+    /// rather than sitting inside it. One picture each, over a frozen frame of
+    /// the same play: the panel is glass over a picture, so the picture belongs
+    /// in the shot.
+    #[test]
+    fn the_pause_menu_can_be_rendered_to_pictures() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        use nopads_core::playbook::{defensive_playbook, playbook};
+        use nopads_core::sim::{PlaySim, SnapSetup};
+        use nopads_core::team::league_teams;
+
+        let teams = league_teams();
+        let (home, away) = (teams[0].clone(), teams[1].clone());
+        let setup = SnapSetup {
+            los: 35.0,
+            ball_y: 0.0,
+            direction: 1,
+            down: 2,
+            to_go: 7.0,
+            seed: 11,
+            offense_team: 0,
+            defense_team: 1,
+            is_try: false,
+        };
+        let (book, dbook) = (playbook(), defensive_playbook());
+        let mut sim = PlaySim::new(&home, &away, &book[0], &dbook[0], &setup);
+        // Held at the line, so the frozen picture is a formation and not a play
+        // that carried itself out behind the menu.
+        sim.await_snap(true);
+        for _ in 0..20 {
+            sim.step(1.0 / 60.0);
+        }
+        // The sim borrows the teams, so the picture gets its own copies.
+        let mut broadcast = Broadcast::new(CANVAS_W, CANVAS_H, [home.clone(), away.clone()]);
+        let still = broadcast.live_frame(&sim, CameraMode::Classic);
+
+        let panel =
+            |pick: usize, tuning: bool, leaving: Option<usize>, can_replay: bool| PausePanel {
+                slots: pause_slots(can_replay),
+                pick,
+                cam: cam_name(CameraMode::Broadcast),
+                zoom: 1.0,
+                tilt: 0.0,
+                tuning,
+                leaving,
+            };
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let save = |name: &str, panel: &PausePanel<'_>| {
+            let mut frame = still.clone();
+            draw_pause(&mut frame, &panel.sheet());
+            nopads_render::write_png(format!("{dir}/{name}.png"), &frame).expect("write png");
+        };
+        // Paused on a snap with a tape: five rows, Replay under Resume.
+        save("pause_snap", &panel(0, false, None, true));
+        // Paused on the first snap of a series: no tape, so four rows.
+        save("pause_first_snap", &panel(0, false, None, false));
+        // The lens, and the question that quitting asks.
+        save("pause_lens", &panel(0, true, None, true));
+        save("pause_leave", &panel(0, false, Some(1), true));
+        println!("wrote the pause menu to {dir}");
+    }
+
     #[test]
     fn the_tape_scrubs_without_running_off_either_end() {
         // Half a second of tape at sixty frames a second.
