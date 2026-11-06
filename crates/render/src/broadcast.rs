@@ -240,7 +240,10 @@ impl Broadcast {
         venue: crate::venues::Venue,
     ) -> Self {
         let field = fieldtex::build_field_texture(&teams[0], &teams[1]);
-        let uniforms = [teams[0].home, teams[1].away];
+        let uniforms = [
+            teams[0].worn.unwrap_or(teams[0].home),
+            teams[1].worn.unwrap_or(teams[1].away),
+        ];
         let mut scene = SceneRenderer::new(w, h, 46f32.to_radians());
         scene.lighting = venue.lighting();
         let stands = build_stadium(&teams, venue);

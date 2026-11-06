@@ -952,12 +952,20 @@ fn play_kickoff(
     series: bool,
 ) -> (view::View, Option<pad::Pad>, bool, (u32, u32)) {
     let teams = league_teams();
-    let mut game = GameState::new(
-        teams[kick.yours].clone(),
-        teams[kick.theirs].clone(),
-        seed,
-    );
-    game.set_opening_receiver(if kick.receive { 0 } else { 1 });
+    // The side the player took decides the order of the two clubs; the shirts
+    // are the ones he picked for them, whichever end of the field they line up.
+    let me = if kick.player_home { 0 } else { 1 };
+    let (home, away) = if kick.player_home {
+        (kick.yours, kick.theirs)
+    } else {
+        (kick.theirs, kick.yours)
+    };
+    let mut game = GameState::new(teams[home].clone(), teams[away].clone(), seed);
+    for (i, home_kit) in kick.kits.iter().enumerate() {
+        let team = &mut game.teams[i];
+        team.worn = Some(if *home_kit { team.home } else { team.away });
+    }
+    game.set_opening_receiver(if kick.receive { me } else { 1 - me });
     game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
         settings.difficulty,
     ));
@@ -968,7 +976,7 @@ fn play_kickoff(
         .with_lens(settings.lens_zoom, settings.lens_tilt)
         .with_settings(settings.clone())
         .with_venue(kick.venue)
-        .with_my_team(0)
+        .with_my_team(me)
         .for_series(series);
     arcade.run();
     let finished = arcade.finished();

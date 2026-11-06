@@ -496,6 +496,9 @@ pub struct Team {
     pub accent: Rgb,
     pub home: Uniform,
     pub away: Uniform,
+    /// The kit the front end chose for this side, if it chose one. `None` keeps
+    /// the side's own rule: home shirt at home, white on the road.
+    pub worn: Option<Uniform>,
     pub roster: Vec<Player>,
     /// An edited depth order, by player id, best man first. Empty when nobody has
     /// touched the chart, and then the best man by rating starts.
@@ -916,6 +919,9 @@ pub struct Club {
     pub pattern: JerseyPattern,
     pub seed: u64,
     pub level: i32,
+    /// City where white is the home shirt and the colour is what the club
+    /// travels in: Dallas and Miami do it the other way round from the league.
+    pub white_home: bool,
 }
 
 impl Club {
@@ -980,9 +986,14 @@ fn build_uniform(
     }
 }
 
-pub fn team_from_spec(spec: Club) -> Team {
-    let roster = generate_roster(spec.seed, spec.level);
-    let home = build_uniform(
+/// The two shirts a club owns: its colour and its white, in the order the club
+/// counts them. Most of the league wears the colour at home; Dallas and Miami
+/// wear white there and the colour on the road.
+///
+/// Built without a roster, so a menu can show both kits for every club on the
+/// card without generating sixteen teams to do it.
+pub fn club_kits(spec: &Club) -> (Uniform, Uniform) {
+    let colour = build_uniform(
         spec.primary,
         spec.accent,
         if spec.primary.luma() > 150.0 { spec.primary.scale(0.2) } else { Rgb::WHITE },
@@ -993,7 +1004,7 @@ pub fn team_from_spec(spec: Club) -> Team {
         spec.pattern,
         club_mark(spec.name),
     );
-    let away = build_uniform(
+    let white = build_uniform(
         Rgb::hex(0xF2F4F6),
         spec.primary,
         spec.primary.scale(0.55),
@@ -1004,6 +1015,16 @@ pub fn team_from_spec(spec: Club) -> Team {
         spec.pattern,
         club_mark(spec.name),
     );
+    if spec.white_home {
+        (white, colour)
+    } else {
+        (colour, white)
+    }
+}
+
+pub fn team_from_spec(spec: Club) -> Team {
+    let roster = generate_roster(spec.seed, spec.level);
+    let (home, away) = club_kits(&spec);
     let mut team = Team {
         id: 0,
         city: spec.city.to_string(),
@@ -1014,6 +1035,7 @@ pub fn team_from_spec(spec: Club) -> Team {
         accent: spec.accent,
         home,
         away,
+        worn: None,
         roster,
             depth: saved_depth(spec.seed),
     };
@@ -1065,45 +1087,45 @@ pub fn clubs() -> Vec<Club> {
     use JerseyPattern::*;
     vec![
         // North
-        Club { city: "Boston", name: "Lanterns", abbr: "BOS", division: Division::North, primary: Rgb::hex(0x0B3D2E), secondary: Rgb::hex(0x082A20), accent: Rgb::hex(0xE8B44A), pattern: ShoulderStripe, seed: 0xA7F1_0001, level: 8 },
-        Club { city: "Chicago", name: "Foundry", abbr: "CHI", division: Division::North, primary: Rgb::hex(0x8C2F1B), secondary: Rgb::hex(0x5E1F12), accent: Rgb::hex(0xF2C14E), pattern: Solid, seed: 0xA7F1_0002, level: 5 },
-        Club { city: "Detroit", name: "Assembly", abbr: "DET", division: Division::North, primary: Rgb::hex(0x1F3A5F), secondary: Rgb::hex(0x14263F), accent: Rgb::hex(0xFF6B35), pattern: SidePanel, seed: 0xA7F1_0003, level: 3 },
-        Club { city: "Minneapolis", name: "Northwind", abbr: "MIN", division: Division::North, primary: Rgb::hex(0x2E4A7D), secondary: Rgb::hex(0x1B2E50), accent: Rgb::hex(0xC8E6FF), pattern: Hoops, seed: 0xA7F1_0004, level: 6 },
+        Club { city: "Boston", name: "Lanterns", abbr: "BOS", division: Division::North, primary: Rgb::hex(0x0B3D2E), secondary: Rgb::hex(0x082A20), accent: Rgb::hex(0xE8B44A), pattern: ShoulderStripe, seed: 0xA7F1_0001, white_home: false, level: 8 },
+        Club { city: "Chicago", name: "Foundry", abbr: "CHI", division: Division::North, primary: Rgb::hex(0x8C2F1B), secondary: Rgb::hex(0x5E1F12), accent: Rgb::hex(0xF2C14E), pattern: Solid, seed: 0xA7F1_0002, white_home: false, level: 5 },
+        Club { city: "Detroit", name: "Assembly", abbr: "DET", division: Division::North, primary: Rgb::hex(0x1F3A5F), secondary: Rgb::hex(0x14263F), accent: Rgb::hex(0xFF6B35), pattern: SidePanel, seed: 0xA7F1_0003, white_home: false, level: 3 },
+        Club { city: "Minneapolis", name: "Northwind", abbr: "MIN", division: Division::North, primary: Rgb::hex(0x2E4A7D), secondary: Rgb::hex(0x1B2E50), accent: Rgb::hex(0xC8E6FF), pattern: Hoops, seed: 0xA7F1_0004, white_home: false, level: 6 },
         // South
-        Club { city: "Atlanta", name: "Fireflies", abbr: "ATL", division: Division::South, primary: Rgb::hex(0x3B1F5E), secondary: Rgb::hex(0x261340), accent: Rgb::hex(0xFFD166), pattern: Sash, seed: 0xA7F1_0005, level: 4 },
-        Club { city: "Miami", name: "Riptide", abbr: "MIA", division: Division::South, primary: Rgb::hex(0x0FA3B1), secondary: Rgb::hex(0x0B6E77), accent: Rgb::hex(0xF6F7EB), pattern: Hoops, seed: 0xA7F1_0006, level: 3 },
-        Club { city: "Dallas", name: "Rustlers", abbr: "DAL", division: Division::South, primary: Rgb::hex(0x7A2E1E), secondary: Rgb::hex(0x4E1C12), accent: Rgb::hex(0xE9C46A), pattern: ShoulderStripe, seed: 0xA7F1_0007, level: 7 },
-        Club { city: "Nashville", name: "Brass", abbr: "NSH", division: Division::South, primary: Rgb::hex(0xA8761F), secondary: Rgb::hex(0x6E4C12), accent: Rgb::hex(0x1B1B1B), pattern: Solid, seed: 0xA7F1_0008, level: 5 },
+        Club { city: "Atlanta", name: "Fireflies", abbr: "ATL", division: Division::South, primary: Rgb::hex(0x3B1F5E), secondary: Rgb::hex(0x261340), accent: Rgb::hex(0xFFD166), pattern: Sash, seed: 0xA7F1_0005, white_home: false, level: 4 },
+        Club { city: "Miami", name: "Riptide", abbr: "MIA", division: Division::South, primary: Rgb::hex(0x0FA3B1), secondary: Rgb::hex(0x0B6E77), accent: Rgb::hex(0xF6F7EB), pattern: Hoops, seed: 0xA7F1_0006, white_home: true, level: 3 },
+        Club { city: "Dallas", name: "Rustlers", abbr: "DAL", division: Division::South, primary: Rgb::hex(0x7A2E1E), secondary: Rgb::hex(0x4E1C12), accent: Rgb::hex(0xE9C46A), pattern: ShoulderStripe, seed: 0xA7F1_0007, white_home: true, level: 7 },
+        Club { city: "Nashville", name: "Brass", abbr: "NSH", division: Division::South, primary: Rgb::hex(0xA8761F), secondary: Rgb::hex(0x6E4C12), accent: Rgb::hex(0x1B1B1B), pattern: Solid, seed: 0xA7F1_0008, white_home: false, level: 5 },
         // East
-        Club { city: "New York", name: "Beacons", abbr: "NYC", division: Division::East, primary: Rgb::hex(0x1B2A6B), secondary: Rgb::hex(0x101A45), accent: Rgb::hex(0xF4D35E), pattern: ShoulderStripe, seed: 0xA7F1_0009, level: 6 },
-        Club { city: "Philadelphia", name: "Anvils", abbr: "PHI", division: Division::East, primary: Rgb::hex(0x2B2B2B), secondary: Rgb::hex(0x161616), accent: Rgb::hex(0xC0C0C0), pattern: SidePanel, seed: 0xA7F1_000A, level: 8 },
-        Club { city: "Washington", name: "Monuments", abbr: "WAS", division: Division::East, primary: Rgb::hex(0x12284C), secondary: Rgb::hex(0x0A1930), accent: Rgb::hex(0xD62828), pattern: Solid, seed: 0xA7F1_000B, level: 4 },
-        Club { city: "Charlotte", name: "Aviators", abbr: "CLT", division: Division::East, primary: Rgb::hex(0x2F5D8C), secondary: Rgb::hex(0x1C3A59), accent: Rgb::hex(0x9BD1F0), pattern: Hoops, seed: 0xA7F1_000C, level: 2 },
+        Club { city: "New York", name: "Beacons", abbr: "NYC", division: Division::East, primary: Rgb::hex(0x1B2A6B), secondary: Rgb::hex(0x101A45), accent: Rgb::hex(0xF4D35E), pattern: ShoulderStripe, seed: 0xA7F1_0009, white_home: false, level: 6 },
+        Club { city: "Philadelphia", name: "Anvils", abbr: "PHI", division: Division::East, primary: Rgb::hex(0x2B2B2B), secondary: Rgb::hex(0x161616), accent: Rgb::hex(0xC0C0C0), pattern: SidePanel, seed: 0xA7F1_000A, white_home: false, level: 8 },
+        Club { city: "Washington", name: "Monuments", abbr: "WAS", division: Division::East, primary: Rgb::hex(0x12284C), secondary: Rgb::hex(0x0A1930), accent: Rgb::hex(0xD62828), pattern: Solid, seed: 0xA7F1_000B, white_home: false, level: 4 },
+        Club { city: "Charlotte", name: "Aviators", abbr: "CLT", division: Division::East, primary: Rgb::hex(0x2F5D8C), secondary: Rgb::hex(0x1C3A59), accent: Rgb::hex(0x9BD1F0), pattern: Hoops, seed: 0xA7F1_000C, white_home: false, level: 2 },
         // West
-        Club { city: "Los Angeles", name: "Comets", abbr: "LAX", division: Division::West, primary: Rgb::hex(0x5B2A86), secondary: Rgb::hex(0x3A1A57), accent: Rgb::hex(0xC8FF00), pattern: Sash, seed: 0xA7F1_000D, level: 3 },
-        Club { city: "Phoenix", name: "Sandstorm", abbr: "PHX", division: Division::West, primary: Rgb::hex(0xB5651D), secondary: Rgb::hex(0x7A4413), accent: Rgb::hex(0xF2E8CF), pattern: ShoulderStripe, seed: 0xA7F1_000E, level: 6 },
-        Club { city: "Seattle", name: "Rainmakers", abbr: "SEA", division: Division::West, primary: Rgb::hex(0x14532D), secondary: Rgb::hex(0x0C3520), accent: Rgb::hex(0x7FD1AE), pattern: Solid, seed: 0xA7F1_000F, level: 5 },
-        Club { city: "Denver", name: "Altitude", abbr: "DEN", division: Division::West, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xE0E7F1), pattern: SidePanel, seed: 0xA7F1_0010, level: 7 },
+        Club { city: "Los Angeles", name: "Comets", abbr: "LAX", division: Division::West, primary: Rgb::hex(0x5B2A86), secondary: Rgb::hex(0x3A1A57), accent: Rgb::hex(0xC8FF00), pattern: Sash, seed: 0xA7F1_000D, white_home: false, level: 3 },
+        Club { city: "Phoenix", name: "Sandstorm", abbr: "PHX", division: Division::West, primary: Rgb::hex(0xB5651D), secondary: Rgb::hex(0x7A4413), accent: Rgb::hex(0xF2E8CF), pattern: ShoulderStripe, seed: 0xA7F1_000E, white_home: false, level: 6 },
+        Club { city: "Seattle", name: "Rainmakers", abbr: "SEA", division: Division::West, primary: Rgb::hex(0x14532D), secondary: Rgb::hex(0x0C3520), accent: Rgb::hex(0x7FD1AE), pattern: Solid, seed: 0xA7F1_000F, white_home: false, level: 5 },
+        Club { city: "Denver", name: "Altitude", abbr: "DEN", division: Division::West, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xE0E7F1), pattern: SidePanel, seed: 0xA7F1_0010, white_home: false, level: 7 },
         // North, the second four
-        Club { city: "Indianapolis", name: "Speedway", abbr: "IND", division: Division::North, primary: Rgb::hex(0x1C2E4A), secondary: Rgb::hex(0x101B2E), accent: Rgb::hex(0xF2C14E), pattern: SidePanel, seed: 0xA7F1_0011, level: 6 },
-        Club { city: "Columbus", name: "Quarry", abbr: "CMH", division: Division::North, primary: Rgb::hex(0x8A5A2B), secondary: Rgb::hex(0x5C3B1C), accent: Rgb::hex(0xF0E6D2), pattern: Solid, seed: 0xA7F1_0012, level: 4 },
-        Club { city: "Milwaukee", name: "Iron", abbr: "MIL", division: Division::North, primary: Rgb::hex(0x2B2F36), secondary: Rgb::hex(0x191C21), accent: Rgb::hex(0xE8B44A), pattern: ShoulderStripe, seed: 0xA7F1_0013, level: 5 },
-        Club { city: "Buffalo", name: "Gales", abbr: "BUF", division: Division::North, primary: Rgb::hex(0x274B7A), secondary: Rgb::hex(0x18304F), accent: Rgb::hex(0xD9E6F2), pattern: Hoops, seed: 0xA7F1_0014, level: 3 },
+        Club { city: "Indianapolis", name: "Speedway", abbr: "IND", division: Division::North, primary: Rgb::hex(0x1C2E4A), secondary: Rgb::hex(0x101B2E), accent: Rgb::hex(0xF2C14E), pattern: SidePanel, seed: 0xA7F1_0011, white_home: false, level: 6 },
+        Club { city: "Columbus", name: "Quarry", abbr: "CMH", division: Division::North, primary: Rgb::hex(0x8A5A2B), secondary: Rgb::hex(0x5C3B1C), accent: Rgb::hex(0xF0E6D2), pattern: Solid, seed: 0xA7F1_0012, white_home: false, level: 4 },
+        Club { city: "Milwaukee", name: "Iron", abbr: "MIL", division: Division::North, primary: Rgb::hex(0x2B2F36), secondary: Rgb::hex(0x191C21), accent: Rgb::hex(0xE8B44A), pattern: ShoulderStripe, seed: 0xA7F1_0013, white_home: false, level: 5 },
+        Club { city: "Buffalo", name: "Gales", abbr: "BUF", division: Division::North, primary: Rgb::hex(0x274B7A), secondary: Rgb::hex(0x18304F), accent: Rgb::hex(0xD9E6F2), pattern: Hoops, seed: 0xA7F1_0014, white_home: false, level: 3 },
         // South, the second four
-        Club { city: "Houston", name: "Derricks", abbr: "HOU", division: Division::South, primary: Rgb::hex(0x22303C), secondary: Rgb::hex(0x141E26), accent: Rgb::hex(0xE86A2C), pattern: Sash, seed: 0xA7F1_0015, level: 7 },
-        Club { city: "New Orleans", name: "Revelers", abbr: "NOL", division: Division::South, primary: Rgb::hex(0x4B1D5E), secondary: Rgb::hex(0x30123D), accent: Rgb::hex(0xF2C14E), pattern: Hoops, seed: 0xA7F1_0016, level: 5 },
-        Club { city: "Memphis", name: "Blues", abbr: "MEM", division: Division::South, primary: Rgb::hex(0x1B3A6B), secondary: Rgb::hex(0x102444), accent: Rgb::hex(0x9BD1F0), pattern: Solid, seed: 0xA7F1_0017, level: 4 },
-        Club { city: "Tampa", name: "Storm", abbr: "TPA", division: Division::South, primary: Rgb::hex(0x0F5C63), secondary: Rgb::hex(0x0A3D42), accent: Rgb::hex(0xF4E3B2), pattern: SidePanel, seed: 0xA7F1_0018, level: 6 },
+        Club { city: "Houston", name: "Derricks", abbr: "HOU", division: Division::South, primary: Rgb::hex(0x22303C), secondary: Rgb::hex(0x141E26), accent: Rgb::hex(0xE86A2C), pattern: Sash, seed: 0xA7F1_0015, white_home: false, level: 7 },
+        Club { city: "New Orleans", name: "Revelers", abbr: "NOL", division: Division::South, primary: Rgb::hex(0x4B1D5E), secondary: Rgb::hex(0x30123D), accent: Rgb::hex(0xF2C14E), pattern: Hoops, seed: 0xA7F1_0016, white_home: false, level: 5 },
+        Club { city: "Memphis", name: "Blues", abbr: "MEM", division: Division::South, primary: Rgb::hex(0x1B3A6B), secondary: Rgb::hex(0x102444), accent: Rgb::hex(0x9BD1F0), pattern: Solid, seed: 0xA7F1_0017, white_home: false, level: 4 },
+        Club { city: "Tampa", name: "Storm", abbr: "TPA", division: Division::South, primary: Rgb::hex(0x0F5C63), secondary: Rgb::hex(0x0A3D42), accent: Rgb::hex(0xF4E3B2), pattern: SidePanel, seed: 0xA7F1_0018, white_home: false, level: 6 },
         // East, the second four
-        Club { city: "Baltimore", name: "Clippers", abbr: "BAL", division: Division::East, primary: Rgb::hex(0x1F2A44), secondary: Rgb::hex(0x121A2C), accent: Rgb::hex(0xE8573F), pattern: ShoulderStripe, seed: 0xA7F1_0019, level: 5 },
-        Club { city: "Richmond", name: "Founders", abbr: "RIC", division: Division::East, primary: Rgb::hex(0x5A2A2A), secondary: Rgb::hex(0x3A1A1A), accent: Rgb::hex(0xE8DCC8), pattern: Solid, seed: 0xA7F1_001A, level: 3 },
-        Club { city: "Providence", name: "Sparrows", abbr: "PVD", division: Division::East, primary: Rgb::hex(0x2E5D3A), secondary: Rgb::hex(0x1C3A24), accent: Rgb::hex(0xF2E8CF), pattern: Hoops, seed: 0xA7F1_001B, level: 4 },
-        Club { city: "Syracuse", name: "Squall", abbr: "SYR", division: Division::East, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xCFE3F5), pattern: SidePanel, seed: 0xA7F1_001C, level: 2 },
+        Club { city: "Baltimore", name: "Clippers", abbr: "BAL", division: Division::East, primary: Rgb::hex(0x1F2A44), secondary: Rgb::hex(0x121A2C), accent: Rgb::hex(0xE8573F), pattern: ShoulderStripe, seed: 0xA7F1_0019, white_home: false, level: 5 },
+        Club { city: "Richmond", name: "Founders", abbr: "RIC", division: Division::East, primary: Rgb::hex(0x5A2A2A), secondary: Rgb::hex(0x3A1A1A), accent: Rgb::hex(0xE8DCC8), pattern: Solid, seed: 0xA7F1_001A, white_home: false, level: 3 },
+        Club { city: "Providence", name: "Sparrows", abbr: "PVD", division: Division::East, primary: Rgb::hex(0x2E5D3A), secondary: Rgb::hex(0x1C3A24), accent: Rgb::hex(0xF2E8CF), pattern: Hoops, seed: 0xA7F1_001B, white_home: false, level: 4 },
+        Club { city: "Syracuse", name: "Squall", abbr: "SYR", division: Division::East, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xCFE3F5), pattern: SidePanel, seed: 0xA7F1_001C, white_home: false, level: 2 },
         // West, the second four
-        Club { city: "San Diego", name: "Tide", abbr: "SDG", division: Division::West, primary: Rgb::hex(0x0E5A78), secondary: Rgb::hex(0x0A3E53), accent: Rgb::hex(0xF6E9C9), pattern: Sash, seed: 0xA7F1_001D, level: 6 },
-        Club { city: "Sacramento", name: "Delta", abbr: "SAC", division: Division::West, primary: Rgb::hex(0x3A6B4A), secondary: Rgb::hex(0x244630), accent: Rgb::hex(0xE9C46A), pattern: Solid, seed: 0xA7F1_001E, level: 4 },
-        Club { city: "Portland", name: "Timberline", abbr: "POR", division: Division::West, primary: Rgb::hex(0x1E4A34), secondary: Rgb::hex(0x12301F), accent: Rgb::hex(0xE0E7F1), pattern: ShoulderStripe, seed: 0xA7F1_001F, level: 5 },
-        Club { city: "Salt Lake", name: "Summit", abbr: "SLC", division: Division::West, primary: Rgb::hex(0x4A3A6B), secondary: Rgb::hex(0x2C2244), accent: Rgb::hex(0xF2F2EC), pattern: Hoops, seed: 0xA7F1_0020, level: 7 },
+        Club { city: "San Diego", name: "Tide", abbr: "SDG", division: Division::West, primary: Rgb::hex(0x0E5A78), secondary: Rgb::hex(0x0A3E53), accent: Rgb::hex(0xF6E9C9), pattern: Sash, seed: 0xA7F1_001D, white_home: false, level: 6 },
+        Club { city: "Sacramento", name: "Delta", abbr: "SAC", division: Division::West, primary: Rgb::hex(0x3A6B4A), secondary: Rgb::hex(0x244630), accent: Rgb::hex(0xE9C46A), pattern: Solid, seed: 0xA7F1_001E, white_home: false, level: 4 },
+        Club { city: "Portland", name: "Timberline", abbr: "POR", division: Division::West, primary: Rgb::hex(0x1E4A34), secondary: Rgb::hex(0x12301F), accent: Rgb::hex(0xE0E7F1), pattern: ShoulderStripe, seed: 0xA7F1_001F, white_home: false, level: 5 },
+        Club { city: "Salt Lake", name: "Summit", abbr: "SLC", division: Division::West, primary: Rgb::hex(0x4A3A6B), secondary: Rgb::hex(0x2C2244), accent: Rgb::hex(0xF2F2EC), pattern: Hoops, seed: 0xA7F1_0020, white_home: false, level: 7 },
     ]
 }
 
@@ -1176,8 +1198,39 @@ mod tests {
         }
     }
 
+    /// Dallas and Miami wear white at home and their colour on the road; every
+    /// other club is the other way round.
     #[test]
-    fn the_league_is_thirty_two_clubs_in_four_divisions() {
+    fn two_cities_wear_white_at_home() {
+        let all = clubs();
+        let white = |c: Rgb| c.luma() > 200.0;
+        let mut white_homes = Vec::new();
+        for club in &all {
+            let (home, away) = club_kits(club);
+            assert_eq!(
+                white(home.jersey),
+                club.white_home,
+                "{} is kitted out the wrong way round",
+                club.abbr
+            );
+            // One shirt is the colour and the other is the white, whichever
+            // way round the club counts them.
+            assert_ne!(white(home.jersey), white(away.jersey), "{}", club.abbr);
+            if club.white_home {
+                white_homes.push(club.abbr);
+            }
+        }
+        white_homes.sort_unstable();
+        assert_eq!(white_homes, ["DAL", "MIA"]);
+        // The team itself, not just the menu's copy of the kits.
+        let dal = all.iter().find(|c| c.abbr == "DAL").expect("Dallas");
+        let team = team_from_spec(dal.clone());
+        assert!(white(team.home.jersey), "Dallas does not wear white at home");
+        assert!(team.worn.is_none(), "a fresh team already has a shirt on");
+    }
+
+    #[test]
+        fn the_league_is_thirty_two_clubs_in_four_divisions() {
         let all = clubs();
         assert_eq!(all.len(), 32);
         for d in Division::ALL {

@@ -166,7 +166,10 @@ fn stick_to_world(stick: Vec2, flip_y: bool, mode: CameraMode, dir: i8) -> Vec2 
     let up = if flip_y { -stick.y } else { stick.y };
     match mode {
         // Behind the ball: up the screen is up the field, right is his right.
-        CameraMode::Classic | CameraMode::SkyCam => {
+        // The replay's lens stands in the same place, so it takes the same
+        // mapping: sending its pan through the sideline rule walked the camera
+        // across the field when the stick was pushed up it.
+        CameraMode::Classic | CameraMode::SkyCam | CameraMode::Replay => {
             let d = if dir >= 0 { 1.0 } else { -1.0 };
             Vec2::new(d * up, d * stick.x)
         }
@@ -4186,6 +4189,23 @@ mod tests {
     /// foul, a member of your own line leaning at the count is yours. Both are
     /// five yards and a replay, and the flag names the man, not the side the
     /// count was aimed at.
+    /// The replay's lens stands behind the ball like the classic shot does, so
+    /// its pan has to run down the field: the sideline mapping it used to share
+    /// walked the camera across the field when the stick was pushed up it.
+    #[test]
+    fn the_replay_pan_goes_where_the_stick_points() {
+        let up = stick_to_world(Vec2::new(0.0, 1.0), false, CameraMode::Replay, 1);
+        assert!(up.x > 0.9, "up the stick did not walk downfield: {up:?}");
+        let right = stick_to_world(Vec2::new(1.0, 0.0), false, CameraMode::Replay, 1);
+        assert!(right.y > 0.9, "right did not go to the offense's right: {right:?}");
+        // Turned round, the same push still goes up the screen.
+        let up_turned = stick_to_world(Vec2::new(0.0, 1.0), false, CameraMode::Replay, -1);
+        assert!(
+            up_turned.x < -0.9,
+            "up went behind the play when it turned round: {up_turned:?}"
+        );
+    }
+
     #[test]
     fn the_hard_count_can_be_rendered_to_pictures() {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {

@@ -46,12 +46,20 @@ fn panel() -> Rgb {
     ui::SURFACE_TOP
 }
 
-/// What the player picked in exhibition: the two clubs and the side he runs.
+/// What the player picked in exhibition: the two clubs, the side he runs, the
+/// shirt each of them wears, and the ground.
 pub struct Kickoff {
     /// The club the player picked.
     pub yours: usize,
     /// The computer's club, filled in by the menu.
     pub theirs: usize,
+    /// True when the player's club is the home side. The side decides who is
+    /// listed first and who takes the ball first, not which shirt is worn: the
+    /// shirts were chosen by hand.
+    pub player_home: bool,
+    /// The shirt each club wears, `true` for its home kit, in game order: the
+    /// home club's first.
+    pub kits: [bool; 2],
     /// True when the player takes the opening throw-off.
     pub receive: bool,
     /// The ground the game is played at: an index into the venue list.
@@ -1138,12 +1146,19 @@ fn exhibition(
     // Both sides are the player's to pick now, not just his own: the second
     // screen is the club he is playing against, from any division. Either screen
     // can be left to a roll instead.
-    let yours = pick_team(view, pad, &all, &cards, None, "YOUR TEAM")?.club(&all, None);
-    let theirs =
-        pick_team(view, pad, &all, &cards, Some(yours), "THEIR TEAM")?.club(&all, Some(yours));
+    // Both clubs first, and neither of them is "yours" yet: the side of the ball
+    // is the screen after this one.
+    let (first, first_kit) = pick_team(view, pad, &all, &cards, None, "FIRST TEAM")?.club(&all, None);
+    let (second, second_kit) =
+        pick_team(view, pad, &all, &cards, Some(first), "SECOND TEAM")?.club(&all, Some(first));
+    // The pad starts in the middle and slides to a side: the club on that side is
+    // the one the player runs, and the other hosts.
+    let (yours, theirs, player_home, kits) =
+        pick_side(view, pad, &all, first, first_kit, second, second_kit)?;
+    let home = if player_home { yours } else { theirs };
     // The ground comes before the toss: the player picks where the game is
     // played, and then stands on it to call the coin.
-    let venue = pick_venue(view, pad, yours)?;
+    let venue = pick_venue(view, pad, home)?;
     // How long and how hard, then the coin: both are about this game, so they are
     // asked here rather than buried in the settings screen.
     game_setup(view, pad, settings)?;
@@ -1151,6 +1166,8 @@ fn exhibition(
     Some(Kickoff {
         yours,
         theirs,
+        player_home,
+        kits,
         receive,
         venue,
     })
@@ -1331,20 +1348,30 @@ fn blit(frame: &mut Frame, src: &Frame, x: i32, y: i32) {
     }
 }
 
-/// What the carousel came back with: a club, or a roll of the division it was
-/// showing when the player took the random card.
+/// What the carousel came back with: a club and the shirt it will wear, or a
+/// roll of the division it was showing when the player took the random card.
 enum Pick {
-    Club(usize),
-    Random(usize),
+    Club(usize, bool),
+    Random(usize, bool),
 }
 
 impl Pick {
-    fn club(self, all: &[Club], avoid: Option<usize>) -> usize {
+    /// The club, and whether it wears its home shirt.
+    fn club(self, all: &[Club], avoid: Option<usize>) -> (usize, bool) {
         match self {
-            Pick::Club(i) => i,
-            Pick::Random(div) => roll_club(&ids_in(all, Division::ALL[div]), avoid, coin_seed()),
+            Pick::Club(i, home) => (i, home),
+            Pick::Random(div, home) => (
+                roll_club(&ids_in(all, Division::ALL[div]), avoid, coin_seed()),
+                home,
+            ),
         }
     }
+}
+
+/// The two shirts a club owns, in the order the menu names them.
+fn swatch_tone(all: &[Club], club: usize, home: bool) -> Rgb {
+    let (h, a) = nopads_core::team::club_kits(&all[club]);
+    if home { h.jersey } else { a.jersey }
 }
 
 /// One club out of a list, never the one already in the game. The extra pass is
@@ -1421,7 +1448,10 @@ fn pick_team(
     let mut div = 0usize;
     let mut sel = 0usize;
     let mut slide = 0.0f32;
-    let mut nav = [Repeat::default(), Repeat::default()];
+    // The shirt the highlighted club would wear: home until the player says
+    // otherwise, and kept per screen so a club and its kit are one choice.
+    let mut kit_home = true;
+    let mut nav = Repeat::default();
     let mut last = Instant::now();
     let mut said = 0.0f32;
     let mut t = 0.0f32;
@@ -1434,12 +1464,17 @@ fn pick_team(
         if input.pressed.b || input.pressed.start {
             return None;
         }
-        if let d = nav[1].step(input.stick.y, dt) {
-            if d != 0 {
-                div = wrap(div, Division::ALL.len(), -d);
-                sel = 0;
-                slide = 0.0;
-            }
+        // The divisions are the bumpers, not the stick: up and down were doing
+        // nothing else useful on this screen and are easy to hit by accident
+        // while rolling clubs.
+        if input.pressed.dummy || input.pressed.shoulder {
+            let d = if input.pressed.shoulder { 1 } else { -1 };
+            div = wrap(div, Division::ALL.len(), d);
+            sel = 0;
+            slide = 0.0;
+        }
+        if input.pressed.x {
+            kit_home = !kit_home;
         }
         // The clubs of this division and one card past them that rolls for the
         // player, so he never has to know a club to pick one.
@@ -1449,7 +1484,7 @@ fn pick_team(
             .collect();
         slots.push(None);
         let n = slots.len();
-        if let d = nav[0].step(input.stick.x, dt) {
+        if let d = nav.step(input.stick.x, dt) {
             if d != 0 {
                 sel = wrap(sel, n, d);
                 slide = 90.0 * d as f32;
@@ -1461,8 +1496,8 @@ fn pick_team(
         if input.pressed.a {
             match slots[sel] {
                 Some(pick) if Some(pick) == avoid => said = 1.6,
-                Some(pick) => return Some(Pick::Club(pick)),
-                None => return Some(Pick::Random(div)),
+                Some(pick) => return Some(Pick::Club(pick, kit_home)),
+                None => return Some(Pick::Random(div, kit_home)),
             }
         }
 
@@ -1568,15 +1603,154 @@ fn pick_team(
             note_color,
             1,
         );
+        if let Some(i) = club {
+            let kit = swatch_tone(all, i, kit_home);
+            frame.rounded_rect(14, 296, 30, 30, 6, ui::EDGE);
+            frame.rounded_rect(16, 298, 26, 26, 5, kit);
+            frame.fill_rect(16, 304, 26, 4, if kit_home { all[i].accent } else { all[i].primary });
+            ui::caption(
+                &mut frame,
+                52,
+                300,
+                if kit_home { "HOME KIT" } else { "AWAY KIT" },
+                paper(),
+            );
+            ui::caption(&mut frame, 52, 312, "[X] CHANGE", dim());
+        }
         footer(
             &mut frame,
-            "[LEFT/RIGHT] ROLL   [UP/DOWN] DIVISION   [A] PICK   [B] BACK",
+            "[LEFT/RIGHT] ROLL   [LB/RB] DIVISION   [A] PICK   [X] KIT   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
     }
+}
+
+/// Which side of the ball the player is on, drawn as the pad sliding between two
+/// plates the way NFL Street asks it: the choice of club was the last screen, and
+/// this is the choice of whose side of the ball he plays it from.
+///
+/// The club on the plate he settles on is his. The other club hosts nothing and
+/// wears nothing different: it simply takes the other side.
+fn pick_side(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    all: &[Club],
+    first: usize,
+    first_kit: bool,
+    second: usize,
+    second_kit: bool,
+) -> Option<(usize, usize, bool, [bool; 2])> {
+    let mut side = 0i32;
+    let mut at = 0.0f32;
+    let mut t = 0.0f32;
+    let mut nav = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b || input.pressed.start {
+            return None;
+        }
+        if let d = nav.step(input.stick.x, dt) {
+            if d != 0 {
+                side = d.signum() as i32;
+            }
+        }
+        // The icon travels to the plate rather than jumping to it, so the slide
+        // is the thing being read on screen.
+        at += (side as f32 - at) * (dt * 11.0).min(1.0);
+        t += dt;
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_side_pick(&mut frame, all, first, first_kit, second, second_kit, at, t);
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        if input.pressed.a && side != 0 {
+            return if side < 0 {
+                Some((first, second, true, [first_kit, second_kit]))
+            } else {
+                Some((second, first, false, [first_kit, second_kit]))
+            };
+        }
+        beat();
+    }
+}
+
+/// The side screen: two plates, the pad between them, and the shirt each club
+/// would wear on its plate.
+fn draw_side_pick(
+    frame: &mut Frame,
+    all: &[Club],
+    first: usize,
+    first_kit: bool,
+    second: usize,
+    second_kit: bool,
+    at: f32,
+    t: f32,
+) {
+    night(frame);
+    ui::heading(
+        frame,
+        UI_W as i32 / 2,
+        14,
+        "CHOOSE YOUR SIDE",
+        ui::T_LABEL,
+        ui::ACCENT,
+    );
+    let plates = [
+        (first, first_kit, "HOME", 168, -1.0f32),
+        (second, second_kit, "AWAY", 472, 1.0f32),
+    ];
+    for (club, kit_home, label, cx, sign) in plates {
+        let lit = at * sign > 0.35;
+        let tone = if lit { all[club].accent } else { ui::EDGE };
+        ui::card(frame, cx - 128, 74, 256, 200, tone, ui::enter(t, 0, 8));
+        centered_in(frame, cx, 86, label, ui::T_CAPTION as usize, if lit { all[club].accent } else { dim() });
+        badge(frame, cx, 140, 54, &all[club], lit);
+        centered_in(frame, cx, 190, &all[club].city.to_uppercase(), 2, paper());
+        centered_in(frame, cx, 210, &all[club].name.to_uppercase(), 1, all[club].accent);
+        // The shirt, where the plate can be read without leaving it.
+        let kit = swatch_tone(all, club, kit_home);
+        frame.rounded_rect(cx - 52, 232, 26, 26, 5, ui::EDGE);
+        frame.rounded_rect(cx - 50, 234, 22, 22, 4, kit);
+        frame.fill_rect(cx - 50, 239, 22, 3, if kit_home { all[club].accent } else { all[club].primary });
+        ui::caption(
+            frame,
+            cx - 20,
+            238,
+            if kit_home { "HOME KIT" } else { "AWAY KIT" },
+            paper(),
+        );
+    }
+    // The pad itself, sliding between the plates and resting in the middle when
+    // no side has been taken.
+    let x = 320 + (at * 118.0) as i32;
+    pad_icon(frame, x, 300);
+    if at.abs() < 0.3 {
+        centered_in(frame, 320, 316, "SLIDE TO A SIDE", 1, dim());
+    }
+    footer(
+        frame,
+        "[LEFT/RIGHT] SLIDE   [A] KICK OFF   [B] BACK",
+    );
+}
+
+/// A controller, at menu size: a body with two grips, a d-pad and two buttons.
+fn pad_icon(frame: &mut Frame, cx: i32, cy: i32) {
+    frame.rounded_rect(cx - 18, cy - 9, 36, 18, 7, ui::EDGE);
+    frame.rounded_rect(cx - 16, cy - 7, 32, 14, 5, ui::PAPER);
+    frame.fill_rect(cx - 16, cy - 1, 4, 8, ui::EDGE);
+    frame.fill_rect(cx + 12, cy - 1, 4, 8, ui::EDGE);
+    frame.fill_rect(cx - 8, cy - 1, 6, 2, ui::INK);
+    frame.fill_rect(cx - 6, cy - 3, 2, 6, ui::INK);
+    frame.fill_rect(cx + 3, cy - 3, 3, 3, ui::INK);
+    frame.fill_rect(cx + 7, cy + 1, 3, 3, ui::ACCENT);
 }
 
 // ---------------------------------------------------------------------------
@@ -1608,7 +1782,7 @@ fn season_setup(
             }
         })
         .collect();
-    let you = pick_team(view, pad, &all, &cards, None, "YOUR CLUB THIS SEASON")?.club(&all, None);
+    let (you, _) = pick_team(view, pad, &all, &cards, None, "YOUR CLUB THIS SEASON")?.club(&all, None);
     let weeks = season_length(view, pad, you, &all)?;
     Some(Season::new(you, weeks, coin_seed()))
 }
@@ -1866,6 +2040,8 @@ pub fn season_hub(
                             return Some(SeasonStep::Play(Kickoff {
                                 yours: season.you,
                                 theirs,
+                                player_home: f.home == season.you,
+                                kits: [true, false],
                                 receive: coin_seed() % 2 == 0,
                                 venue,
                             }));
@@ -2475,6 +2651,35 @@ mod tests {
 
     /// The screens, rendered to PNGs so the layout can be looked at as well as
     /// measured. Only runs when asked: CI has nowhere to put the pictures.
+    /// The side screen, in the three states it is looked at in: undecided, on
+    /// the home plate, on the away plate. Dallas is on the home plate because
+    /// its white is its home shirt, which the picture has to show.
+    #[test]
+    fn the_side_screen_can_be_rendered_to_pictures() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        let all = clubs();
+        let find = |abbr: &str| {
+            all.iter()
+                .position(|c| c.abbr == abbr)
+                .unwrap_or_else(|| panic!("no club {abbr}"))
+        };
+        let (first, second) = (find("DAL"), find("BOS"));
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let frames = [
+            ("side_middle", 0.0f32, 0.0f32),
+            ("side_home", -1.0, 0.45),
+            ("side_away", 1.0, 0.45),
+        ];
+        for (name, at, t) in frames {
+            let mut frame = Frame::new(UI_W, UI_H);
+            draw_side_pick(&mut frame, &all, first, true, second, false, at, t);
+            nopads_render::write_png(format!("{dir}/{name}.png"), &frame).expect("write png");
+        }
+        println!("wrote the side screen to {dir}");
+    }
+
     #[test]
     fn the_front_end_can_be_rendered_to_pictures() {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {
