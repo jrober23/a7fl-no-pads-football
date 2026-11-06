@@ -15,6 +15,7 @@ use nopads_core::team::{
     TeamRatings,
 };
 use nopads_render::raster::Frame;
+use nopads_render::ui;
 use nopads_render::venues::{self, Venue};
 use nopads_render::{Broadcast, CameraMode};
 
@@ -23,24 +24,26 @@ use nopads_platform::pad::{self, Pad};
 use nopads_platform::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
 use crate::view::{View, UI_H, UI_W};
 
+// The screens take their colours from the design kit, so a change to a token
+// changes every screen at once instead of the one that was edited.
 fn paper() -> Rgb {
-    Rgb::new(232, 238, 246)
+    ui::PAPER
 }
 
 fn dim() -> Rgb {
-    Rgb::new(118, 132, 154)
+    ui::MUTED
 }
 
 fn accent() -> Rgb {
-    Rgb::new(255, 196, 64)
+    ui::ACCENT
 }
 
 fn backdrop() -> Rgb {
-    Rgb::new(12, 16, 26)
+    ui::INK
 }
 
 fn panel() -> Rgb {
-    Rgb::new(26, 38, 60)
+    ui::SURFACE_TOP
 }
 
 /// What the player picked in exhibition: the two clubs and the side he runs.
@@ -120,18 +123,9 @@ fn centered_in(frame: &mut Frame, cx: i32, y: i32, text: &str, scale: usize, col
 }
 
 fn night(frame: &mut Frame) {
-    frame.clear(backdrop());
-    frame.gradient_rect(
-        0,
-        0,
-        UI_W as i32,
-        UI_H as i32,
-        Rgb::new(20, 30, 50),
-        Rgb::new(6, 9, 15),
-    );
-    // Two painted lines, so the screen reads as the same field the game is on.
-    frame.fill_rect(0, 96, UI_W as i32, 1, Rgb::new(30, 48, 76));
-    frame.fill_rect(0, 272, UI_W as i32, 1, Rgb::new(30, 48, 76));
+    // The page, the pool of light and the painted lines all come from the kit:
+    // every screen sits on the same surface rather than on its own fill.
+    ui::backdrop(frame);
 }
 
 /// A club's badge: a shield in its colours with the three-letter mark on it.
@@ -160,10 +154,14 @@ fn badge(frame: &mut Frame, cx: i32, cy: i32, size: i32, club: &Club, lit: bool)
 }
 
 fn footer(frame: &mut Frame, text: &str) {
-    frame.fill_rect(0, UI_H as i32 - 22, UI_W as i32, 22, Rgb::new(8, 11, 18));
-    frame.fill_rect(0, UI_H as i32 - 22, UI_W as i32, 1, Rgb::new(30, 48, 76));
-    centered(frame, UI_H as i32 - 15, text, 1, dim());
+    let h = UI_H as i32;
+    frame.fill_rect_alpha(0, h - 26, UI_W as i32, 26, ui::INK, 0.72);
+    ui::divider(frame, 0, h - 26, UI_W as i32);
+    let hints = ui::parse_hints(text);
+    ui::hints(frame, UI_W as i32 / 2, h - 18, &hints);
 }
+
+
 
 // ---------------------------------------------------------------------------
 // Input
@@ -235,22 +233,64 @@ fn beat() {
 /// the stick, so the layout can be looked at: it is the screen a player meets
 /// first, and it is laid out corner to corner on the grid rather than in a list
 /// of numbers that only means anything on one canvas.
-fn draw_start(frame: &mut Frame, pick: usize) {
+fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
     const LABELS: [&str; 5] = ["EXHIBITION", "SEASON", "CUSTOMIZATION", "SETTINGS", "QUIT"];
-        night(frame);
-        centered(frame, 34, "7-ON-7", 7, accent());
-        centered(frame, 100, "NO PADS FOOTBALL", 2, paper());
-        frame.fill_rect(150, 160, 340, 1, Rgb::new(48, 92, 148));
-        for (i, label) in LABELS.iter().enumerate() {
-            let y = 182 + i as i32 * 28;
-            let on = i == pick;
-            if on {
-                frame.fill_rect(228, y - 6, 190, 24, panel());
-                frame.fill_rect(228, y - 6, 4, 24, accent());
-            }
-            frame.text_shadowed(246, y, label, 2, if on { paper() } else { dim() }, 1);
-        }
-        footer(frame, "[STICK] CHOOSE   [A] SELECT   [START] QUIT");
+    const NOTES: [&str; 5] = [
+        "ONE GAME, PICKED IN A MINUTE",
+        "A CLUB, A LEAGUE, A SEASON",
+        "DEPTH CHARTS AND ROSTERS",
+        "CAMERA, LENS AND DISPLAY",
+        "CLOSE THE GAME",
+    ];
+    ui::backdrop(frame);
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    let cx = w / 2;
+
+    // The masthead arrives first and settles: the title is the one thing on the
+    // screen that is not a choice.
+    let hero = ui::enter(t, 0, LABELS.len() + 3);
+    let title_y = (h as f32 * 0.075) as i32 - ((1.0 - hero) * 6.0) as i32;
+    ui::heading(frame, cx, title_y, "7-ON-7", ui::T_HERO, ui::ACCENT);
+    let sub = "NO PADS FOOTBALL";
+    ui::caption(
+        frame,
+        cx - ui::tracked_width(sub, ui::T_CAPTION, 2) / 2,
+        title_y + 58,
+        sub,
+        ui::MUTED,
+    );
+
+    // One card holding every choice: the rows are a list, so the card is the
+    // surface and the accent bar is the selection.
+    let card_w = (w - 160).clamp(220, 360);
+    let row_h = 26;
+    let gap = 6;
+    let pad = ui::S3;
+    let n = LABELS.len() as i32;
+    let card_h = pad * 2 + n * row_h + (n - 1) * gap;
+    let card_x = cx - card_w / 2;
+    let card_y = (h as f32 * 0.32) as i32;
+    let lit = ui::enter(t, 1, LABELS.len() + 3);
+    ui::card(frame, card_x, card_y, card_w, card_h, ui::ACCENT, lit);
+
+    for (i, label) in LABELS.iter().enumerate() {
+        let y = card_y + pad + i as i32 * (row_h + gap);
+        let heat = slide.heat(i) * ui::enter(t, i + 2, LABELS.len() + 3);
+        ui::row(frame, card_x + pad, y, card_w - pad * 2, row_h, label, None, heat, ui::ACCENT);
+    }
+
+    // The line under the card says what the highlighted choice is, so the menu
+    // explains itself without a second screen.
+    frame.text_shadowed(
+        cx - text_width(NOTES[pick], ui::T_CAPTION) / 2,
+        card_y + card_h + ui::S4,
+        NOTES[pick],
+        ui::T_CAPTION,
+        dim(),
+        1,
+    );
+    footer(frame, "[STICK] CHOOSE   [A] SELECT   [START] QUIT");
 }
 
 fn start_screen(
@@ -261,12 +301,16 @@ fn start_screen(
     const ITEMS: usize = 5;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut t = 0.0f32;
     let mut last = Instant::now();
     view.reset();
     loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
+        t += dt;
+        slide.step(pick, dt);
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.start {
             return Some(Start::Quit);
@@ -278,7 +322,7 @@ fn start_screen(
         }
 
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_start(&mut frame, pick);
+        draw_start(&mut frame, pick, &slide, t);
 
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -297,6 +341,48 @@ fn start_screen(
 }
 
 // ---------------------------------------------------------------------------
+// One list of choices
+// ---------------------------------------------------------------------------
+
+/// A screen that is a heading, a caption and one card of rows. The settings and
+/// the game setup were the same forty lines twice; this is that screen once, so
+/// a change to the row height or the card does not have to be made twice and
+/// cannot drift between them.
+fn draw_option_screen(
+    frame: &mut Frame,
+    title: &str,
+    caption: &str,
+    rows: &[(&str, String)],
+    slide: &ui::Slide,
+    note: &str,
+    keys: &str,
+) {
+    night(frame);
+    let w = frame.w as i32;
+    ui::heading(frame, w / 2, 22, title, ui::T_BODY, ui::ACCENT);
+    ui::caption(
+        frame,
+        w / 2 - ui::tracked_width(caption, ui::T_CAPTION, 1) / 2,
+        50,
+        caption,
+        dim(),
+    );
+    let x = 110;
+    let cw = w - 220;
+    let (row_h, gap) = (30, 6);
+    let n = rows.len() as i32;
+    let card_h = n * (row_h + gap) + ui::S3;
+    ui::card(frame, x - ui::S3, 74, cw + ui::S3 * 2, card_h, ui::ACCENT, 1.0);
+    for (i, (name, value)) in rows.iter().enumerate() {
+        let y = 84 + i as i32 * (row_h + gap);
+        let value = (!value.is_empty()).then_some(value.as_str());
+        ui::row(frame, x, y, cw, row_h, name, value, slide.heat(i), ui::ACCENT);
+    }
+    centered(frame, 74 + card_h + 20, note, 1, dim());
+    footer(frame, keys);
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
 
@@ -308,6 +394,7 @@ fn settings_screen(
     const ROWS: usize = 5;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
     loop {
@@ -372,9 +459,7 @@ fn settings_screen(
             last = Instant::now();
             continue;
         }
-        let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        centered(&mut frame, 30, "SETTINGS", 3, accent());
+        slide.step(pick, dt);
         let rows = [
             ("CAMERA", CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string()),
             ("LENS", settings.lens_label()),
@@ -382,20 +467,16 @@ fn settings_screen(
             ("DISPLAY", settings.display_label().to_string()),
             ("BACK", String::new()),
         ];
-        for (i, (name, value)) in rows.iter().enumerate() {
-            let y = 96 + i as i32 * 36;
-            let on = i == pick;
-            if on {
-                frame.fill_rect(118, y - 8, 404, 30, panel());
-                frame.fill_rect(118, y - 8, 4, 30, accent());
-            }
-            frame.text_shadowed(138, y, name, 2, if on { paper() } else { dim() }, 1);
-            if !value.is_empty() {
-                let vx = 500 - text_width(value, 2);
-                frame.text_shadowed(vx, y, value, 2, if on { accent() } else { dim() }, 1);
-            }
-        }
-        centered(&mut frame, 258, "CHANGES ARE SAVED AS YOU MAKE THEM", 1, dim());
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut frame,
+            "SETTINGS",
+            "THE GAME'S OWN DEFAULTS",
+            &rows,
+            &slide,
+            "CHANGES ARE SAVED AS YOU MAKE THEM",
+            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
+        );
         footer(&mut frame, "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -421,6 +502,7 @@ fn game_setup(
     const DIFFICULTY: [&str; 3] = ["EASY", "NORMAL", "HARD"];
     let mut pick = 0usize;
     let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
     loop {
@@ -459,29 +541,22 @@ fn game_setup(
                 }
             }
         }
+        slide.step(pick, dt);
         let rows = [
             ("QUARTERS", settings.quarter_label()),
             ("DIFFICULTY", DIFFICULTY[settings.difficulty % 3].to_string()),
             ("KICK OFF", String::new()),
         ];
         let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        centered(&mut frame, 34, "GAME SETUP", 3, accent());
-        centered(&mut frame, 76, "HOW LONG, AND HOW HARD", 1, dim());
-        for (i, (name, value)) in rows.iter().enumerate() {
-            let y = 128 + i as i32 * 40;
-            let on = i == pick;
-            if on {
-                frame.fill_rect(118, y - 8, 404, 32, panel());
-                frame.fill_rect(118, y - 8, 4, 32, accent());
-            }
-            frame.text_shadowed(138, y, name, 2, if on { paper() } else { dim() }, 1);
-            if !value.is_empty() {
-                let vx = 500 - text_width(value, 2);
-                frame.text_shadowed(vx, y, value, 2, if on { accent() } else { dim() }, 1);
-            }
-        }
-        centered(&mut frame, 262, "SAVED, AND USED BY THIS GAME", 1, dim());
+        draw_option_screen(
+            &mut frame,
+            "GAME SETUP",
+            "HOW LONG, AND HOW HARD",
+            &rows,
+            &slide,
+            "SAVED, AND USED BY THIS GAME",
+            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
+        );
         footer(
             &mut frame,
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
@@ -893,7 +968,7 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         let mut frame = Frame::new(UI_W, UI_H);
         frame.gradient_rect(0, 0, UI_W as i32, UI_H as i32, sky[0], sky[2]);
         frame.fill_rect_alpha(0, 0, UI_W as i32, UI_H as i32, Rgb::new(4, 6, 10), 0.62);
-        centered(&mut frame, 8, "WHERE IS IT PLAYED", 2, accent());
+        ui::heading(&mut frame, UI_W as i32 / 2, 8, "WHERE IS IT PLAYED", ui::T_LABEL, ui::ACCENT);
         let note = format!("{} OF {}", sel + 1, venues::COUNT);
         frame.text_shadowed(
             UI_W as i32 - 14 - text_width(&note, 1),
@@ -912,12 +987,24 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
                 let x = 24 + col as i32 * CELL_W;
                 let y = 34 + row as i32 * CELL_H;
                 let on = i == sel;
-                frame.fill_rect(
+                // A rounded frame with a lit ring, and a shadow under the
+                // selected still so it lifts off the grid it sits in.
+                frame.rounded_rect_alpha(
+                    x - 6,
+                    y - 4,
+                    THUMB_W as i32 + 12,
+                    THUMB_H as i32 + 12,
+                    8,
+                    Rgb::BLACK,
+                    if on { 0.50 } else { 0.26 },
+                );
+                frame.rounded_rect(
                     x - 3,
                     y - 3,
                     THUMB_W as i32 + 6,
                     THUMB_H as i32 + 6,
-                    if on { accent() } else { Rgb::new(28, 42, 62) },
+                    6,
+                    if on { accent() } else { ui::EDGE },
                 );
                 match &thumbs[i] {
                     Some(shot) => blit(&mut frame, shot, x, y),
@@ -931,8 +1018,9 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
                 }
             }
         }
+        ui::card(&mut frame, 150, 282, 340, 42, sky[1], 1.0);
         centered(&mut frame, 292, &venue.name(), 2, paper());
-        centered(&mut frame, 314, &venue.sub(), 1, sky[1].lerp(paper(), 0.5));
+        centered(&mut frame, 311, &venue.sub(), 1, sky[1].lerp(paper(), 0.5));
         footer(&mut frame, "[ARROWS] GROUND   [A] PLAY   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -1059,6 +1147,7 @@ fn pick_team(
     let mut nav = [Repeat::default(), Repeat::default()];
     let mut last = Instant::now();
     let mut said = 0.0f32;
+    let mut t = 0.0f32;
     view.reset();
     loop {
         let now = Instant::now();
@@ -1089,6 +1178,7 @@ fn pick_team(
                 slide = 90.0 * d as f32;
             }
         }
+        t += dt;
         slide *= 1.0 - (dt * 9.0).min(1.0);
         said = (said - dt).max(0.0);
         if input.pressed.a {
@@ -1104,19 +1194,23 @@ fn pick_team(
         let next = slots[wrap(sel, n, 1)];
         let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
-        centered(&mut frame, 16, heading, 2, accent());
+        ui::heading(&mut frame, UI_W as i32 / 2, 14, heading, ui::T_LABEL, ui::ACCENT);
+        // The divisions are one segmented control, not four labels in a row.
+        let widths: Vec<i32> = Division::ALL.iter().map(|d| ui::chip_width(d.label())).collect();
+        let total: i32 = widths.iter().sum::<i32>() + ui::S2 * (widths.len() as i32 - 1);
+        let mut tab_x = UI_W as i32 / 2 - total / 2;
         for (i, d) in Division::ALL.iter().enumerate() {
-            let x = 118 + i as i32 * 108;
-            let on = i == div;
-            if on {
-                frame.fill_rect(x - 10, 44, 104, 20, panel());
-                frame.fill_rect(x - 10, 62, 104, 2, accent());
-            }
-            frame.text_shadowed(x, 49, d.label(), 1, if on { paper() } else { dim() }, 1);
+            ui::chip(&mut frame, tab_x, 42, d.label(), if i == div { 1.0 } else { 0.0 }, ui::ACCENT);
+            tab_x += widths[i] + ui::S2;
         }
-        slot(&mut frame, all, 96, 150, 62, prev, false);
-        slot(&mut frame, all, 544, 150, 62, next, false);
-        slot(&mut frame, all, 320 + slide as i32, 152, 104, club, true);
+        let accent_tone = match club {
+            Some(i) => all[i].accent,
+            None => ui::ACCENT,
+        };
+        ui::card(&mut frame, 190, 74, 260, 226, accent_tone, ui::enter(t, 0, 8));
+        slot(&mut frame, all, 92, 150, 54, prev, false);
+        slot(&mut frame, all, 548, 150, 54, next, false);
+        slot(&mut frame, all, 320 + slide as i32, 130, 88, club, true);
         let (city, name, tone) = match club {
             Some(i) => (
                 all[i].city.to_uppercase(),
@@ -1125,29 +1219,23 @@ fn pick_team(
             ),
             None => ("RANDOM".to_string(), "ROLL THE DICE".to_string(), accent()),
         };
-        centered(&mut frame, 238, &city, 3, paper());
-        centered(&mut frame, 272, &name, 2, tone);
+        centered_in(&mut frame, 320, 184, &city, 3, paper());
+        centered_in(&mut frame, 320, 206, &name, 2, tone);
+        frame.fill_rect(210, 226, 220, 1, ui::EDGE);
         if let Some(i) = club {
             let card = &cards[i];
             let r = card.ratings;
-            centered(
-                &mut frame,
-                292,
-                &format!(
-                    "OVR {}    OFF {}    DEF {}",
-                    r.overall, r.offense, r.defense
-                ),
-                2,
-                paper(),
-            );
-            for (k, (who, rating)) in card.stars.iter().enumerate() {
-                centered(
-                    &mut frame,
-                    314 + k as i32 * 10,
-                    &format!("{who}  {rating}"),
-                    1,
-                    dim(),
-                );
+            let bars = [("OVR", r.overall), ("OFF", r.offense), ("DEF", r.defense)];
+            for (k, (label, value)) in bars.iter().enumerate() {
+                let y = 234 + k as i32 * 15;
+                ui::caption(&mut frame, 212, y + 1, label, dim());
+                ui::meter(&mut frame, 248, y, 136, 6, *value as f32 / 99.0, accent_tone);
+                let v = format!("{value}");
+                frame.text_shadowed(390, y - 1, &v, 1, paper(), 1);
+            }
+            if let Some((who, rating)) = card.stars.first() {
+                let line = format!("{who}  {rating}");
+                centered(&mut frame, 282, &line, 1, dim());
             }
         }
         // The counter keeps to the corner so the card has the middle of the
@@ -1308,12 +1396,14 @@ pub fn season_hub(
     let mut last = Instant::now();
     let mut note = String::new();
     let mut note_t = 0.0f32;
+    let mut slide = ui::Slide::new(0);
     view.reset();
     loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
         note_t = (note_t - dt).max(0.0);
+        slide.step(pick, dt);
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.start {
             return Some(SeasonStep::Done);
@@ -1439,6 +1529,7 @@ pub fn season_hub(
         }
 
         // Left: the player's division table. Right: the bracket, or the picture.
+        ui::card(&mut frame, 12, 90, 244, 198, ui::ACCENT, 1.0);
         frame.fill_rect(20, 96, 1, 200, Rgb::new(38, 58, 88));
         frame.text_shadowed(20, 96, all[season.you].division.label(), 1, accent(), 1);
         let table = season.table(all[season.you].division);
@@ -1455,6 +1546,7 @@ pub fn season_hub(
             frame.text_shadowed(248 - text_width(&right, 1), y, &right, 1, if on { paper() } else { dim() }, 1);
         }
 
+        ui::card(&mut frame, 284, 90, 344, 198, ui::ACCENT, 1.0);
         // Right half: the bracket once it exists, the division leaders before it.
         if page == 1 && !season.rounds.is_empty() {
             frame.text_shadowed(290, 96, "THE BRACKET", 1, accent(), 1);
@@ -1516,18 +1608,9 @@ pub fn season_hub(
         // The actions sit in one row along the bottom, above the footer.
         let mut x = 24;
         for (i, label) in rows.iter().enumerate() {
-            let on = i == pick && season.phase != Phase::Done;
-            let w = text_width(label, 1) + 18;
-            frame.rounded_rect(x, 292, w, 18, 4, if on { accent() } else { panel() });
-            frame.text_shadowed(
-                x + 9,
-                297,
-                label,
-                1,
-                if on { backdrop() } else { dim() },
-                1,
-            );
-            x += w + 8;
+            let heat = if season.phase == Phase::Done { 0.0 } else { slide.heat(i) };
+            let w = ui::chip(&mut frame, x, 292, label, heat, ui::ACCENT);
+            x += w + ui::S2;
         }
         if note_t > 0.0 {
             centered(&mut frame, 276, &note, 1, accent());
@@ -1814,25 +1897,85 @@ mod tests {
 
     #[test]
     fn the_start_menu_lands_in_the_middle_of_the_picture() {
-        let (cw, ch) = (crate::view::CANVAS_W, crate::view::CANVAS_H);
-        let mut ui = Frame::new(UI_W, UI_H);
-        draw_start(&mut ui, 0);
-        let mut canvas = Frame::new(cw, ch);
-        canvas.blit_up(&ui, UI_SCALE);
-        // The accent bar down the side of the highlighted row is at grid x 228,
-        // which has to come out at twice that on the canvas: in the middle of the
-        // picture, not against its left edge.
-        let x = 228 * UI_SCALE as usize + 2;
-        let y = 190 * UI_SCALE as usize;
-        assert_eq!(
-            canvas.color[y * cw + x],
-            accent(),
-            "the menu did not scale onto the canvas"
+        let mut screen = Frame::new(UI_W, UI_H);
+        draw_start(&mut screen, 0, &ui::Slide::new(0), 1.0);
+        // The card's top rule is the longest run of accent on the screen. It has
+        // to be centred on the frame and narrower than it, because that is what
+        // "the menu is in the middle and not a slab" means.
+        let (mut best, mut best_row, mut x0, mut x1) = (0, 0, 0, 0);
+        for y in 0..UI_H as i32 {
+            let mut run = 0;
+            let mut run_x0 = 0;
+            for x in 0..UI_W as i32 {
+                if screen.get(x, y) == ui::ACCENT {
+                    if run == 0 {
+                        run_x0 = x;
+                    }
+                    run += 1;
+                    if run > best {
+                        best = run;
+                        best_row = y;
+                        x0 = run_x0;
+                        x1 = x;
+                    }
+                } else {
+                    run = 0;
+                }
+            }
+        }
+        assert!(
+            best > 120,
+            "the card has no accent rule: the longest run is {best} px at row {best_row}"
         );
         assert!(
-            x > cw / 4,
-            "the menu is back in the top left corner at x {x}"
+            best < UI_W as i32 - 40,
+            "the rule spans the whole screen: {best} px"
         );
+        let centre = (x0 + x1) / 2;
+        assert!(
+            (centre - UI_W as i32 / 2).abs() <= 4,
+            "the card is off centre: its rule runs {x0}..{x1}"
+        );
+        // And it still goes through the whole-number scale onto the canvas.
+        assert_eq!(UI_SCALE, 2);
+    }
+
+    /// The screens, rendered to PNGs so the layout can be looked at as well as
+    /// measured. Only runs when asked: CI has nowhere to put the pictures.
+    #[test]
+    fn the_front_end_can_be_rendered_to_pictures() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let save = |name: &str, screen: &Frame| {
+            let mut canvas = Frame::new(crate::view::CANVAS_W, crate::view::CANVAS_H);
+            canvas.blit_up(screen, UI_SCALE);
+            nopads_render::write_png(format!("{dir}/{name}.png"), &canvas).expect("write png");
+        };
+        let mut start = Frame::new(UI_W, UI_H);
+        draw_start(&mut start, 1, &ui::Slide::new(1), 2.0);
+        save("start", &start);
+
+        let rows = [
+            ("CAMERA", "BROADCAST".to_string()),
+            ("LENS", "1.00 / +0.00".to_string()),
+            ("RESOLUTION", "1280 X 720".to_string()),
+            ("DISPLAY", "WINDOWED".to_string()),
+            ("BACK", String::new()),
+        ];
+        let mut settings = Frame::new(UI_W, UI_H);
+        draw_option_screen(
+            &mut settings,
+            "SETTINGS",
+            "THE GAME'S OWN DEFAULTS",
+            &rows,
+            &ui::Slide::new(2),
+            "CHANGES ARE SAVED AS YOU MAKE THEM",
+            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
+        );
+        save("settings", &settings);
+        println!("wrote the front end to {dir}");
     }
 
     #[test]

@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use nopads_core::ai;
 use nopads_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
-use nopads_core::math::{Rgb, Rng, Vec2, Vec3};
+use nopads_core::math::{Rng, Vec2, Vec3};
 use nopads_core::moves::Kind;
 use nopads_core::playbook::{
     def_calls_in, defensive_playbook, formations_in, fronts_in, playbook, plays_in, DefCall,
@@ -1829,23 +1829,35 @@ enum PauseAction {
 /// The menu, set over the frozen picture rather than on a page of their own.
 fn draw_pause_lines(frame: &mut nopads_render::Frame, lines: &[String]) {
     // The one screen drawn straight onto the frozen picture rather than on a
-    // frame of its own, so it cannot be laid out small and blown up: its numbers
-    // are multiplied by the same factor the interface grid is scaled by, which
-    // puts the panel and its text where the 640-wide design had them.
+    // frame of its own, so its numbers are multiplied by the same factor the
+    // interface grid is scaled by, which puts the panel and its text where the
+    // 640-wide design had them.
     let s = UI_SCALE as i32;
-    let line_h = 18 * s;
-    let h = lines.len() as i32 * line_h + 20 * s;
+    let line_h = 17 * s;
+    let w = 330 * s;
+    let h = lines.len() as i32 * line_h + 22 * s;
+    let x = ((frame.w as i32 - w) / 2).max(0);
     let y0 = ((frame.h as i32 - h) / 2).max(0);
-    frame.fill_rect_alpha(34 * s, y0, frame.w as i32 - 68 * s, h, Rgb::new(8, 12, 18), 0.80);
+    // The same glass as the introduction cards: a pause is another thing the
+    // game puts over a live picture, so it is the same piece of glass.
+    nopads_render::ui::glass(frame, x, y0, w, h, nopads_render::ui::ACCENT, 0.86);
     for (i, line) in lines.iter().enumerate() {
-        frame.text_shadowed(
-            50 * s,
-            y0 + 10 * s + i as i32 * line_h,
-            line,
-            2 * UI_SCALE,
-            Rgb::new(232, 238, 246),
-            1,
-        );
+        let ly = y0 + 11 * s + i as i32 * line_h;
+        let text = line.trim();
+        if text.is_empty() {
+            continue;
+        }
+        if text.starts_with('[') {
+            let hints = nopads_render::ui::parse_hints(text);
+            nopads_render::ui::hints(frame, x + w / 2, ly + s / 2, &hints);
+            continue;
+        }
+        let ink = if i <= 1 || text.starts_with(">>") {
+            nopads_render::ui::ACCENT
+        } else {
+            nopads_render::ui::PAPER
+        };
+        frame.text_shadowed(x + 18 * s, ly, text, 2 * UI_SCALE, ink, 1);
     }
 }
 

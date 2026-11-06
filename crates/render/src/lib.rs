@@ -32,6 +32,7 @@ pub mod post;
 pub mod raster;
 pub mod scene;
 pub mod terminal;
+pub mod ui;
 pub mod venues;
 
 pub use broadcast::{Broadcast, CameraMode};

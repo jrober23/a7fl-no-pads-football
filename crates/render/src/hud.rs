@@ -412,65 +412,75 @@ impl Scoreboard {
 /// distance underneath. The client only draws it before the snap and again once
 /// the play is dead and reset, which is where a broadcast's score bug lives too.
 pub fn draw_scoreboard(frame: &mut Frame, s: &Scoreboard) {
-    let x = 10;
-    let y = 8;
-    let row_w = 168;
-    let row_h = 19;
-    let clock_w = 74;
-    let h = row_h * 2 + 14;
+    let x = 14;
+    let y = 12;
+    let row_w = 180;
+    // The score is set at scale 3, which is 21 pixels: a 22 pixel row clipped a
+    // pixel off the bottom of every digit.
+    let row_h = 24;
+    let clock_w = 84;
+    let total_w = row_w + clock_w + 8;
+    let total_h = row_h * 2 + 17;
+    // The whole bug is one card rather than three rectangles stacked: a shadow,
+    // a hairline and a graded face, the way the rest of the overlay is built.
     frame.panel(
-        x - 6,
-        y - 6,
-        row_w + clock_w + 20,
-        h + 12,
-        8,
-        Rgb::hex(0x1B2432),
+        x - 8,
+        y - 8,
+        total_w + 16,
+        total_h + 16,
+        10,
+        Rgb::hex(0x161F2B),
         Rgb::hex(0x0A0E15),
         PANEL_EDGE,
-        0.55,
+        0.4,
     );
 
     for t in 0..2 {
         let ty = y + t as i32 * row_h;
         let has_it = s.possession == t;
-        let bg = if has_it { s.primary[t].scale(0.7) } else { PANEL };
-        frame.fill_rect(x, ty, row_w, row_h - 1, bg);
-        frame.fill_rect(x, ty, 5, row_h - 1, s.primary[t]);
-        frame.fill_rect(x + 5, ty, 2, row_h - 1, s.accent[t]);
-        let ink = if has_it && s.primary[t].luma() > 150.0 { INK } else { WHITE };
-        font::draw_styled(frame, x + 12, ty + 5, &s.abbr[t], 2, ink, 1, false);
+        let bg = if has_it { s.primary[t].scale(0.62) } else { Rgb::hex(0x11161D) };
+        frame.rounded_rect(x - 4, ty, row_w + 8, row_h - 2, 4, bg);
+        // The club's colour on the leading edge, with its accent as a hairline
+        // beside it when it has the ball.
+        frame.rounded_rect(x - 4, ty, 4, row_h - 2, 2, s.primary[t]);
         if has_it {
-            // Possession: a small ball beside the name.
-            frame.fill_rect(x + 12 + font::text_width(&s.abbr[t], 2) as i32 + 6, ty + 8, 4, 4, ink);
+            frame.fill_rect(x - 1, ty + 4, 1, row_h - 10, s.accent[t]);
         }
-        // Timeout pips, then the score.
+        let ink = if has_it && s.primary[t].luma() > 150.0 { INK } else { WHITE };
+        font::draw_styled(frame, x + 8, ty + 4, &s.abbr[t], 2, ink, 1, false);
+        if has_it {
+            // Possession: a small lit mark beside the name.
+            let nw = font::text_width(&s.abbr[t], 2) as i32;
+            frame.fill_rect(x + 13 + nw, ty + 9, 3, 3, ink);
+        }
         for i in 0..3 {
             let filled = (i as u8) < s.timeouts[t];
-            let px = x + row_w - 86 + i * 8;
-            frame.fill_rect(
+            let px = x + row_w - 78 + i * 9;
+            frame.rounded_rect(
                 px,
-                ty + row_h / 2 - 3,
-                5,
-                5,
+                ty + row_h / 2 - 5,
+                6,
+                6,
+                3,
                 if filled { s.accent[t] } else { PANEL_EDGE },
             );
         }
-        font::draw_right(frame, x + row_w - 10, ty + 2, &format!("{}", s.score[t]), 3, WHITE, 1);
+        font::draw_right(frame, x + row_w - 8, ty, &format!("{}", s.score[t]), 3, WHITE, 1);
     }
+    frame.fill_rect(x - 4, y + row_h - 2, row_w + 8, 1, Rgb::hex(0x0A0E15));
 
-    // Clock block, beside the clubs the way a broadcast puts it.
-    let cx = x + row_w + 6;
-    frame.fill_rect(cx, y, clock_w, row_h * 2 - 1, INK);
-    font::draw_styled(frame, cx + 8, y + 4, &s.quarter_text(), 1, MUTED, 1, false);
-    font::draw_styled(frame, cx + 8, y + 13, &s.clock_text(), 2, WHITE, 1, false);
-    font::draw_styled(frame, cx + 8, y + 29, "PLAY CLOCK", 1, MUTED, 1, false);
+    // The clock block: quarter, then the clock, in its own well.
+    let cx = x + row_w + 8;
+    frame.rounded_rect(cx, y, clock_w, total_h - 4, 5, INK);
+    font::draw_styled(frame, cx + 7, y + 3, &s.quarter_text(), 1, MUTED, 1, false);
+    font::draw_styled(frame, cx + 7, y + 12, &s.clock_text(), 2, WHITE, 1, false);
 
-    // Down and distance under the whole bar.
+    // Down and distance along the bottom of the card, on their own strip.
     let dy = y + row_h * 2;
-    frame.fill_rect(x, dy, row_w + clock_w + 6, 13, INK);
-    font::draw_styled(frame, x + 6, dy + 3, &s.down_text(), 1, YELLOW, 1, false);
+    frame.rounded_rect(x - 4, dy, total_w + 8, 13, 4, INK);
+    font::draw_styled(frame, x + 4, dy + 3, &s.down_text(), 1, YELLOW, 1, false);
     let ball = s.ball_on();
-    font::draw_right(frame, x + row_w + clock_w + 2, dy + 3, &ball, 1, MUTED, 1);
+    font::draw_right(frame, x + total_w + 4, dy + 3, &ball, 1, MUTED, 1);
 }
 
 /// Full-screen statistical panel, shown at halftime and after the game.
@@ -1027,6 +1037,31 @@ mod tests {
         };
         assert!(half(0, 320) > 2_000, "the left column is empty");
         assert!(half(320, 640) > 2_000, "the right column is empty");
+    }
+
+    /// The score bug over a field, rendered so it can be looked at rather than
+    /// only measured. Only runs when asked.
+    #[test]
+    fn the_scoreboard_can_be_rendered_to_a_picture() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        let teams = league_teams();
+        let mut game = GameState::new(teams[0].clone(), teams[1].clone(), 5);
+        game.score = [14, 7];
+        game.timeouts = [3, 2];
+        game.down = 3;
+        game.to_go = 7.0;
+        let board = Scoreboard::from_game(&game);
+        let mut frame = Frame::new(640, 360);
+        frame.clear(Rgb::hex(0x2C4A2E));
+        for y in 0..360 {
+            let c = Rgb::hex(0x2C4A2E).lerp(Rgb::hex(0x16261A), y as f32 / 360.0);
+            frame.fill_rect(0, y, 640, 1, c);
+        }
+        draw_scoreboard(&mut frame, &board);
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/../../out/ui");
+        crate::write_png(format!("{dir}/scoreboard.png"), &frame).expect("write png");
     }
 
     #[test]
