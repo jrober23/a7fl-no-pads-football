@@ -20,9 +20,9 @@ use nopads_render::venues::{self, Venue};
 use nopads_render::{Broadcast, CameraMode};
 
 use crate::arcade::CAMERA_LABELS;
+use crate::view::{View, UI_H, UI_W};
 use nopads_platform::pad::{self, Pad};
 use nopads_platform::settings::{Settings, QUARTER_CHOICES, RESOLUTIONS};
-use crate::view::{View, UI_H, UI_W};
 
 // The screens take their colours from the design kit, so a change to a token
 // changes every screen at once instead of the one that was edited.
@@ -139,8 +139,20 @@ fn badge(frame: &mut Frame, cx: i32, cy: i32, size: i32, club: &Club, lit: bool)
     frame.rounded_rect(x - 3, y - 3, w + 6, h + 6, w / 4, tone(club.accent));
     frame.rounded_rect(x, y, w, h, w / 5, tone(club.primary));
     // A shoulder band and a stripe down the left: the kit, at a glance.
-    frame.fill_rect(x + 3, y + h / 6, w - 6, (h / 10).max(3), tone(club.secondary));
-    frame.fill_rect(x + 3, y + h / 6, (w / 16).max(2), h - h / 3, tone(club.accent));
+    frame.fill_rect(
+        x + 3,
+        y + h / 6,
+        w - 6,
+        (h / 10).max(3),
+        tone(club.secondary),
+    );
+    frame.fill_rect(
+        x + 3,
+        y + h / 6,
+        (w / 16).max(2),
+        h - h / 3,
+        tone(club.accent),
+    );
     let scale = ((w as usize) / (club.abbr.chars().count() * 6 + 3)).max(1);
     let tw = text_width(club.abbr, scale);
     frame.text_shadowed(
@@ -161,8 +173,6 @@ fn footer(frame: &mut Frame, text: &str) {
     ui::hints(frame, UI_W as i32 / 2, h - 18, &hints);
 }
 
-
-
 // ---------------------------------------------------------------------------
 // Input
 // ---------------------------------------------------------------------------
@@ -178,7 +188,12 @@ struct Repeat {
 
 impl Default for Repeat {
     fn default() -> Self {
-        Repeat { held: 0.0, fired: false, delay: 0.30, gap: 0.16 }
+        Repeat {
+            held: 0.0,
+            fired: false,
+            delay: 0.30,
+            gap: 0.16,
+        }
     }
 }
 
@@ -186,7 +201,11 @@ impl Repeat {
     /// A lazier repeat, for a screen where one press should move one item and
     /// holding the key should not run away past it.
     fn slow() -> Self {
-        Repeat { delay: 0.45, gap: 0.24, ..Repeat::default() }
+        Repeat {
+            delay: 0.45,
+            gap: 0.24,
+            ..Repeat::default()
+        }
     }
 
     fn step(&mut self, v: f32, dt: f32) -> i8 {
@@ -277,7 +296,17 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
     for (i, label) in LABELS.iter().enumerate() {
         let y = card_y + pad + i as i32 * (row_h + gap);
         let heat = slide.heat(i) * ui::enter(t, i + 2, LABELS.len() + 3);
-        ui::row(frame, card_x + pad, y, card_w - pad * 2, row_h, label, None, heat, ui::ACCENT);
+        ui::row(
+            frame,
+            card_x + pad,
+            y,
+            card_w - pad * 2,
+            row_h,
+            label,
+            None,
+            heat,
+            ui::ACCENT,
+        );
     }
 
     // The line under the card says what the highlighted choice is, so the menu
@@ -372,11 +401,29 @@ fn draw_option_screen(
     let (row_h, gap) = (30, 6);
     let n = rows.len() as i32;
     let card_h = n * (row_h + gap) + ui::S3;
-    ui::card(frame, x - ui::S3, 74, cw + ui::S3 * 2, card_h, ui::ACCENT, 1.0);
+    ui::card(
+        frame,
+        x - ui::S3,
+        74,
+        cw + ui::S3 * 2,
+        card_h,
+        ui::ACCENT,
+        1.0,
+    );
     for (i, (name, value)) in rows.iter().enumerate() {
         let y = 84 + i as i32 * (row_h + gap);
         let value = (!value.is_empty()).then_some(value.as_str());
-        ui::row(frame, x, y, cw, row_h, name, value, slide.heat(i), ui::ACCENT);
+        ui::row(
+            frame,
+            x,
+            y,
+            cw,
+            row_h,
+            name,
+            value,
+            slide.heat(i),
+            ui::ACCENT,
+        );
     }
     centered(frame, 74 + card_h + 20, note, 1, dim());
     footer(frame, keys);
@@ -461,7 +508,10 @@ fn settings_screen(
         }
         slide.step(pick, dt);
         let rows = [
-            ("CAMERA", CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string()),
+            (
+                "CAMERA",
+                CAMERA_LABELS[settings.camera % CAMERA_LABELS.len()].to_string(),
+            ),
             ("LENS", settings.lens_label()),
             ("RESOLUTION", settings.resolution_label()),
             ("DISPLAY", settings.display_label().to_string()),
@@ -493,11 +543,7 @@ fn settings_screen(
 /// the other sideline plays. Both lived on the settings screen, which is where a
 /// player looks for the machine's defaults, not for the rules of the game he is
 /// about to start.
-fn game_setup(
-    view: &mut View,
-    pad: &mut Option<&mut Pad>,
-    settings: &mut Settings,
-) -> Option<()> {
+fn game_setup(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settings) -> Option<()> {
     const ROWS: usize = 3;
     const DIFFICULTY: [&str; 3] = ["EASY", "NORMAL", "HARD"];
     let mut pick = 0usize;
@@ -544,7 +590,10 @@ fn game_setup(
         slide.step(pick, dt);
         let rows = [
             ("QUARTERS", settings.quarter_label()),
-            ("DIFFICULTY", DIFFICULTY[settings.difficulty % 3].to_string()),
+            (
+                "DIFFICULTY",
+                DIFFICULTY[settings.difficulty % 3].to_string(),
+            ),
             ("KICK OFF", String::new()),
         ];
         let mut frame = Frame::new(UI_W, UI_H);
@@ -616,7 +665,13 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         centered(&mut frame, 12, "CUSTOMIZATION", 3, accent());
-        centered(&mut frame, 44, "DEPTH CHART AND ROSTER FOR EVERY CLUB", 1, dim());
+        centered(
+            &mut frame,
+            44,
+            "DEPTH CHART AND ROSTER FOR EVERY CLUB",
+            1,
+            dim(),
+        );
         for i in 0..all.len() {
             let col = (i % 4) as i32;
             let row = (i / 4) as i32;
@@ -628,9 +683,23 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
                 frame.fill_rect(cx - 62, cy - 28, 124, 2, accent());
             }
             badge(&mut frame, cx - 34, cy, 26, &all[i], on);
-            frame.text_shadowed(cx - 12, cy - 14, all[i].abbr, 2, if on { accent() } else { dim() }, 1);
+            frame.text_shadowed(
+                cx - 12,
+                cy - 14,
+                all[i].abbr,
+                2,
+                if on { accent() } else { dim() },
+                1,
+            );
             let ovr = format!("{} OVR", ratings[i].overall);
-            frame.text_shadowed(cx - 12, cy + 2, &ovr, 1, if on { paper() } else { dim() }, 1);
+            frame.text_shadowed(
+                cx - 12,
+                cy + 2,
+                &ovr,
+                1,
+                if on { paper() } else { dim() },
+                1,
+            );
             frame.text_shadowed(cx - 12, cy + 14, all[i].city, 1, dim(), 1);
         }
         footer(&mut frame, "[STICK] CLUB   [A] ROSTER   [B] BACK");
@@ -641,14 +710,14 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
     }
 }
 
-/// One club's depth chart, best man first at every position, with the full roster
-/// beside it. The depths are the same ordering the game uses to pick its seven,
-/// and they can be edited: X walks a man up his row and Y walks him down, and the
-/// chart is saved against the club, so the next game starts the men the player
-/// picked.
-fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Option<()> {
-    const ROWS: usize = 16;
-    const SHOWN: usize = 3;
+/// How many men a roster page holds, and how many the chart shows at a
+/// position before the rest of the depth has to be reached by editing it.
+const CHART_ROWS: usize = 16;
+const CHART_SHOWN: usize = 3;
+
+/// The chart as the game will use it: one row per position, best man first,
+/// except where the player has moved somebody and the club remembers it.
+fn depth_chart(club: &Club) -> (Vec<(Position, Vec<usize>)>, Vec<Player>) {
     const ORDER: [Position; 8] = [
         Position::Qb,
         Position::Rb,
@@ -662,7 +731,9 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
     let roster = club.roster();
     let mut depth: Vec<(Position, Vec<usize>)> = Vec::new();
     for (row, pos) in ORDER.into_iter().enumerate() {
-        let mut men: Vec<usize> = (0..roster.len()).filter(|&i| roster[i].pos == pos).collect();
+        let mut men: Vec<usize> = (0..roster.len())
+            .filter(|&i| roster[i].pos == pos)
+            .collect();
         men.sort_by_key(|&i| std::cmp::Reverse(roster[i].overall()));
         // A row that has been edited keeps the order the player left it in.
         if let Some(ids) = depth_order(club.seed, row) {
@@ -674,17 +745,183 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
         }
         depth.push((pos, men));
     }
-    let pages = roster.len().div_ceil(ROWS).max(1);
+    (depth, roster)
+}
+
+/// One club's chart and roster, drawn from the cursor: a card of positions with
+/// the men under each other, and the whole roster beside it as a table.
+fn draw_roster(
+    frame: &mut Frame,
+    club: &Club,
+    roster: &[Player],
+    depth: &[(Position, Vec<usize>)],
+    sel: (usize, usize),
+    page: usize,
+    pages: usize,
+    slide: &ui::Slide,
+    t: f32,
+) {
+    night(frame);
+    let w = frame.w as i32;
+    let (row, nth) = sel;
+
+    // The club, then what the screen is, and where in the roster we are.
+    badge(frame, 40, 40, 34, club, true);
+    frame.text_shadowed(
+        66,
+        26,
+        &club.full_name().to_uppercase(),
+        ui::T_LABEL,
+        paper(),
+        1,
+    );
+    ui::caption(frame, 66, 45, "DEPTH CHART", dim());
+    let counter = format!("ROSTER  {} / {}", page + 1, pages);
+    let cw = ui::tracked_width(&counter, ui::T_CAPTION, 1);
+    ui::caption(frame, w - 22 - cw, 34, &counter, dim());
+
+    let x0 = 18;
+    let chart_w = 300;
+    let top = 64;
+    let row_h = 29;
+    let gap = 1;
+    let n = depth.len() as i32;
+    let card_h = ui::S2 * 2 + n * (row_h + gap) - gap;
+    ui::card(
+        frame,
+        x0,
+        top,
+        chart_w,
+        card_h,
+        ui::ACCENT,
+        ui::enter(t, 0, 6),
+    );
+    for (r, (pos, men)) in depth.iter().enumerate() {
+        let y = top + ui::S2 + r as i32 * (row_h + gap);
+        let heat = slide.heat(r);
+        if heat > 0.01 {
+            frame.rounded_rect_alpha(
+                x0 + 4,
+                y,
+                chart_w - 8,
+                row_h,
+                6,
+                Rgb::hex(0x2A3A4D),
+                0.42 + 0.34 * heat,
+            );
+        }
+        // The position sits on the first man's line, not in the middle of the
+        // row: a two-man row would otherwise look like it started lower.
+        ui::caption(
+            frame,
+            x0 + 12,
+            y + 3,
+            pos.abbr(),
+            if r == row { accent() } else { dim() },
+        );
+        for (k, &i) in men.iter().take(CHART_SHOWN).enumerate() {
+            let p = &roster[i];
+            let on = r == row && k == nth;
+            let ly = y + 3 + k as i32 * 9;
+            if on {
+                frame.fill_rect(x0 + 44, ly, 2, 7, ui::ACCENT);
+            }
+            let ink = if on {
+                accent()
+            } else if k == 0 {
+                paper()
+            } else {
+                dim()
+            };
+            let num = format!("{:>2}", p.number);
+            frame.text_shadowed(x0 + 52, ly, &num, ui::T_CAPTION, ink, 1);
+            frame.text_shadowed(
+                x0 + 70,
+                ly,
+                &p.last_name().to_uppercase(),
+                ui::T_CAPTION,
+                ink,
+                1,
+            );
+            let ovr = format!("{}", p.overall());
+            frame.text_shadowed(
+                x0 + chart_w - 14 - text_width(&ovr, ui::T_CAPTION),
+                ly,
+                &ovr,
+                ui::T_CAPTION,
+                ink,
+                1,
+            );
+        }
+    }
+
+    // The roster beside it: a table with the counts lined up, so a page can be
+    // read down a column instead of across a sentence.
+    let rx = x0 + chart_w + 12;
+    let rw = w - 18 - rx;
+    ui::card(frame, rx, top, rw, card_h, club.accent, ui::enter(t, 1, 6));
+    ui::caption(frame, rx + 12, top + 10, "FULL ROSTER", dim());
+    frame.fill_rect_alpha(rx + 12, top + 24, rw - 24, 1, ui::EDGE, 0.9);
+    let first = page * CHART_ROWS;
+    for (n, i) in (first..(first + CHART_ROWS).min(roster.len())).enumerate() {
+        let p = &roster[i];
+        let y = top + 32 + n as i32 * 13;
+        let num = format!("#{}", p.number);
+        frame.text_shadowed(
+            rx + 34 - text_width(&num, ui::T_CAPTION),
+            y,
+            &num,
+            ui::T_CAPTION,
+            dim(),
+            1,
+        );
+        frame.text_shadowed(
+            rx + 44,
+            y,
+            &p.last_name().to_uppercase(),
+            ui::T_CAPTION,
+            paper(),
+            1,
+        );
+        frame.text_shadowed(rx + 146, y, p.pos.abbr(), ui::T_CAPTION, dim(), 1);
+        let ovr = format!("{}", p.overall());
+        frame.text_shadowed(
+            rx + rw - 14 - text_width(&ovr, ui::T_CAPTION),
+            y,
+            &ovr,
+            ui::T_CAPTION,
+            paper(),
+            1,
+        );
+    }
+
+    footer(
+        frame,
+        "[UP/DOWN] MAN   [X] UP   [Y] DOWN   [A] CARD   [LEFT/RIGHT] ROSTER   [B] BACK",
+    );
+}
+
+/// One club's depth chart, best man first at every position, with the full roster
+/// beside it. The depths are the same ordering the game uses to pick its seven,
+/// and they can be edited: X walks a man up his row and Y walks him down, and the
+/// chart is saved against the club, so the next game starts the men the player
+/// picked.
+fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Option<()> {
+    let (mut depth, roster) = depth_chart(club);
+    let pages = roster.len().div_ceil(CHART_ROWS).max(1);
     let mut page = 0usize;
     let mut sel = (0usize, 0usize);
     let mut nav = Repeat::default();
     let mut nav_y = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut t = 0.0f32;
     let mut last = Instant::now();
     view.reset();
     loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
+        t += dt;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.b {
             return Some(());
@@ -702,17 +939,17 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
                 let mut nth = sel.1 as i32 + d as i32;
                 while nth < 0 {
                     r = (r + rows - 1) % rows;
-                    nth += depth[r as usize].1.len().min(SHOWN).max(1) as i32;
+                    nth += depth[r as usize].1.len().min(CHART_SHOWN).max(1) as i32;
                 }
-                while nth >= depth[r as usize].1.len().min(SHOWN).max(1) as i32 {
-                    nth -= depth[r as usize].1.len().min(SHOWN).max(1) as i32;
+                while nth >= depth[r as usize].1.len().min(CHART_SHOWN).max(1) as i32 {
+                    nth -= depth[r as usize].1.len().min(CHART_SHOWN).max(1) as i32;
                     r = (r + 1) % rows;
                 }
                 sel = (r as usize, nth as usize);
             }
         }
         let row = sel.0;
-        let shown = depth[row].1.len().min(SHOWN).max(1);
+        let shown = depth[row].1.len().min(CHART_SHOWN).max(1);
         if sel.1 >= shown {
             sel.1 = shown - 1;
         }
@@ -735,54 +972,10 @@ fn roster_screen(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Op
             last = Instant::now();
             continue;
         }
+        slide.step(sel.0, dt);
         let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        centered(&mut frame, 8, &club.full_name().to_uppercase(), 2, accent());
-        frame.fill_rect(20, 30, 600, 1, Rgb::new(48, 92, 148));
-        frame.text_shadowed(20, 38, "DEPTH CHART", 1, paper(), 1);
-        let title = format!("ROSTER   {} / {}", page + 1, pages);
-        frame.text_shadowed(330, 38, &title, 1, paper(), 1);
-        for (r, (pos, men)) in depth.iter().enumerate() {
-            let y = 58 + r as i32 * 30;
-            frame.text_shadowed(20, y + 2, pos.abbr(), 2, accent(), 1);
-            for (n, &i) in men.iter().take(SHOWN).enumerate() {
-                let p = &roster[i];
-                let on = r == row && n == sel.1;
-                if on {
-                    frame.rounded_rect(54, y - 2 + n as i32 * 9, 250, 11, 3, panel());
-                }
-                let line = format!(
-                    "{:>2}  {:<12}{}",
-                    p.number,
-                    p.last_name().to_uppercase(),
-                    p.overall()
-                );
-                let color = if n == 0 { paper() } else { dim() };
-                frame.text_shadowed(
-                    58,
-                    y + n as i32 * 9,
-                    &line,
-                    1,
-                    if on { accent() } else { color },
-                    1,
-                );
-            }
-        }
-        frame.fill_rect(320, 52, 1, 268, Rgb::new(48, 92, 148));
-        for (n, i) in (page * ROWS..(page * ROWS + ROWS).min(roster.len())).enumerate() {
-            let p = &roster[i];
-            let line = format!(
-                "#{:>2} {:<13} {:<3} {}",
-                p.number,
-                p.last_name().to_uppercase(),
-                p.pos.abbr(),
-                p.overall()
-            );
-            frame.text_shadowed(334, 56 + n as i32 * 15, &line, 1, paper(), 1);
-        }
-        footer(
-            &mut frame,
-            "[UP/DOWN] MAN   [X] UP  [Y] DOWN   [A] CARD   [LEFT/RIGHT] ROSTER   [B] BACK",
+        draw_roster(
+            &mut frame, club, &roster, &depth, sel, page, pages, &slide, t,
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -797,48 +990,115 @@ fn save_depth(seed: u64, row: usize, roster: &[Player], men: &[usize]) {
     set_depth_order(seed, row, ids);
 }
 
-/// One man's card: the ten numbers a roster is judged by, on the same 40..99 scale
-/// the clubs are rated on.
+/// One man's card: the overall set as the card's hero, the ten numbers a roster
+/// is judged by beside it, each bar growing into place so the card reads as a
+/// card being filled in rather than as a chart that appeared.
+fn draw_player_card(frame: &mut Frame, player: &Player, t: f32) {
+    night(frame);
+    let w = frame.w as i32;
+    let cx = w / 2;
+    let ratings = player.attrs.ratings();
+    let card_w = 400;
+    let card_h = 258;
+    let card_x = cx - card_w / 2;
+    let card_y = 40;
+    ui::card(
+        frame,
+        card_x,
+        card_y,
+        card_w,
+        card_h,
+        ui::ACCENT,
+        ui::enter(t, 0, 4),
+    );
+
+    let ovr = format!("{}", player.overall());
+    // Set plainly: at hero size the drop shadow the small type uses reads as a
+    // second digit rather than as depth.
+    frame.text(
+        card_x + 76 - text_width(&ovr, ui::T_HERO) / 2,
+        card_y + 26,
+        &ovr,
+        ui::T_HERO,
+        ui::ACCENT,
+    );
+    let label = "OVERALL";
+    ui::caption(
+        frame,
+        card_x + 76 - ui::tracked_width(label, ui::T_CAPTION, 2) / 2,
+        card_y + 82,
+        label,
+        dim(),
+    );
+    frame.fill_rect_alpha(card_x + 140, card_y + 26, 1, 78, ui::EDGE, 0.9);
+
+    let nx = card_x + 160;
+    let num = format!("#{}", player.number);
+    ui::caption(frame, nx, card_y + 24, &num, dim());
+    frame.text_shadowed(
+        nx,
+        card_y + 38,
+        &player.full_name().to_uppercase(),
+        ui::T_LABEL,
+        paper(),
+        1,
+    );
+    ui::tag(frame, nx, card_y + 62, player.pos.abbr(), ui::ACCENT);
+
+    frame.fill_rect_alpha(card_x + 16, card_y + 112, card_w - 32, 1, ui::EDGE, 0.9);
+
+    let per = ratings.len().div_ceil(2);
+    for (n, (name, value)) in ratings.iter().enumerate() {
+        let col = (n / per) as i32;
+        let row = (n % per) as i32;
+        let x = card_x + 20 + col * 186;
+        let y = card_y + 126 + row * 24;
+        let grow = ui::enter(t, n, ratings.len() + 2);
+        ui::caption(frame, x, y + 2, name, dim());
+        // The track starts past the longest label ("BLOCK SHEDDING") and stops
+        // short of the number, so neither ever sits on the bar.
+        ui::meter(
+            frame,
+            x + 94,
+            y,
+            58,
+            7,
+            (*value as f32 / 99.0) * grow,
+            ui::ACCENT,
+        );
+        let v = format!("{value}");
+        frame.text_shadowed(
+            x + 168 - text_width(&v, ui::T_CAPTION),
+            y,
+            &v,
+            ui::T_CAPTION,
+            paper(),
+            1,
+        );
+    }
+    footer(frame, "[A/B] BACK");
+}
+
+/// One man's card, held until he lets it go.
 fn player_card(view: &mut View, pad: &mut Option<&mut Pad>, player: &Player) -> Option<()> {
     view.reset();
+    let mut t = 0.0f32;
     let mut last = Instant::now();
     loop {
         let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
+        t += dt;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.a || input.pressed.b || input.pressed.start {
             return Some(());
         }
         let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        centered(
-            &mut frame,
-            10,
-            &format!("#{} {}", player.number, player.full_name().to_uppercase()),
-            2,
-            accent(),
-        );
-        centered(
-            &mut frame,
-            30,
-            &format!("{}   {} OVERALL", player.pos.abbr(), player.overall()),
-            1,
-            dim(),
-        );
-        for (n, (label, value)) in player.attrs.ratings().iter().enumerate() {
-            let y = 54 + n as i32 * 26;
-            frame.text_shadowed(110, y + 1, label, 1, paper(), 1);
-            frame.fill_rect(260, y, 210, 9, Rgb::new(30, 40, 58));
-            let filled = (210.0 * (*value as f32 / 99.0)) as i32;
-            frame.fill_rect(260, y, filled.max(2), 9, accent());
-            frame.text_shadowed(482, y + 1, &format!("{value}"), 1, paper(), 1);
-        }
-        footer(&mut frame, "[A/B] BACK");
+        draw_player_card(&mut frame, player, t);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
-        let _ = last;
     }
 }
 
@@ -847,7 +1107,9 @@ fn player_card(view: &mut View, pad: &mut Option<&mut Pad>, player: &Player) -> 
 // ---------------------------------------------------------------------------
 
 fn ids_in(all: &[Club], division: Division) -> Vec<usize> {
-    (0..all.len()).filter(|&i| all[i].division == division).collect()
+    (0..all.len())
+        .filter(|&i| all[i].division == division)
+        .collect()
 }
 
 fn exhibition(
@@ -877,8 +1139,8 @@ fn exhibition(
     // screen is the club he is playing against, from any division. Either screen
     // can be left to a roll instead.
     let yours = pick_team(view, pad, &all, &cards, None, "YOUR TEAM")?.club(&all, None);
-    let theirs = pick_team(view, pad, &all, &cards, Some(yours), "THEIR TEAM")?
-        .club(&all, Some(yours));
+    let theirs =
+        pick_team(view, pad, &all, &cards, Some(yours), "THEIR TEAM")?.club(&all, Some(yours));
     // The ground comes before the toss: the player picks where the game is
     // played, and then stands on it to call the coin.
     let venue = pick_venue(view, pad, yours)?;
@@ -886,7 +1148,12 @@ fn exhibition(
     // asked here rather than buried in the settings screen.
     game_setup(view, pad, settings)?;
     let receive = coin_flip(view, pad, &all, yours, theirs, venue)?;
-    Some(Kickoff { yours, theirs, receive, venue })
+    Some(Kickoff {
+        yours,
+        theirs,
+        receive,
+        venue,
+    })
 }
 
 /// Everything about a club the picker shows that is not its badge: the numbers
@@ -968,7 +1235,14 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         let mut frame = Frame::new(UI_W, UI_H);
         frame.gradient_rect(0, 0, UI_W as i32, UI_H as i32, sky[0], sky[2]);
         frame.fill_rect_alpha(0, 0, UI_W as i32, UI_H as i32, Rgb::new(4, 6, 10), 0.62);
-        ui::heading(&mut frame, UI_W as i32 / 2, 8, "WHERE IS IT PLAYED", ui::T_LABEL, ui::ACCENT);
+        ui::heading(
+            &mut frame,
+            UI_W as i32 / 2,
+            8,
+            "WHERE IS IT PLAYED",
+            ui::T_LABEL,
+            ui::ACCENT,
+        );
         let note = format!("{} OF {}", sel + 1, venues::COUNT);
         frame.text_shadowed(
             UI_W as i32 - 14 - text_width(&note, 1),
@@ -1008,13 +1282,9 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
                 );
                 match &thumbs[i] {
                     Some(shot) => blit(&mut frame, shot, x, y),
-                    None => frame.fill_rect(
-                        x,
-                        y,
-                        THUMB_W as i32,
-                        THUMB_H as i32,
-                        sky[1].scale(0.45),
-                    ),
+                    None => {
+                        frame.fill_rect(x, y, THUMB_W as i32, THUMB_H as i32, sky[1].scale(0.45))
+                    }
                 }
             }
         }
@@ -1127,7 +1397,14 @@ fn roll_card(frame: &mut Frame, cx: i32, cy: i32, size: i32, lit: bool) {
             tone(accent()),
         );
     }
-    centered_in(frame, cx, y + h + 6, "RANDOM", if size > 80 { 2 } else { 1 }, tone(paper()));
+    centered_in(
+        frame,
+        cx,
+        y + h + 6,
+        "RANDOM",
+        if size > 80 { 2 } else { 1 },
+        tone(paper()),
+    );
 }
 
 /// The carousel: the division along the top, the club in the middle, its city
@@ -1194,20 +1471,45 @@ fn pick_team(
         let next = slots[wrap(sel, n, 1)];
         let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
-        ui::heading(&mut frame, UI_W as i32 / 2, 14, heading, ui::T_LABEL, ui::ACCENT);
+        ui::heading(
+            &mut frame,
+            UI_W as i32 / 2,
+            14,
+            heading,
+            ui::T_LABEL,
+            ui::ACCENT,
+        );
         // The divisions are one segmented control, not four labels in a row.
-        let widths: Vec<i32> = Division::ALL.iter().map(|d| ui::chip_width(d.label())).collect();
+        let widths: Vec<i32> = Division::ALL
+            .iter()
+            .map(|d| ui::chip_width(d.label()))
+            .collect();
         let total: i32 = widths.iter().sum::<i32>() + ui::S2 * (widths.len() as i32 - 1);
         let mut tab_x = UI_W as i32 / 2 - total / 2;
         for (i, d) in Division::ALL.iter().enumerate() {
-            ui::chip(&mut frame, tab_x, 42, d.label(), if i == div { 1.0 } else { 0.0 }, ui::ACCENT);
+            ui::chip(
+                &mut frame,
+                tab_x,
+                42,
+                d.label(),
+                if i == div { 1.0 } else { 0.0 },
+                ui::ACCENT,
+            );
             tab_x += widths[i] + ui::S2;
         }
         let accent_tone = match club {
             Some(i) => all[i].accent,
             None => ui::ACCENT,
         };
-        ui::card(&mut frame, 190, 74, 260, 226, accent_tone, ui::enter(t, 0, 8));
+        ui::card(
+            &mut frame,
+            190,
+            74,
+            260,
+            226,
+            accent_tone,
+            ui::enter(t, 0, 8),
+        );
         slot(&mut frame, all, 92, 150, 54, prev, false);
         slot(&mut frame, all, 548, 150, 54, next, false);
         slot(&mut frame, all, 320 + slide as i32, 130, 88, club, true);
@@ -1229,7 +1531,15 @@ fn pick_team(
             for (k, (label, value)) in bars.iter().enumerate() {
                 let y = 234 + k as i32 * 15;
                 ui::caption(&mut frame, 212, y + 1, label, dim());
-                ui::meter(&mut frame, 248, y, 136, 6, *value as f32 / 99.0, accent_tone);
+                ui::meter(
+                    &mut frame,
+                    248,
+                    y,
+                    136,
+                    6,
+                    *value as f32 / 99.0,
+                    accent_tone,
+                );
                 let v = format!("{value}");
                 frame.text_shadowed(390, y - 1, &v, 1, paper(), 1);
             }
@@ -1245,7 +1555,11 @@ fn pick_team(
         } else {
             format!("{} OF {}", sel + 1, n)
         };
-        let note_color = if said > 0.0 { Rgb::new(255, 120, 96) } else { dim() };
+        let note_color = if said > 0.0 {
+            Rgb::new(255, 120, 96)
+        } else {
+            dim()
+        };
         frame.text_shadowed(
             UI_W as i32 - 14 - text_width(&note, 1),
             18,
@@ -1254,14 +1568,16 @@ fn pick_team(
             note_color,
             1,
         );
-        footer(&mut frame, "[LEFT/RIGHT] ROLL   [UP/DOWN] DIVISION   [A] PICK   [B] BACK");
+        footer(
+            &mut frame,
+            "[LEFT/RIGHT] ROLL   [UP/DOWN] DIVISION   [A] PICK   [B] BACK",
+        );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         beat();
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Season
@@ -1301,15 +1617,137 @@ fn season_setup(
 /// week for thirty-one weeks, which is the longest season the league can give.
 const SEASON_LENGTHS: [usize; 9] = [4, 6, 8, 10, 12, 16, 20, 24, 31];
 
-fn season_length(view: &mut View, pad: &mut Option<&mut Pad>, you: usize, all: &[Club]) -> Option<usize> {
+/// The length of a season, drawn from the pick: the number the player is on set
+/// as the screen's own figure, and the lengths under it as one control rather
+/// than nine loose labels.
+fn draw_season_length(
+    frame: &mut Frame,
+    all: &[Club],
+    you: usize,
+    pick: usize,
+    slide: &ui::Slide,
+    t: f32,
+) {
+    night(frame);
+    let w = frame.w as i32;
+    let cx = w / 2;
+    let weeks = SEASON_LENGTHS[pick];
+    ui::heading(frame, cx, 16, "SEASON", ui::T_TITLE, ui::ACCENT);
+    let sub = "HOW MANY WEEKS";
+    ui::caption(
+        frame,
+        cx - ui::tracked_width(sub, ui::T_CAPTION, 1) / 2,
+        52,
+        sub,
+        dim(),
+    );
+
+    let card_w = 360;
+    let card_x = cx - card_w / 2;
+    let card_y = 70;
+    let card_h = 176;
+    ui::card(
+        frame,
+        card_x,
+        card_y,
+        card_w,
+        card_h,
+        all[you].accent,
+        ui::enter(t, 0, 4),
+    );
+    badge(frame, cx, card_y + 30, 40, &all[you], true);
+    centered(
+        frame,
+        card_y + 58,
+        &all[you].full_name().to_uppercase(),
+        ui::T_LABEL,
+        paper(),
+    );
+    frame.fill_rect_alpha(card_x + 24, card_y + 78, card_w - 48, 1, ui::EDGE, 0.9);
+    let figure = weeks.to_string();
+    frame.text(
+        cx - text_width(&figure, ui::T_TITLE) / 2,
+        card_y + 84,
+        &figure,
+        ui::T_TITLE,
+        ui::ACCENT,
+    );
+    let unit = "WEEKS";
+    ui::caption(
+        frame,
+        cx - ui::tracked_width(unit, ui::T_CAPTION, 2) / 2,
+        card_y + 126,
+        unit,
+        dim(),
+    );
+
+    // The lengths, as one segmented control with the highlight travelling.
+    let sizes: Vec<i32> = SEASON_LENGTHS
+        .iter()
+        .map(|w| ui::chip_width(&w.to_string()))
+        .collect();
+    let total: i32 = sizes.iter().sum::<i32>() + ui::S1 * (sizes.len() as i32 - 1);
+    let mut x = cx - total / 2;
+    for (i, size) in sizes.iter().enumerate() {
+        ui::chip(
+            frame,
+            x,
+            card_y + 142,
+            &SEASON_LENGTHS[i].to_string(),
+            slide.heat(i),
+            ui::ACCENT,
+        );
+        x += size + ui::S1;
+    }
+
+    centered(
+        frame,
+        card_y + card_h + 12,
+        &format!("{weeks} GAMES IN THE REGULAR SEASON"),
+        ui::T_CAPTION,
+        paper(),
+    );
+    centered(
+        frame,
+        card_y + card_h + 26,
+        "THE TOP TWO IN EACH DIVISION MAKE THE PLAYOFFS",
+        ui::T_CAPTION,
+        dim(),
+    );
+    centered(
+        frame,
+        card_y + card_h + 40,
+        if weeks == season::MAX_WEEKS {
+            "A FULL ROUND ROBIN: EVERY CLUB HOME AND AWAY"
+        } else {
+            "EVERY CLUB PLAYS EVERY WEEK"
+        },
+        ui::T_CAPTION,
+        dim(),
+    );
+    footer(
+        frame,
+        "[LEFT/RIGHT] LENGTH   [A] START THE SEASON   [B] BACK",
+    );
+}
+
+fn season_length(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    you: usize,
+    all: &[Club],
+) -> Option<usize> {
     let mut pick = 4usize;
     let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(4);
+    let mut t = 0.0f32;
     let mut last = Instant::now();
     view.reset();
     loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
+        t += dt;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.b || input.pressed.start {
             return None;
@@ -1319,44 +1757,10 @@ fn season_length(view: &mut View, pad: &mut Option<&mut Pad>, you: usize, all: &
                 pick = wrap(pick, SEASON_LENGTHS.len(), d);
             }
         }
+        slide.step(pick, dt);
         let weeks = SEASON_LENGTHS[pick];
         let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        centered(&mut frame, 26, "SEASON", 3, accent());
-        centered(&mut frame, 66, "HOW MANY WEEKS", 2, paper());
-        badge(&mut frame, 320, 130, 44, &all[you], true);
-        centered(&mut frame, 166, &all[you].full_name().to_uppercase(), 2, paper());
-        // The number, big, with the season either side of it.
-        let mut x = 320 - (SEASON_LENGTHS.len() as i32 * 34) / 2;
-        for (i, w) in SEASON_LENGTHS.iter().enumerate() {
-            let on = i == pick;
-            if on {
-                frame.rounded_rect(x - 4, 200, 32, 30, 6, panel());
-                frame.fill_rect(x - 4, 228, 32, 2, accent());
-            }
-            centered_in(&mut frame, x + 12, 206, &w.to_string(), 2, if on { accent() } else { dim() });
-            x += 34;
-        }
-        centered(&mut frame, 244, &format!("{weeks} GAMES IN THE REGULAR SEASON"), 1, paper());
-        centered(
-            &mut frame,
-            260,
-            "THE TOP TWO IN EACH DIVISION MAKE THE PLAYOFFS",
-            1,
-            dim(),
-        );
-        centered(
-            &mut frame,
-            274,
-            if weeks == season::MAX_WEEKS {
-                "A FULL ROUND ROBIN: EVERY CLUB HOME AND AWAY"
-            } else {
-                "EVERY CLUB PLAYS EVERY WEEK"
-            },
-            1,
-            dim(),
-        );
-        footer(&mut frame, "[LEFT/RIGHT] LENGTH   [A] START THE SEASON   [B] BACK");
+        draw_season_length(&mut frame, all, you, pick, &slide, t);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -1468,8 +1872,8 @@ pub fn season_hub(
                         }
                     }
                     "SIM MY GAME" | "SIM THIS WEEK" => {
-                        let played = season.phase != Phase::Regular
-                            && season.round_name() == "CHAMPIONSHIP";
+                        let played =
+                            season.phase != Phase::Regular && season.round_name() == "CHAMPIONSHIP";
                         season.sim_rest();
                         note = if played && season.champion.is_some() {
                             "THE SEASON IS OVER".to_string()
@@ -1490,7 +1894,11 @@ pub fn season_hub(
         night(&mut frame);
         // Header: where in the season this is.
         let head = match season.phase {
-            Phase::Regular => format!("WEEK {} OF {}", (season.week + 1).min(season.length()), season.length()),
+            Phase::Regular => format!(
+                "WEEK {} OF {}",
+                (season.week + 1).min(season.length()),
+                season.length()
+            ),
             Phase::Playoffs(_) => season.round_name().to_string(),
             Phase::Done => "COMPLETE".to_string(),
         };
@@ -1518,7 +1926,11 @@ pub fn season_hub(
                 let home = f.home == season.you;
                 let other = if home { f.away } else { f.home };
                 let where_ = if home { "HOME" } else { "AWAY" };
-                let next = format!("{} {}", if home { "VS" } else { "AT" }, all[other].full_name().to_uppercase());
+                let next = format!(
+                    "{} {}",
+                    if home { "VS" } else { "AT" },
+                    all[other].full_name().to_uppercase()
+                );
                 frame.text_shadowed(250, 52, &next, 2, paper(), 1);
                 frame.text_shadowed(250, 70, where_, 1, dim(), 1);
             }
@@ -1540,10 +1952,24 @@ pub fn season_hub(
                 frame.fill_rect(16, y - 3, 232, 16, panel());
             }
             frame.text_shadowed(20, y, &format!("{}", n + 1), 1, dim(), 1);
-            frame.text_shadowed(36, y, all[*club].abbr, 1, if on { accent() } else { paper() }, 1);
+            frame.text_shadowed(
+                36,
+                y,
+                all[*club].abbr,
+                1,
+                if on { accent() } else { paper() },
+                1,
+            );
             frame.text_shadowed(80, y, &all[*club].city.to_uppercase(), 1, dim(), 1);
             let right = format!("{:>5}  {:>4}", r.line(), r.diff());
-            frame.text_shadowed(248 - text_width(&right, 1), y, &right, 1, if on { paper() } else { dim() }, 1);
+            frame.text_shadowed(
+                248 - text_width(&right, 1),
+                y,
+                &right,
+                1,
+                if on { paper() } else { dim() },
+                1,
+            );
         }
 
         ui::card(&mut frame, 284, 90, 344, 198, ui::ACCENT, 1.0);
@@ -1559,7 +1985,14 @@ pub fn season_hub(
                     let text = format!("{} {}", all[f.home].abbr, f.line());
                     let text2 = all[f.away].abbr;
                     frame.text_shadowed(x, y, &text, 1, if mine { accent() } else { paper() }, 1);
-                    frame.text_shadowed(x, y + 10, text2, 1, if mine { accent() } else { dim() }, 1);
+                    frame.text_shadowed(
+                        x,
+                        y + 10,
+                        text2,
+                        1,
+                        if mine { accent() } else { dim() },
+                        1,
+                    );
                 }
             }
         } else {
@@ -1574,10 +2007,28 @@ pub fn season_hub(
                 let y = 114 + n as i32 * 44;
                 frame.text_shadowed(290, y, div.label(), 1, dim(), 1);
                 for (k, (club, r)) in rows.iter().take(2).enumerate() {
-                    let seed = seeds.iter().position(|c| c == club).map(|i| i + 1).
-                        unwrap_or(0);
-                    let label = if seed > 0 { format!("#{seed} {}", all[*club].abbr) } else { all[*club].abbr.to_string() };
-                    frame.text_shadowed(290 + k as i32 * 96, y + 12, &label, 1, if *club == season.you { accent() } else { paper() }, 1);
+                    let seed = seeds
+                        .iter()
+                        .position(|c| c == club)
+                        .map(|i| i + 1)
+                        .unwrap_or(0);
+                    let label = if seed > 0 {
+                        format!("#{seed} {}", all[*club].abbr)
+                    } else {
+                        all[*club].abbr.to_string()
+                    };
+                    frame.text_shadowed(
+                        290 + k as i32 * 96,
+                        y + 12,
+                        &label,
+                        1,
+                        if *club == season.you {
+                            accent()
+                        } else {
+                            paper()
+                        },
+                        1,
+                    );
                     frame.text_shadowed(290 + k as i32 * 96, y + 24, &r.line(), 1, dim(), 1);
                 }
             }
@@ -1599,7 +2050,11 @@ pub fn season_hub(
                 centered(
                     &mut frame,
                     236,
-                    if yours { "YOU WON IT ALL" } else { "SEASON OVER" },
+                    if yours {
+                        "YOU WON IT ALL"
+                    } else {
+                        "SEASON OVER"
+                    },
                     2,
                     if yours { accent() } else { dim() },
                 );
@@ -1608,7 +2063,11 @@ pub fn season_hub(
         // The actions sit in one row along the bottom, above the footer.
         let mut x = 24;
         for (i, label) in rows.iter().enumerate() {
-            let heat = if season.phase == Phase::Done { 0.0 } else { slide.heat(i) };
+            let heat = if season.phase == Phase::Done {
+                0.0
+            } else {
+                slide.heat(i)
+            };
             let w = ui::chip(&mut frame, x, 292, label, heat, ui::ACCENT);
             x += w + ui::S2;
         }
@@ -1641,26 +2100,180 @@ fn coin_seed() -> u64 {
 fn coin(frame: &mut Frame, cx: i32, cy: i32, width: i32, heads: bool, landed: bool) {
     let h = 92;
     let w = width.max(10);
-    let gold = Rgb::new(214, 168, 60);
-    let rim = Rgb::new(150, 112, 36);
-    let inner = Rgb::new(178, 138, 48);
-    frame.rounded_rect(cx - w / 2 - 5, cy - h / 2 - 5, w + 10, h + 10, w / 2 + 5, rim);
-    frame.rounded_rect(cx - w / 2, cy - h / 2, w, h, w / 2, gold);
+    let rim = ui::ACCENT.lerp(ui::INK, 0.58);
+    let face = ui::ACCENT.lerp(ui::PAPER, 0.10);
+    let inner = ui::ACCENT.lerp(ui::INK, 0.26);
+    frame.rounded_rect(
+        cx - w / 2 - 5,
+        cy - h / 2 - 5,
+        w + 10,
+        h + 10,
+        w / 2 + 5,
+        rim,
+    );
+    frame.rounded_rect(cx - w / 2, cy - h / 2, w, h, w / 2, face);
     if w > 26 {
-        frame.rounded_rect(cx - w / 2 + 7, cy - h / 2 + 7, w - 14, h - 14, (w - 14) / 2, inner);
+        frame.rounded_rect(
+            cx - w / 2 + 7,
+            cy - h / 2 + 7,
+            w - 14,
+            h - 14,
+            (w - 14) / 2,
+            inner,
+        );
     }
     if w > 34 {
-        let face = if heads { "H" } else { "T" };
+        let mark = if heads { "H" } else { "T" };
         let scale = ((h as usize) / 16).max(1);
-        let tw = text_width(face, scale);
-        frame.text_shadowed(
+        let tw = text_width(mark, scale);
+        // No drop shadow on the mark: at this size the offset reads as a
+        // second letter rather than as depth.
+        frame.text(
             cx - tw / 2,
             cy - (7 * scale as i32) / 2,
-            face,
+            mark,
             scale,
-            if landed { paper() } else { Rgb::new(255, 236, 178) },
-            1,
+            if landed {
+                paper()
+            } else {
+                Rgb::new(255, 240, 200)
+            },
         );
+    }
+}
+
+/// The four things the toss can be asking, in the order it asks them.
+#[derive(Clone, Copy, PartialEq)]
+enum CoinStep {
+    Call,
+    Flip,
+    Won,
+    Lost,
+    Choose,
+}
+
+/// The toss, drawn from its state rather than from inside the loop that reads
+/// the stick, so it can be looked at in the states that take a while to reach.
+fn draw_coin_toss(
+    frame: &mut Frame,
+    all: &[Club],
+    yours: usize,
+    theirs: usize,
+    venue: usize,
+    step: CoinStep,
+    pick: usize,
+    t: f32,
+    heads: bool,
+    slide: &ui::Slide,
+) {
+    night(frame);
+    let w = frame.w as i32;
+    let cx = w / 2;
+    ui::heading(frame, cx, 16, "COIN TOSS", ui::T_BODY, ui::ACCENT);
+    let line = format!(
+        "{} AT {}",
+        all[yours].full_name().to_uppercase(),
+        all[theirs].full_name().to_uppercase()
+    );
+    ui::caption(
+        frame,
+        cx - ui::tracked_width(&line, ui::T_CAPTION, 1) / 2,
+        48,
+        &line,
+        dim(),
+    );
+    let place = format!("AT {}", Venue::from_index(venue).name().to_uppercase());
+    ui::caption(
+        frame,
+        cx - ui::tracked_width(&place, ui::T_CAPTION, 1) / 2,
+        60,
+        &place,
+        dim(),
+    );
+
+    let (show_heads, width, landed) = match step {
+        CoinStep::Call => (pick == 0, 118, false),
+        CoinStep::Flip => {
+            let spin = (t * 13.0).cos().abs();
+            (
+                heads || ((t * 13.0) as i32 % 2 == 0),
+                (34.0 + 84.0 * spin) as i32,
+                false,
+            )
+        }
+        CoinStep::Won | CoinStep::Choose | CoinStep::Lost => (heads, 118, true),
+    };
+    coin(frame, cx, 142, width, show_heads, landed);
+
+    // Two choices, laid out as chips and measured before either is drawn so the
+    // pair is centred whichever words they are.
+    let pair = |frame: &mut Frame, y: i32, labels: [&str; 2]| {
+        let sizes = [ui::chip_width(labels[0]), ui::chip_width(labels[1])];
+        let total = sizes[0] + sizes[1] + ui::S5;
+        let mut x = cx - total / 2;
+        for (i, label) in labels.iter().enumerate() {
+            ui::chip(frame, x, y, label, slide.heat(i), ui::ACCENT);
+            x += sizes[i] + ui::S5;
+        }
+    };
+
+    match step {
+        CoinStep::Call => {
+            centered(frame, 200, "CALL IT", ui::T_CAPTION, dim());
+            pair(frame, 218, ["HEADS", "TAILS"]);
+            centered(
+                frame,
+                252,
+                "THE WINNER CHOOSES TO THROW IT OR RECEIVE IT",
+                ui::T_CAPTION,
+                dim(),
+            );
+            footer(frame, "[LEFT/RIGHT] CALL   [A] FLIP   [B] BACK");
+        }
+        CoinStep::Flip => {
+            centered(frame, 208, "IN THE AIR", ui::T_LABEL, paper());
+            footer(frame, "WAITING ON THE COIN");
+        }
+        CoinStep::Won => {
+            centered(
+                frame,
+                204,
+                if heads { "HEADS" } else { "TAILS" },
+                ui::T_LABEL,
+                accent(),
+            );
+            centered(
+                frame,
+                228,
+                "YOU CALLED IT. YOU WON THE TOSS.",
+                ui::T_CAPTION,
+                paper(),
+            );
+            footer(frame, "[A] CHOOSE");
+        }
+        CoinStep::Lost => {
+            centered(
+                frame,
+                204,
+                if heads { "HEADS" } else { "TAILS" },
+                ui::T_LABEL,
+                dim(),
+            );
+            centered(frame, 228, "YOU LOST THE TOSS", ui::T_CAPTION, paper());
+            centered(
+                frame,
+                242,
+                &format!("{} WILL RECEIVE", all[theirs].full_name().to_uppercase()),
+                ui::T_CAPTION,
+                all[theirs].accent,
+            );
+            footer(frame, "THE COMPUTER TAKES THE BALL");
+        }
+        CoinStep::Choose => {
+            centered(frame, 200, "THROW OR RECEIVE", ui::T_CAPTION, dim());
+            pair(frame, 218, ["THROW IT OFF", "RECEIVE IT"]);
+            footer(frame, "[LEFT/RIGHT] CHOOSE   [A] KICK OFF");
+        }
     }
 }
 
@@ -1674,19 +2287,12 @@ fn coin_flip(
     theirs: usize,
     venue: usize,
 ) -> Option<bool> {
-    #[derive(Clone, Copy, PartialEq)]
-    enum Step {
-        Call,
-        Flip,
-        Won,
-        Lost,
-        Choose,
-    }
-    let mut step = Step::Call;
+    let mut step = CoinStep::Call;
     let mut pick = 0usize;
     let mut t = 0.0f32;
     let mut heads = true;
     let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
     loop {
@@ -1695,7 +2301,7 @@ fn coin_flip(
         last = now;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         match step {
-            Step::Call => {
+            CoinStep::Call => {
                 if let d = nav.step(input.stick.x, dt) {
                     if d != 0 {
                         pick = if d > 0 { 1 } else { 0 };
@@ -1706,33 +2312,37 @@ fn coin_flip(
                 }
                 if input.pressed.a {
                     t = 0.0;
-                    step = Step::Flip;
+                    step = CoinStep::Flip;
                 }
             }
-            Step::Flip => {
+            CoinStep::Flip => {
                 t += dt;
                 if t >= 1.05 {
                     t = 0.0;
                     heads = coin_seed() % 2 == 0;
                     let called_heads = pick == 0;
-                    step = if heads == called_heads { Step::Won } else { Step::Lost };
+                    step = if heads == called_heads {
+                        CoinStep::Won
+                    } else {
+                        CoinStep::Lost
+                    };
                 }
             }
-            Step::Won => {
+            CoinStep::Won => {
                 t += dt;
                 if input.pressed.a && t > 0.3 {
                     pick = 0;
-                    step = Step::Choose;
+                    step = CoinStep::Choose;
                 }
             }
-            Step::Lost => {
+            CoinStep::Lost => {
                 t += dt;
                 if t > 1.5 || input.pressed.a {
                     // The computer won the toss: it takes the ball.
                     return Some(false);
                 }
             }
-            Step::Choose => {
+            CoinStep::Choose => {
                 if let d = nav.step(input.stick.x, dt) {
                     if d != 0 {
                         pick = if d > 0 { 1 } else { 0 };
@@ -1743,95 +2353,12 @@ fn coin_flip(
                 }
             }
         }
+        slide.step(pick, dt);
 
         let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        centered(&mut frame, 18, "COIN TOSS", 3, accent());
-        centered(
-            &mut frame,
-            56,
-            &format!(
-                "{} AT {}",
-                all[yours].full_name().to_uppercase(),
-                all[theirs].full_name().to_uppercase()
-            ),
-            1,
-            dim(),
+        draw_coin_toss(
+            &mut frame, all, yours, theirs, venue, step, pick, t, heads, &slide,
         );
-
-        centered(
-            &mut frame,
-            72,
-            &format!(
-                "AT {}",
-                Venue::from_index(venue).name().to_uppercase()
-            ),
-            1,
-            dim(),
-        );
-
-        let (show_heads, width, landed) = match step {
-            Step::Call => (pick == 0, 118, false),
-            Step::Flip => {
-                let spin = (t * 13.0).cos().abs();
-                (heads || ((t * 13.0) as i32 % 2 == 0), (34.0 + 84.0 * spin) as i32, false)
-            }
-            Step::Won | Step::Choose => (heads, 118, true),
-            Step::Lost => (heads, 118, true),
-        };
-        coin(&mut frame, 320, 148, width, show_heads, landed);
-
-        match step {
-            Step::Call => {
-                centered(&mut frame, 224, "CALL IT", 1, paper());
-                let opts = ["HEADS", "TAILS"];
-                for (i, label) in opts.iter().enumerate() {
-                    let x = 190 + i as i32 * 150;
-                    let on = i == pick;
-                    if on {
-                        frame.fill_rect(x - 24, 240, 118, 22, panel());
-                        frame.fill_rect(x - 24, 260, 118, 2, accent());
-                    }
-                    centered_in(&mut frame, x + 35, 244, label, 2, if on { paper() } else { dim() });
-                }
-                footer(&mut frame, "[LEFT/RIGHT] CALL   [A] FLIP   [B] BACK");
-            }
-            Step::Flip => {
-                centered(&mut frame, 224, "IN THE AIR", 2, paper());
-                footer(&mut frame, "WAITING ON THE COIN");
-            }
-            Step::Won => {
-                centered(&mut frame, 214, if heads { "HEADS" } else { "TAILS" }, 2, accent());
-                centered(&mut frame, 240, "YOU CALLED IT. YOU WON THE TOSS.", 1, paper());
-                footer(&mut frame, "[A] CHOOSE");
-            }
-            Step::Lost => {
-                centered(&mut frame, 214, if heads { "HEADS" } else { "TAILS" }, 2, dim());
-                centered(&mut frame, 240, "YOU LOST THE TOSS", 1, paper());
-                centered(
-                    &mut frame,
-                    258,
-                    &format!("{} WILL RECEIVE", all[theirs].full_name().to_uppercase()),
-                    1,
-                    all[theirs].accent,
-                );
-                footer(&mut frame, "THE COMPUTER TAKES THE BALL");
-            }
-            Step::Choose => {
-                centered(&mut frame, 214, "THROW OR RECEIVE", 1, paper());
-                let opts = ["THROW IT OFF", "RECEIVE IT"];
-                for (i, label) in opts.iter().enumerate() {
-                    let x = 176 + i as i32 * 176;
-                    let on = i == pick;
-                    if on {
-                        frame.fill_rect(x - 40, 238, 160, 22, panel());
-                        frame.fill_rect(x - 40, 258, 160, 2, accent());
-                    }
-                    centered_in(&mut frame, x + 38, 242, label, 2, if on { paper() } else { dim() });
-                }
-                footer(&mut frame, "[LEFT/RIGHT] CHOOSE   [A] KICK OFF");
-            }
-        }
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -1841,8 +2368,8 @@ fn coin_flip(
 
 #[cfg(test)]
 mod tests {
-    use crate::view::UI_SCALE;
     use super::*;
+    use crate::view::UI_SCALE;
 
     #[test]
     fn every_mark_fits_inside_its_badge() {
@@ -1883,9 +2410,15 @@ mod tests {
         let mut seen = vec![false; list.len()];
         for seed in 0..40u64 {
             let got = roll_club(&list, None, seed);
-            seen[list.iter().position(|&i| i == got).expect("not in the list")] = true;
+            seen[list
+                .iter()
+                .position(|&i| i == got)
+                .expect("not in the list")] = true;
         }
-        assert!(seen.iter().all(|s| *s), "the roll never reached every club: {seen:?}");
+        assert!(
+            seen.iter().all(|s| *s),
+            "the roll never reached every club: {seen:?}"
+        );
     }
 
     #[test]
@@ -1975,6 +2508,64 @@ mod tests {
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
         );
         save("settings", &settings);
+        let all = clubs();
+        let mut length = Frame::new(UI_W, UI_H);
+        draw_season_length(&mut length, &all, 0, 4, &ui::Slide::new(4), 2.0);
+        save("season_length", &length);
+
+        let (depth, roster) = depth_chart(&all[0]);
+        let pages = roster.len().div_ceil(CHART_ROWS).max(1);
+        let mut chart = Frame::new(UI_W, UI_H);
+        draw_roster(
+            &mut chart,
+            &all[0],
+            &roster,
+            &depth,
+            (1, 0),
+            0,
+            pages,
+            &ui::Slide::new(1),
+            2.0,
+        );
+        save("roster", &chart);
+
+        let qb = roster
+            .iter()
+            .find(|p| p.pos == Position::Qb)
+            .expect("a club with a quarterback");
+        let mut card = Frame::new(UI_W, UI_H);
+        draw_player_card(&mut card, qb, 2.0);
+        save("player_card", &card);
+
+        let mut call = Frame::new(UI_W, UI_H);
+        draw_coin_toss(
+            &mut call,
+            &all,
+            0,
+            1,
+            0,
+            CoinStep::Call,
+            0,
+            0.0,
+            true,
+            &ui::Slide::new(0),
+        );
+        save("coin_call", &call);
+        let mut choose = Frame::new(UI_W, UI_H);
+        draw_coin_toss(
+            &mut choose,
+            &all,
+            0,
+            1,
+            0,
+            CoinStep::Choose,
+            1,
+            0.0,
+            true,
+            &ui::Slide::new(1),
+        );
+        save("coin_choose", &choose);
+
         println!("wrote the front end to {dir}");
     }
 
@@ -2056,8 +2647,22 @@ fn lens_screen(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Setti
         }
         let mut frame = broadcast.live_frame(&sim, CameraMode::Classic);
         frame.fill_rect_alpha(10, 10, 190, 48, Rgb::new(8, 12, 18), 0.72);
-        frame.text_shadowed(18, 16, &format!("ZOOM {:.2}", settings.lens_zoom), 2, paper(), 1);
-        frame.text_shadowed(18, 38, &format!("TILT {:+.2}", settings.lens_tilt), 2, paper(), 1);
+        frame.text_shadowed(
+            18,
+            16,
+            &format!("ZOOM {:.2}", settings.lens_zoom),
+            2,
+            paper(),
+            1,
+        );
+        frame.text_shadowed(
+            18,
+            38,
+            &format!("TILT {:+.2}", settings.lens_tilt),
+            2,
+            paper(),
+            1,
+        );
         let help = "[STICK] ZOOM / TILT   [X] RESET   [B] DONE".to_string();
         if !view.show_ui(&mut frame, &[help]) {
             break;
@@ -2066,4 +2671,3 @@ fn lens_screen(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Setti
     }
     view.reset();
 }
-
