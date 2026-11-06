@@ -12,6 +12,7 @@
 
 pub mod ai;
 pub mod custom;
+pub mod design;
 pub mod difficulty;
 pub mod field;
 pub mod game;

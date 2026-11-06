@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.84-windows-x86_64.zip` from the
+Grab `7on7-v0.25.85-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -227,9 +227,20 @@ going for the pick.
   players. A created club turns up in every picker the built clubs do.
 - **EDIT A UNIFORM** — repaint any club's home and away kits, colour by colour,
   with a pattern and a restore row. The kit is worn wherever that club plays.
+- **DESIGN A PLAYBOOK** — draw one from a blank sheet, or start from a copy of
+  any book the league runs and change it. The offense is a grid of circles and
+  the defense a grid of X's: pick a man up with A, carry him with the stick and
+  set him down with A again. The line rules are enforced as you draw — two
+  linemen on the line of scrimmage and the quarterback behind them — and the
+  screen says so under the field. A book holds two to five formations a side,
+  and each formation one to nine plays: a play is a path drawn for each of the
+  four eligible men, and on a run the back's path is the ball. The defense holds
+  two to five fronts, each with one to nine calls off it, the call being the
+  coverage behind the front you drew. Once the book is legal it is **MY
+  PLAYBOOK** wherever books are picked, and a created club can carry it.
 
-What you make is kept in `custom.txt` beside the settings and read back at
-start-up.
+What you make — the clubs, the kits and the playbook — is kept in `custom.txt`
+beside the settings and read back at start-up.
 
 **PRACTICE** asks the same question the tutorial does — offense, defense or both —
 and then which book to run and how hard the other lot should play, and gives you the
@@ -251,8 +262,8 @@ five returns each player's side, one club's card against the other's. A return i
 is two, the house is six. If the five apiece leave a tie — or a lead of one —
 sudden death: more returns in pairs, and it takes a lead of two to end it.
 
-**CUSTOMIZATION** is the league's paperwork, and it is for every club rather than
-only the one you are about to play: pick a club off the thirty-two and the screen
+**ROSTER** is the league's paperwork, and it is for every club rather than only
+the one you are about to play: pick a club off the thirty-two and the screen
 carries its **depth chart** and its **roster**. The depth chart is the eight
 positions down the left with the men who play them, best first, the way the game
 picks its seven — the starter in white, the man behind him greyed. The roster is

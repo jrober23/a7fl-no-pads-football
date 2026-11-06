@@ -265,6 +265,7 @@ pub fn book_name(book: Book) -> &'static str {
         Book::Power => "Power",
         Book::Zone => "Zone",
         Book::Balanced => "Balanced",
+        Book::Custom => "Custom",
     }
 }
 
@@ -304,6 +305,7 @@ pub fn text() -> String {
             t.abbr
         ));
     }
+    out.push_str(&crate::design::text());
     for (abbr, e) in kit_edits() {
         out.push_str(&format!(
             "kit {} {} {} {} {} {} {} {}\n",
@@ -333,6 +335,7 @@ pub fn pattern_name(p: JerseyPattern) -> &'static str {
 /// Read the store. Anything unreadable is skipped: a hand-edited file must never
 /// stop the game starting, the same rule the settings file lives by.
 pub fn parse(text: &str) {
+    crate::design::parse(text);
     let Ok(mut slots) = teams().lock() else { return };
     let Ok(mut kits) = kits().lock() else { return };
     for line in text.lines() {
@@ -438,6 +441,7 @@ pub fn clear() {
     if let Ok(mut k) = kits().lock() {
         k.clear();
     }
+    crate::design::clear();
 }
 
 #[cfg(test)]

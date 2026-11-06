@@ -149,6 +149,8 @@ pub enum Formation {
     Doubles,
     Spread,
     Empty,
+    /// A formation the player drew: the number names the design in the book.
+    Custom(u8),
 }
 
 impl Formation {
@@ -160,6 +162,7 @@ impl Formation {
             Formation::Doubles => "DOUBLES",
             Formation::Spread => "SPREAD",
             Formation::Empty => "EMPTY",
+            Formation::Custom(id) => crate::design::formation_name(id),
         }
     }
 
@@ -202,6 +205,8 @@ impl Formation {
             (Formation::Empty, Slot) => Vec2::new(0.0, 4.0),
             (Formation::Empty, WideL) => Vec2::new(0.0, -14.0),
             (Formation::Empty, WideR) => Vec2::new(0.0, 14.0),
+
+            (Formation::Custom(id), role) => crate::design::formation_spot(id, role),
 
             (_, Lg) => Vec2::new(-0.1, -0.62),
             (_, Rg) => Vec2::new(-0.1, 0.62),
@@ -1158,6 +1163,8 @@ pub enum DefFront {
     Tite,
     /// One edge in the B gap, one wide: an unbalanced, spilling front.
     Over,
+    /// A front the player drew: the number names the design in the book.
+    Custom(u8),
 }
 
 impl DefFront {
@@ -1168,6 +1175,7 @@ impl DefFront {
             DefFront::Wide => "WIDE 9",
             DefFront::Tite => "TITE 5",
             DefFront::Over => "OVER 3",
+            DefFront::Custom(id) => crate::design::front_name(id),
         }
     }
 
@@ -1178,6 +1186,7 @@ impl DefFront {
             (DefFront::Tite, _) => 5,
             (DefFront::Over, DefRole::EdgeL) => 3,
             (DefFront::Over, _) => 9,
+            (DefFront::Custom(_), _) => 5,
         }
     }
 
@@ -1187,6 +1196,7 @@ impl DefFront {
             DefFront::Wide => "9 / 9",
             DefFront::Tite => "5 / 5",
             DefFront::Over => "3 / 9",
+            DefFront::Custom(_) => "-- / --",
         }
     }
 
@@ -1196,6 +1206,7 @@ impl DefFront {
             DefFront::Wide => "CONTAIN",
             DefFront::Tite => "SQUEEZE",
             DefFront::Over => "SPILL",
+            DefFront::Custom(_) => "BASE",
         }
     }
 }
@@ -1235,6 +1246,7 @@ impl DefCall {
                         "9 CONTAIN"
                     }
                 }
+                DefFront::Custom(_) => "RUSH",
             },
             DefRole::Mike | DefRole::Will => match self.coverage {
                 Coverage::GoalLine => "FILL",
@@ -1427,10 +1439,12 @@ pub enum Book {
     Zone,
     /// Nothing left out: the whole catalog, both ways.
     Balanced,
+    /// The book the player designed himself.
+    Custom,
 }
 
 impl Book {
-    pub const ALL: [Book; 7] = [
+    pub const ALL: [Book; 8] = [
         Book::WestCoast,
         Book::AirRaid,
         Book::Vertical,
@@ -1438,6 +1452,7 @@ impl Book {
         Book::Power,
         Book::Zone,
         Book::Balanced,
+        Book::Custom,
     ];
 
     pub fn index(self) -> usize {
@@ -1449,6 +1464,7 @@ impl Book {
             Book::Power => 4,
             Book::Zone => 5,
             Book::Balanced => 6,
+            Book::Custom => 7,
         }
     }
 
@@ -1461,6 +1477,7 @@ impl Book {
             Book::Power => "POWER RUN",
             Book::Zone => "ZONE RUN",
             Book::Balanced => "BALANCED",
+            Book::Custom => "MY PLAYBOOK",
         }
     }
 
@@ -1474,6 +1491,7 @@ impl Book {
             Book::Power => "GAP RUNS, ISOLATION, AND THE PLAY ACTION OFF THEM",
             Book::Zone => "OUTSIDE ZONE, BOOTS AND THE CUT BLOCK",
             Book::Balanced => "EVERY DESIGN IN THE LEAGUE, BOTH SIDES OF THE BALL",
+            Book::Custom => "THE BOOK YOU DREW: FORMATIONS, PLAYS, FRONTS AND CALLS",
         }
     }
 
@@ -1576,6 +1594,7 @@ impl Book {
                 "WIDE ZONE",
             ],
             Book::Balanced => &[],
+            Book::Custom => &[],
         }
     }
 
@@ -1631,6 +1650,7 @@ impl Book {
                 "COVER 2 ZONE",
             ],
             Book::Balanced => &[],
+            Book::Custom => &[],
         }
     }
 }
@@ -1649,6 +1669,12 @@ pub const SHARED_CALLS: [&str; 4] =
 /// The offense one club's book gives it, in catalog order so the call sheet
 /// reads the same way every week.
 pub fn playbook_for(book: Book) -> Vec<Play> {
+    if book == Book::Custom {
+        let drawn = crate::design::offense_plays();
+        // A book that is not legal yet is not a book: the league's own plays are
+        // the fallback rather than an empty call sheet.
+        return if drawn.is_empty() { playbook() } else { drawn };
+    }
     let all = playbook();
     if book == Book::Balanced {
         return all;
@@ -1661,6 +1687,14 @@ pub fn playbook_for(book: Book) -> Vec<Play> {
 
 /// The defense one club's book gives it, on the same terms.
 pub fn defensive_playbook_for(book: Book) -> Vec<DefCall> {
+    if book == Book::Custom {
+        let drawn = crate::design::defense_calls();
+        return if drawn.is_empty() {
+            defensive_playbook()
+        } else {
+            drawn
+        };
+    }
     let all = defensive_playbook();
     if book == Book::Balanced {
         return all;
@@ -1686,6 +1720,10 @@ pub fn defensive_alignment(
     direction: i8,
     play_dir: i8,
 ) -> Vec2 {
+    // A front the player drew is already in the yards the editor works in.
+    if let DefFront::Custom(id) = call.front {
+        return crate::design::front_spot(id, role, los, direction);
+    }
     // Work in "offense forward" space then convert.
     let fwd = direction as f32;
     let coverage = call.coverage;
@@ -1701,6 +1739,9 @@ pub fn defensive_alignment(
         DefFront::Wide => (to_field(0.8, -1.95), to_field(0.8, 1.95)),
         DefFront::Tite => (to_field(0.9, -1.45), to_field(0.9, 1.45)),
         DefFront::Over => (to_field(0.85, -1.35), to_field(0.8, 1.95)),
+        // A designed front never reaches here: it returned its drawn spots
+        // above. The arm exists so the match stays exhaustive.
+        DefFront::Custom(_) => (to_field(0.8, -1.95), to_field(0.8, 1.95)),
     };
     match role {
         DefRole::EdgeL => edge_l,
@@ -1738,11 +1779,13 @@ pub fn defender_positions(call: &DefCall, los: f32, direction: i8) -> Vec<(DefRo
 
 /// The fronts the book is built on, in the order a coach installs them.
 pub fn fronts_in(book: &[DefCall]) -> Vec<DefFront> {
-    DefFront::ALL
-        .iter()
-        .copied()
-        .filter(|f| book.iter().any(|d| d.front == *f))
-        .collect()
+    let mut out: Vec<DefFront> = Vec::new();
+    for d in book {
+        if !out.contains(&d.front) {
+            out.push(d.front);
+        }
+    }
+    out
 }
 
 /// The calls in one front, in book order.
@@ -1765,6 +1808,7 @@ pub fn personnel_label(formation: Formation) -> &'static str {
         Formation::Doubles => "DBLS 1RB 2WR",
         Formation::Spread => "1RB 3WR",
         Formation::Empty => "4WR",
+        Formation::Custom(_) => "DESIGNED",
     }
 }
 
@@ -1984,7 +2028,9 @@ mod book_tests {
     /// call a game from, and more than one formation to line up in.
     #[test]
     fn every_book_has_the_shared_plays_and_enough_of_its_own() {
-        for book in Book::ALL {
+        // A designed book is the player's, not a league scheme: it has whatever
+        // he drew in it.
+        for book in Book::ALL.into_iter().filter(|b| *b != Book::Custom) {
             let off = playbook_for(book);
             let def = defensive_playbook_for(book);
             assert!(off.len() >= 12, "{} has {} plays", book.label(), off.len());
@@ -2017,7 +2063,9 @@ mod book_tests {
     fn two_books_are_not_the_same_book() {
         for a in Book::ALL {
             for b in Book::ALL {
-                if a == b || a == Book::Balanced || b == Book::Balanced {
+                // A designed book is not a scheme: it is whatever was drawn,
+                // which on a machine with no drawing in it is the whole catalog.
+                if a == b || a == Book::Balanced || b == Book::Balanced || a == Book::Custom || b == Book::Custom {
                     continue;
                 }
                 let (one, two) = (playbook_for(a), playbook_for(b));
