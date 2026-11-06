@@ -77,9 +77,11 @@ fn main() {
         frame.clear(Rgb::hex(0xC8CCD2));
         let mut mesh =
             players::build_mesh_at(player, uniform, &reached, player.id as u32, Detail::Close);
-        mesh.place(Vec3::new(0.0, 0.0, 0.0), 0.0, 1.0);
+        // Facing the camera, and framed high enough to keep the hands in shot:
+        // a reach that runs out of the top of the picture proves nothing.
+        mesh.place(Vec3::new(0.0, 0.0, 0.0), PI, 1.0);
         let scene = SceneRenderer::new(TILE_W, TILE_H, 34f32.to_radians());
-        let cam = Camera::new(Vec3::new(-3.4, 0.0, 1.05), 0.0, -0.04);
+        let cam = Camera::new(Vec3::new(-4.8, 0.0, 1.55), 0.0, -0.10);
         scene.draw_mesh(&mut frame, &mesh, &cam);
         for y in 0..TILE_H {
             for x in 0..TILE_W {
