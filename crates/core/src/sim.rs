@@ -143,6 +143,11 @@ pub const BODY_APRON: f32 = 0.2;
 pub const PRESNAP_WAIT: f32 = 2.6;
 /// How long a dummy count takes to sell at the line.
 pub const DUMMY_TIME: f32 = 1.1;
+/// How far past the ball a man is drawn when he bites at the count: further
+/// than `SNAP_OFFSIDE`, so the whistle he earns is one the picture shows.
+pub const JUMP_PAST: f32 = 0.5;
+/// How often the count catches your own line leaning instead of theirs.
+pub const DUMMY_FALSE_START_CHANCE: f32 = 0.07;
 /// How far a defender may lean into the neutral zone before the ball goes. Any
 /// further and he is across the line, which is a foul the moment the snap comes.
 
@@ -1462,6 +1467,37 @@ impl<'a> PlaySim<'a> {
             PlayOutcome::Penalty,
             self.los,
             format!("{name} is across at the snap: offside, five yards."),
+        );
+    }
+
+    /// Whistle the man who leaned, whatever shirt he is wearing. An offensive
+    /// man across before the snap is a false start and a defensive one is
+    /// encroachment, so the side comes from the man the flag names rather than
+    /// from the side the count was aimed at.
+    fn whistle_jump(&mut self, i: usize) {
+        match self.players[i].side {
+            Side::Offense => self.call_false_start(i),
+            Side::Defense => self.call_encroachment(i),
+        }
+    }
+
+    /// One of ours flinched at his own count: five yards on the offense, the
+    /// down played again, and the ball never leaves the ground.
+    fn call_false_start(&mut self, i: usize) {
+        let name = self.name_of(i);
+        let spot = self.players[i].pos.x;
+        let mut call = PenaltyCall::new(PenaltyKind::FalseStart, spot)
+            .with_player(self.roster_index(i));
+        call.against = FoulTeam::Offense;
+        self.flag = Some(call);
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("{name} moves before the snap"),
+        });
+        self.finish(
+            PlayOutcome::Penalty,
+            self.los,
+            format!("{name} jumps the count: false start, five yards."),
         );
     }
 
@@ -3636,8 +3672,10 @@ impl<'a> PlaySim<'a> {
 
     /// Bark a hard count at the line to draw the defense across it.
     ///
-    /// The gamble is the whole point: a man who bites is five yards and a replay
-    /// of the down, and a defense that sits still has seen the count for nothing.
+    /// The gamble is the whole point, and it runs both ways: a defender who bites
+    /// is five yards and a replay of the down, a defense that sits still has seen
+    /// the count for nothing, and a count that catches your own line leaning is a
+    /// false start on you.
     pub fn dummy_audible(&mut self) {
         if self.phase != Phase::PreSnap || self.dummy_t > 0.0 {
             return;
@@ -3648,8 +3686,27 @@ impl<'a> PlaySim<'a> {
             t: self.t,
             text: format!("{name} barks the count"),
         });
-        // Whoever is closest to the ball and close enough to the line to be
-        // tempted. Only one man has to jump.
+        // The count is a gamble in both directions. Your own line can be the one
+        // that leans, and that is the offense's own foul: the man is named, the
+        // ball never goes, and the five yards come off his side.
+        if self.rng.chance(DUMMY_FALSE_START_CHANCE) {
+            let leaning = (0..7)
+                .filter(|&i| !self.players[i].down && self.players[i].stun <= 0.0)
+                .min_by(|&a, &b| {
+                    let da = self.players[a].pos.dist(self.ball.pos);
+                    let db = self.players[b].pos.dist(self.ball.pos);
+                    da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            if let Some(i) = leaning {
+                self.players[i].pos.x = self.los + self.dirf() * JUMP_PAST;
+                self.players[i].vel = Vec2::new(self.dirf() * 0.9, 0.0);
+                self.whistle_jump(i);
+                self.dummy_t = 0.0;
+                return;
+            }
+        }
+        // Otherwise whoever is closest to the ball and close enough to the line
+        // to be tempted. Only one man has to jump.
         let bait = (7..14)
             .filter(|&d| {
                 !self.players[d].down
@@ -3667,9 +3724,12 @@ impl<'a> PlaySim<'a> {
         if !self.rng.chance(0.34) {
             return;
         }
-        self.players[d].pos.x += self.dirf() * 0.8;
-        self.players[d].vel = Vec2::new(self.dirf() * 1.4, 0.0);
-        self.call_encroachment(d);
+        // Drawn across the ball, not away from it. A defensive man who jumps at
+        // the count is over the line, which is what makes the whistle his; the
+        // old nudge moved him a yard the other way and flagged him anyway.
+        self.players[d].pos.x = self.los - self.dirf() * JUMP_PAST;
+        self.players[d].vel = Vec2::new(-self.dirf() * 1.4, 0.0);
+        self.whistle_jump(d);
         self.dummy_t = 0.0;
     }
 
@@ -4942,29 +5002,76 @@ mod tests {
         assert_eq!(sim.phase, Phase::Dead, "the ball went on a dead-ball foul");
     }
 
+    /// A count that draws a defender is encroachment on the defense, and the
+    /// man is left across the ball rather than backing away from it.
     #[test]
     fn a_dummy_count_can_draw_the_defence_offside() {
         let book = playbook();
         let dcall = defensive_playbook()[0].clone();
         let mut flagged = 0;
-        for seed in 0..40u64 {
+        let mut quiet = 0;
+        for seed in 0..60u64 {
             let (off, def) = teams();
             let s = setup(40.0, 1, 10.0, 100 + seed);
             let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
-            // A rusher right over the ball, which is who a hard count tempts.
-            sim.players[7].pos.x = s.los - s.direction as f32 * 0.4;
             sim.dummy_audible();
-            if let Some(r) = sim.result.clone() {
-                let call = r.penalty.expect("a jump with no flag");
-                assert_eq!(call.kind, crate::rules::PenaltyKind::Encroachment);
-                assert_eq!(call.against, crate::rules::FoulTeam::Defense);
-                flagged += 1;
+            let Some(r) = sim.result.clone() else {
+                quiet += 1;
+                continue;
+            };
+            let call = r.penalty.expect("a jump with no flag");
+            if call.against != crate::rules::FoulTeam::Defense {
+                quiet += 1;
+                continue;
             }
+            assert_eq!(call.kind, crate::rules::PenaltyKind::Encroachment);
+            // The spot of the foul is where the man was when it was whistled, so
+            // this is the picture's claim as well as the flag's.
+            let across = (call.spot_of_foul - s.los) * s.direction as f32;
+            assert!(
+                across < -SNAP_OFFSIDE,
+                "the flag names a man who never crossed: {across:.2} yards from the ball"
+            );
+            flagged += 1;
         }
         assert!(
-            flagged > 0 && flagged < 40,
-            "the count is a sure thing or a waste of breath: {flagged} of 40"
+            flagged > 0 && quiet > 0,
+            "the count is a sure thing or a waste of breath: {flagged} jumps, {quiet} quiet"
         );
+    }
+
+    /// The count can catch your own line leaning, and then it is the offense's
+    /// own foul: five yards his way, the down again, the ball still on the turf.
+    #[test]
+    fn a_count_that_catches_your_own_line_is_a_false_start() {
+        let book = playbook();
+        let dcall = defensive_playbook()[0].clone();
+        let mut seen = false;
+        for seed in 0..200u64 {
+            let (off, def) = teams();
+            let s = setup(40.0, 1, 10.0, 400 + seed);
+            let mut sim = PlaySim::new(&off, &def, &book[0], &dcall, &s);
+            sim.dummy_audible();
+            let Some(call) = sim.result.as_ref().and_then(|r| r.penalty.clone()) else {
+                continue;
+            };
+            if call.kind != crate::rules::PenaltyKind::FalseStart {
+                continue;
+            }
+            let r = sim.result.clone().expect("a flag with no play");
+            assert_eq!(call.against, crate::rules::FoulTeam::Offense);
+            assert!(call.player.is_some(), "a false start with nobody on it");
+            assert_eq!(r.yards, 0.0, "a false start is not a play");
+            assert_eq!(sim.phase, Phase::Dead, "the ball went on a dead-ball foul");
+            let across = (call.spot_of_foul - s.los) * s.direction as f32;
+            assert!(
+                across > SNAP_OFFSIDE,
+                "the flag names a man who never crossed: {across:.2} yards from the ball"
+            );
+            seen = true;
+            break;
+        }
+        assert!(seen, "the count never caught the offense in 200 seeds");
     }
 
     #[test]

@@ -481,9 +481,13 @@ encroachment and is whistled on the spot. Standing across when the ball is hiked
 offside, five yards, and the same goes for an offensive man who is past the line
 when it goes.
 
-LB is the dummy count. The quarterback barks the count and the men on the ball
-either bite or they do not: a defender who jumps is five yards and the down is
-replayed, and a defense that sits still has heard the count for nothing.
+LB is the dummy count. The quarterback barks the count and a man either bites or he
+does not, and the flag follows the man who moved rather than the side the count was
+aimed at: a defender drawn across the ball is encroachment, five yards on the
+defense, and a count that catches your own line leaning is a false start on you,
+five yards the other way. Either way the down is replayed and the ball never goes.
+A defense that sits still has heard the count for nothing, which is the risk: the
+count is a gamble with both teams' nerves.
 
 X opens the audible as a card over the picture, three plays at a time, and the
 stick pages through the rest. The field stays on screen behind it, which matters,

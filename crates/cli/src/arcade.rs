@@ -4182,6 +4182,71 @@ mod tests {
     /// rather than sitting inside it. One picture each, over a frozen frame of
     /// the same play: the panel is glass over a picture, so the picture belongs
     /// in the shot.
+    /// The hard count as the player watches it: a defender over the line is his
+    /// foul, a member of your own line leaning at the count is yours. Both are
+    /// five yards and a replay, and the flag names the man, not the side the
+    /// count was aimed at.
+    #[test]
+    fn the_hard_count_can_be_rendered_to_pictures() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        use nopads_core::playbook::{defensive_playbook, playbook};
+        use nopads_core::rules::PenaltyKind;
+        use nopads_core::sim::{PlaySim, SnapSetup};
+        use nopads_core::team::league_teams;
+
+        let teams = league_teams();
+        let (home, away) = (teams[0].clone(), teams[1].clone());
+        let (book, dbook) = (playbook(), defensive_playbook());
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let mut broadcast = Broadcast::new(CANVAS_W, CANVAS_H, [home.clone(), away.clone()]);
+        let mut wrote = [false; 2];
+        for seed in 0..200u64 {
+            let setup = SnapSetup {
+                los: 35.0,
+                ball_y: 0.0,
+                direction: 1,
+                down: 2,
+                to_go: 7.0,
+                seed,
+                offense_team: 0,
+                defense_team: 1,
+                is_try: false,
+            };
+            let mut sim = PlaySim::new(&home, &away, &book[0], &dbook[0], &setup);
+            // Held at the line, so the picture is the jump itself and not a play
+            // that carried on behind it.
+            sim.await_snap(true);
+            for _ in 0..20 {
+                sim.step(1.0 / 60.0);
+            }
+            sim.dummy_audible();
+            let Some(call) = sim.result.as_ref().and_then(|r| r.penalty.clone()) else {
+                continue;
+            };
+            let slot = match call.kind {
+                PenaltyKind::Encroachment => 0,
+                PenaltyKind::FalseStart => 1,
+                _ => continue,
+            };
+            if wrote[slot] {
+                continue;
+            }
+            wrote[slot] = true;
+            let frame = broadcast.live_frame(&sim, CameraMode::Classic);
+            let name = if slot == 0 { "hard_defence" } else { "hard_false_start" };
+            nopads_render::write_png(format!("{dir}/{name}.png"), &frame).expect("write png");
+            if wrote[0] && wrote[1] {
+                break;
+            }
+        }
+        assert!(
+            wrote[0] && wrote[1],
+            "the count did not produce both kinds: {wrote:?}"
+        );
+    }
+
     #[test]
     fn the_pause_menu_can_be_rendered_to_pictures() {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {
