@@ -277,6 +277,8 @@ fn holding_the_dive_button_is_one_lunge() {
     }
     sim.set_human_defender(Some(7));
     let mut diving = 0;
+    let mut starts = 0;
+    let mut was_diving = false;
     let mut total = 0.0;
     let mut last = sim.players[7].pos;
     for _ in 0..60 {
@@ -287,23 +289,39 @@ fn holding_the_dive_button_is_one_lunge() {
         sim.step(1.0 / 60.0);
         if sim.players[7].dive_t > 0.0 {
             diving += 1;
+            if !was_diving {
+                starts += 1;
+            }
         }
+        was_diving = sim.players[7].dive_t > 0.0;
         total += (sim.players[7].pos - last).length();
         last = sim.players[7].pos;
     }
-    // One window is eighteen frames. Held down it used to chain them, and a man
-    // lunge-lunge-lunging at a runner who has moved is a body sliding about the
-    // screen rather than a tackle.
+    // One window is eighteen frames. Held down it used to reload the moment the
+    // window closed, and the reload re-applied the whole curve from zero, so a
+    // held button left a man sliding about the screen instead of making a tackle.
+    assert_eq!(starts, 1, "a held button threw him {starts} times");
     assert!(
         (10..=22).contains(&diving),
         "a held button kept him diving for {diving} frames"
     );
     assert!(
-        // One lunge plus the step he takes while getting up. A chained second
-        // was six or seven yards, so anything past a lunge and a half is the
-        // button reloading itself.
-        total >= DIVE_LUNGE * 1.1 && total <= DIVE_LUNGE * 1.9,
-        "a held button carried him {total:.2} yards"
+        (DIVE_LUNGE * 0.9..=DIVE_LUNGE * 1.15).contains(&total),
+        "a held button carried him {total:.2} yards; one lunge is {DIVE_LUNGE:.2}"
+    );
+
+    // Letting go loads the next one, so the button still works for a second
+    // press once he is back on his feet.
+    for _ in 0..30 {
+        sim.set_def_control(Some(DefControl::default()));
+        sim.step(1.0 / 60.0);
+    }
+    assert_eq!(sim.players[7].dive_t, 0.0, "he never landed");
+    sim.set_def_control(Some(DefControl { dive: true, ..Default::default() }));
+    sim.step(1.0 / 60.0);
+    assert!(
+        sim.players[7].dive_t > 0.0,
+        "releasing the button never loaded a second lunge"
     );
 }
 

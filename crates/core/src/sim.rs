@@ -2286,7 +2286,16 @@ impl<'a> PlaySim<'a> {
                     // was measured from the wrong end of the curve and he stalled
                     // at the end of each lunge -- press it near the line and he
                     // got there, hold it in the open field and he stopped dead.
-                    if !ctl.dive {
+                    // Letting go loads the next lunge. It only reloads once he is
+                    // back on his feet, though: this used to run on every frame the
+                    // button was not held -- which is every frame of a dive, since
+                    // the press is one frame and the lunge is a third of a second.
+                    // Zeroing the ground already flown meant each frame re-applied
+                    // the whole lunge from zero: one press carried him about
+                    // twenty-six yards across the field, finishing with a
+                    // two-and-a-fifth yard jump on the frame he landed. That is the
+                    // flight, and with the old aim it went straight at the carrier.
+                    if !ctl.dive && self.players[i].dive_t <= 0.0 {
                         // Letting go lets the lungs fill: the next press is a
                         // fresh lunge from a standstill, not a continuation.
                         self.players[i].dive_armed = true;
@@ -2362,14 +2371,14 @@ impl<'a> PlaySim<'a> {
                         let spd = self.speed_cap(i) * (0.6 + 0.4 * mag);
                         self.steer(i, target, spd, dt);
                     } else {
-                        let aim = if let Some(f) = self.ball.flight.as_ref() {
-                            f.to
-                        } else if let Some(c) = carrier {
-                            self.players[c].pos
-                        } else {
-                            self.players[self.qb].pos
-                        };
-                        self.steer(i, aim, self.speed_cap(i) * 0.4, dt);
+                        // Stick at rest: the man on the pad stands his ground.
+                        // He used to keep working to the ball on his own, so the
+                        // one defender the player was steering walked himself
+                        // onto the carrier every time the stick was let go --
+                        // the defender stuck to the ball that outlived the aim
+                        // fix. A dive starts where he stands; nothing but the
+                        // stick moves him. The coordinator's men still pursue.
+                        self.steer(i, self.players[i].pos, 0.0, dt);
                     }
                     continue;
                 }
@@ -5247,6 +5256,173 @@ mod tests {
         assert!(
             broke.dot(down_field).abs() < 0.1,
             "the cut went down the field instead of across it: {broke:?}"
+        );
+    }
+
+    /// One press is one lunge, and the lunge is 2.2 yards.
+    ///
+    /// The reload ran on every frame the dive button was up -- which is every
+    /// frame of the dive, because the press is a frame and the lunge is a third of
+    /// a second. Each of those frames set the ground already flown back to zero and
+    /// then added the whole curve again, so a single press walked the defender
+    /// about twenty-six yards, with a two-yard jump on the last frame. Measured
+    /// here frame by frame, which is how it was found.
+    #[test]
+    fn one_press_is_one_lunge_and_no_more() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 3));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+        sim.set_human_defender(Some(7));
+        // Twelve yards off the ball: nothing he does can reach it in a lunge, so
+        // the only thing moving him is the dive.
+        let start = sim.players[carrier].pos + Vec2::new(0.0, 12.0);
+        sim.players[7].pos = start;
+        sim.players[7].vel = Vec2::ZERO;
+        sim.players[7].stun = 0.0;
+        sim.players[7].dive_t = 0.0;
+        sim.players[7].dive_armed = true;
+        sim.players[7].tackle_cooldown = 0.0;
+        let stick = Vec2::new(1.0, 0.0);
+
+        // The press lasts one frame; the button is up for the whole lunge after it.
+        sim.set_def_control(Some(DefControl { move_dir: stick, dive: true, ..Default::default() }));
+        sim.step(1.0 / 60.0);
+        let mut worst: f32 = 0.0;
+        let mut last = sim.players[7].pos;
+        let mut frames = 0;
+        while sim.players[7].dive_t > 0.0 && frames < 90 && sim.result.is_none() {
+            sim.set_def_control(Some(DefControl { move_dir: stick, ..Default::default() }));
+            sim.step(1.0 / 60.0);
+            worst = worst.max(sim.players[7].pos.dist(last));
+            last = sim.players[7].pos;
+            frames += 1;
+        }
+        let travelled = start.dist(sim.players[7].pos);
+        assert!(
+            travelled <= DIVE_LUNGE + 0.05,
+            "one press carried him {travelled:.2} yards; a lunge is {DIVE_LUNGE:.2}"
+        );
+        assert!(
+            travelled > 1.0,
+            "the lunge barely moved him: {travelled:.2} yards over {frames} frames"
+        );
+        assert!(
+            worst < DIVE_LUNGE * 0.5,
+            "one frame of the dive jumped {worst:.2} yards"
+        );
+        assert!(
+            (sim.players[7].pos - start).dot(stick) > 0.9 * travelled,
+            "the lunge did not go along the stick"
+        );
+    }
+
+    /// Every man on defense, every frame: nobody crosses the field in one tick.
+    ///
+    /// The dive has been reported three times, so this walks all seven defenders
+    /// through a live run -- the press, the lunge, the wrap and the pile that
+    /// follows it -- and measures the ground each one covers between frames.
+    /// A body at full speed covers about a seventh of a yard in a frame. Anything
+    /// over half a yard is a mover that is not the man's legs: a homing aim, a
+    /// snap onto the carrier, or a reload that re-applies a lunge.
+    #[test]
+    fn no_defender_crosses_the_field_in_a_frame() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 21));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+        sim.set_human_defender(sim.nearest_defender());
+        let me = sim.human_defender.expect("no defender on the pad");
+        let mut pressed = false;
+        let mut prev: Vec<Vec2> = sim.players.iter().map(|p| p.pos).collect();
+        // (defender, frame, ground covered that frame)
+        let mut worst = (0usize, 0usize, 0.0f32);
+        for frame in 0..360 {
+            if sim.result.is_some() {
+                break;
+            }
+            let gap = sim.players[me].pos.dist(sim.players[carrier].pos);
+            // One press, when the ball is close enough for a lunge to mean
+            // something. Everything after it is the button being up, which is
+            // what the arcade sends for a tap.
+            let dive = !pressed && gap < 3.5;
+            if dive {
+                pressed = true;
+            }
+            let stick = (sim.players[carrier].pos - sim.players[me].pos).normalize_or_zero();
+            sim.set_def_control(Some(DefControl {
+                move_dir: stick,
+                dive,
+                ..Default::default()
+            }));
+            sim.step(1.0 / 60.0);
+            for i in 7..14 {
+                let step = prev[i].dist(sim.players[i].pos);
+                if step > worst.2 {
+                    worst = (i, frame, step);
+                }
+            }
+            prev = sim.players.iter().map(|p| p.pos).collect();
+        }
+        assert!(pressed, "he never got close enough to dive");
+        assert!(
+            worst.2 < 0.6,
+            "defender {} covered {:.2} yards in frame {}: that is not his legs",
+            worst.0,
+            worst.2,
+            worst.1
+        );
+    }
+
+    /// The pad's man stays where he is put.
+    ///
+    /// With the stick at rest he used to keep working to the ball on his own, so
+    /// the one defender the player was steering walked himself onto the carrier
+    /// every time the stick was let go: the "attached to the ball" that outlived
+    /// the dive's aim. Nothing but the stick moves him now.
+    #[test]
+    fn the_pad_stays_where_it_is_put() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let dbook = defensive_playbook();
+        let play = book.iter().find(|p| p.family.is_run()).expect("a run play");
+        let mut sim = PlaySim::new(&off, &def_, play, &dbook[0], &setup(40.0, 1, 10.0, 3));
+        let mut guard = 0;
+        while sim.carrier.is_none() && sim.result.is_none() && guard < 900 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        let carrier = sim.carrier.expect("the handoff");
+        sim.set_human_defender(Some(7));
+        let start = sim.players[carrier].pos + Vec2::new(0.0, 12.0);
+        sim.players[7].pos = start;
+        sim.players[7].vel = Vec2::ZERO;
+        sim.players[7].stun = 0.0;
+        sim.players[7].dive_t = 0.0;
+        sim.players[7].dive_armed = true;
+        sim.players[7].tackle_cooldown = 0.0;
+        for _ in 0..40 {
+            sim.set_def_control(Some(DefControl::default()));
+            sim.step(1.0 / 60.0);
+        }
+        let moved = start.dist(sim.players[7].pos);
+        assert!(
+            moved < 0.25,
+            "he walked {moved:.2} yards across the field with no stick on him"
         );
     }
 
