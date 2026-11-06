@@ -891,7 +891,7 @@ fn cmd_arcade(args: &[String]) {
     } else {
         match menu::run(&mut view, pad.as_mut(), &mut settings) {
             Some(menu::Front::Friendly(kick)) => {
-                let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed);
+                let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed, false);
                 view = v;
                 pad = p;
             }
@@ -907,7 +907,7 @@ fn cmd_arcade(args: &[String]) {
                             let game_seed =
                                 season.seed ^ 0x00A7_5EA5 ^ (season.week as u64) << 8;
                             let (v, p, finished, score) =
-                                play_kickoff(view, pad, &settings, &kick, game_seed);
+                                play_kickoff(view, pad, &settings, &kick, game_seed, true);
                             view = v;
                             pad = p;
                             // A game left early is not a result: the fixture waits
@@ -949,6 +949,7 @@ fn play_kickoff(
     settings: &settings::Settings,
     kick: &menu::Kickoff,
     seed: u64,
+    series: bool,
 ) -> (view::View, Option<pad::Pad>, bool, (u32, u32)) {
     let teams = league_teams();
     let mut game = GameState::new(
@@ -967,7 +968,8 @@ fn play_kickoff(
         .with_lens(settings.lens_zoom, settings.lens_tilt)
         .with_settings(settings.clone())
         .with_venue(kick.venue)
-        .with_my_team(0);
+        .with_my_team(0)
+        .for_series(series);
     arcade.run();
     let finished = arcade.finished();
     let score = arcade.final_score();

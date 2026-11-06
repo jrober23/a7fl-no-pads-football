@@ -306,6 +306,10 @@ pub struct Arcade {
     venue: usize,
     /// Halftime is a presentation, not a question: it runs once.
     halftime_shown: bool,
+    /// This game is one fixture of a season. A season fixture is one game: there
+    /// is no rematch after it and no front end inside it, because the season
+    /// screen is what comes next and it needs the result.
+    series: bool,
 }
 
 /// What the player asked for at the final whistle.
@@ -317,6 +321,31 @@ enum AfterFinal {
     Menu,
 }
 
+/// What the arcade does when a game is over.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AfterGame {
+    /// Leave the arcade and give the view back to whoever started the game.
+    Finish,
+    /// The same two clubs, from zero.
+    Again,
+    /// Back to the front end, inside the arcade.
+    Menu,
+}
+
+/// One game of a season is over when it is over: no rematch, no menu, just the
+/// result and the view back.
+fn after_game(after: Option<AfterFinal>, series: bool, menu_requested: bool) -> AfterGame {
+    if series {
+        return AfterGame::Finish;
+    }
+    match after {
+        Some(AfterFinal::Again) => AfterGame::Again,
+        Some(AfterFinal::Menu) => AfterGame::Menu,
+        None if menu_requested => AfterGame::Menu,
+        None => AfterGame::Finish,
+    }
+}
+
 impl Arcade {
     pub fn new(game: GameState, pad: Option<Pad>, view: View) -> Self {
         let book = playbook();
@@ -325,6 +354,7 @@ impl Arcade {
         let broadcast = Broadcast::new(CANVAS_W, CANVAS_H, teams);
         Arcade {
             halftime_shown: false,
+            series: false,
             game,
             pad,
             view,
@@ -404,6 +434,12 @@ impl Arcade {
         (self.view, self.pad)
     }
 
+    /// This game is one fixture of a season rather than a standalone game.
+    pub fn for_series(mut self, on: bool) -> Self {
+        self.series = on;
+        self
+    }
+
     pub fn run(&mut self) {
         let terminal_mode = !self.view.is_window();
         if terminal_mode {
@@ -430,18 +466,18 @@ impl Arcade {
             // The final card asks what is next. Playing again is the same two
             // clubs on the same ground; the other way out is the front end. Only
             // the menu's own quit, or a closed window, ends the program.
-            match after {
-                Some(AfterFinal::Again) => self.restart(),
-                Some(AfterFinal::Menu) => {
+            //
+            // A season fixture is the exception: it is one game, and the season
+            // screen is what comes next. This is where a season game used to start
+            // itself over -- the arcade took every final whistle for an invitation
+            // to play again, so the result never reached the table.
+            match after_game(after, self.series, BACK_TO_MENU.load(Ordering::Relaxed)) {
+                AfterGame::Finish => break,
+                AfterGame::Again => self.restart(),
+                AfterGame::Menu => {
                     if !self.reopen_menu() {
                         break;
                     }
-                }
-                None => {
-                    if BACK_TO_MENU.load(Ordering::Relaxed) && self.reopen_menu() {
-                        continue;
-                    }
-                    break;
                 }
             }
         }
@@ -1699,12 +1735,24 @@ impl Arcade {
             lines.push(format!("  · {line}"));
         }
         lines.push(String::new());
-        lines.push("  [A] PLAY AGAIN    [B] MAIN MENU".to_string());
+        if self.series {
+            lines.push("  [A] BACK TO THE SEASON".to_string());
+        } else {
+            lines.push("  [A] PLAY AGAIN    [B] MAIN MENU".to_string());
+        }
         if !self.view.page(&lines) {
             return None;
         }
         loop {
             let input = self.wait(Duration::from_millis(30));
+            if self.series {
+                // There is nothing to choose after a season fixture: any key is
+                // the way back to the table.
+                if input.pressed.a || input.pressed.b || input.pressed.start {
+                    return Some(AfterFinal::Menu);
+                }
+                continue;
+            }
             if input.pressed.a || input.pressed.start {
                 return Some(AfterFinal::Again);
             }
@@ -4016,5 +4064,35 @@ mod tests {
         assert!(scrub(10.0, 1000.0, false, false, true, 0.5).abs() < 0.01);
         // A paused tape with nothing held does not move at all.
         assert!((scrub(42.0, 1000.0, false, false, false, 0.5) - 42.0).abs() < 0.01);
+    }
+}
+
+#[cfg(test)]
+mod after_game_tests {
+    use super::{after_game, AfterFinal, AfterGame};
+
+    /// The bug this guards: a season fixture that reached the final card came
+    /// straight back as a new game, so the season stopped and the result was
+    /// never written into the table.
+    #[test]
+    fn a_season_game_never_starts_itself_over() {
+        assert_eq!(
+            after_game(Some(AfterFinal::Again), true, false),
+            AfterGame::Finish
+        );
+        assert_eq!(
+            after_game(Some(AfterFinal::Menu), true, false),
+            AfterGame::Finish
+        );
+        assert_eq!(after_game(None, true, true), AfterGame::Finish);
+        // An exhibition still rematches off its own card.
+        assert_eq!(
+            after_game(Some(AfterFinal::Again), false, false),
+            AfterGame::Again
+        );
+        assert_eq!(
+            after_game(Some(AfterFinal::Menu), false, false),
+            AfterGame::Menu
+        );
     }
 }
