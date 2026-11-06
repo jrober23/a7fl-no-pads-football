@@ -18,6 +18,7 @@ pub mod math;
 pub mod moves;
 pub mod playbook;
 pub mod rules;
+pub mod season;
 pub mod sim;
 pub mod stats;
 pub mod team;

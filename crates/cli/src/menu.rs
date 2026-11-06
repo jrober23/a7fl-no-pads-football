@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use nopads_core::game::{GameState, PlayRecord};
 use nopads_core::math::Rgb;
+use nopads_core::season::{self, Phase, Season};
 use nopads_core::team::{
     clubs, depth_order, league_teams, set_depth_order, Club, Division, Player, Position, Team,
     TeamRatings,
@@ -54,21 +55,35 @@ pub struct Kickoff {
     pub venue: usize,
 }
 
+/// What the player asked the front end for.
+pub enum Front {
+    /// One exhibition game.
+    Friendly(Kickoff),
+    /// A whole season, already scheduled.
+    Season(Box<Season>),
+}
+
 enum Start {
     Exhibition,
+    Season,
     Customize,
     Settings,
     Quit,
 }
 
 /// Run the front end. `None` means the player quit (or closed the window).
-pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> Option<Kickoff> {
+pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> Option<Front> {
     let mut pad = pad;
     loop {
         match start_screen(view, &mut pad, settings)? {
             Start::Exhibition => {
                 if let Some(kick) = exhibition(view, &mut pad, settings) {
-                    return Some(kick);
+                    return Some(Front::Friendly(kick));
+                }
+            }
+            Start::Season => {
+                if let Some(season) = season_setup(view, &mut pad, settings) {
+                    return Some(Front::Season(Box::new(season)));
                 }
             }
             Start::Customize => {
@@ -221,13 +236,13 @@ fn beat() {
 /// first, and it is laid out corner to corner on the grid rather than in a list
 /// of numbers that only means anything on one canvas.
 fn draw_start(frame: &mut Frame, pick: usize) {
-    const LABELS: [&str; 4] = ["EXHIBITION", "CUSTOMIZATION", "SETTINGS", "QUIT"];
+    const LABELS: [&str; 5] = ["EXHIBITION", "SEASON", "CUSTOMIZATION", "SETTINGS", "QUIT"];
         night(frame);
         centered(frame, 34, "7-ON-7", 7, accent());
         centered(frame, 100, "NO PADS FOOTBALL", 2, paper());
-        frame.fill_rect(150, 168, 340, 1, Rgb::new(48, 92, 148));
+        frame.fill_rect(150, 160, 340, 1, Rgb::new(48, 92, 148));
         for (i, label) in LABELS.iter().enumerate() {
-            let y = 192 + i as i32 * 30;
+            let y = 182 + i as i32 * 28;
             let on = i == pick;
             if on {
                 frame.fill_rect(228, y - 6, 190, 24, panel());
@@ -243,7 +258,7 @@ fn start_screen(
     pad: &mut Option<&mut Pad>,
     _settings: &mut Settings,
 ) -> Option<Start> {
-    const ITEMS: usize = 4;
+    const ITEMS: usize = 5;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut last = Instant::now();
@@ -271,8 +286,9 @@ fn start_screen(
         if input.pressed.a {
             return Some(match pick {
                 0 => Start::Exhibition,
-                1 => Start::Customize,
-                2 => Start::Settings,
+                1 => Start::Season,
+                2 => Start::Customize,
+                3 => Start::Settings,
                 _ => Start::Quit,
             });
         }
@@ -1158,6 +1174,375 @@ fn pick_team(
     }
 }
 
+
+// ---------------------------------------------------------------------------
+// Season
+// ---------------------------------------------------------------------------
+
+/// Pick a club and a length, and the season is scheduled from both.
+///
+/// The length is a choice rather than a setting because it is the shape of the
+/// thing: four weeks is an evening, a full thirty-one is a league campaign.
+fn season_setup(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    _settings: &mut Settings,
+) -> Option<Season> {
+    let all = clubs();
+    let cards: Vec<Card> = all
+        .iter()
+        .map(|c| {
+            let (ratings, men) = c.profile(3);
+            Card {
+                ratings,
+                stars: men
+                    .into_iter()
+                    .map(|(pos, name, rating)| {
+                        (format!("{} {}", pos.abbr(), name.to_uppercase()), rating)
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+    let you = pick_team(view, pad, &all, &cards, None, "YOUR CLUB THIS SEASON")?.club(&all, None);
+    let weeks = season_length(view, pad, you, &all)?;
+    Some(Season::new(you, weeks, coin_seed()))
+}
+
+/// The lengths on offer. The last is the full round-robin: every club twice a
+/// week for thirty-one weeks, which is the longest season the league can give.
+const SEASON_LENGTHS: [usize; 9] = [4, 6, 8, 10, 12, 16, 20, 24, 31];
+
+fn season_length(view: &mut View, pad: &mut Option<&mut Pad>, you: usize, all: &[Club]) -> Option<usize> {
+    let mut pick = 4usize;
+    let mut nav = Repeat::default();
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b || input.pressed.start {
+            return None;
+        }
+        if let d = nav.step(input.stick.x, dt) {
+            if d != 0 {
+                pick = wrap(pick, SEASON_LENGTHS.len(), d);
+            }
+        }
+        let weeks = SEASON_LENGTHS[pick];
+        let mut frame = Frame::new(UI_W, UI_H);
+        night(&mut frame);
+        centered(&mut frame, 26, "SEASON", 3, accent());
+        centered(&mut frame, 66, "HOW MANY WEEKS", 2, paper());
+        badge(&mut frame, 320, 130, 44, &all[you], true);
+        centered(&mut frame, 166, &all[you].full_name().to_uppercase(), 2, paper());
+        // The number, big, with the season either side of it.
+        let mut x = 320 - (SEASON_LENGTHS.len() as i32 * 34) / 2;
+        for (i, w) in SEASON_LENGTHS.iter().enumerate() {
+            let on = i == pick;
+            if on {
+                frame.rounded_rect(x - 4, 200, 32, 30, 6, panel());
+                frame.fill_rect(x - 4, 228, 32, 2, accent());
+            }
+            centered_in(&mut frame, x + 12, 206, &w.to_string(), 2, if on { accent() } else { dim() });
+            x += 34;
+        }
+        centered(&mut frame, 244, &format!("{weeks} GAMES IN THE REGULAR SEASON"), 1, paper());
+        centered(
+            &mut frame,
+            260,
+            "THE TOP TWO IN EACH DIVISION MAKE THE PLAYOFFS",
+            1,
+            dim(),
+        );
+        centered(
+            &mut frame,
+            274,
+            if weeks == season::MAX_WEEKS {
+                "A FULL ROUND ROBIN: EVERY CLUB HOME AND AWAY"
+            } else {
+                "EVERY CLUB PLAYS EVERY WEEK"
+            },
+            1,
+            dim(),
+        );
+        footer(&mut frame, "[LEFT/RIGHT] LENGTH   [A] START THE SEASON   [B] BACK");
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        if input.pressed.a {
+            return Some(weeks);
+        }
+        beat();
+    }
+}
+
+/// What the season hub wants from the game itself.
+pub enum SeasonStep {
+    /// The player chose to play his own game, on this ground.
+    Play(Kickoff),
+    /// He is done with the season.
+    Done,
+}
+
+/// The season hub: the week, the player's next game, the division table, and the
+/// bracket once there is one. Every game that is not the player's is simulated
+/// here, a week or a round at a time, so he can play his own or hand it to the
+/// machine without leaving the season.
+pub fn season_hub(
+    view: &mut View,
+    pad: Option<&mut Pad>,
+    season: &mut Season,
+) -> Option<SeasonStep> {
+    let mut pad = pad;
+    if season.phase == Phase::Regular && season.regular_done() {
+        season.start_playoffs();
+    }
+    let all = clubs();
+    let mut pick = 0usize;
+    let mut page = 0usize;
+    let mut nav = Repeat::default();
+    let mut nav_x = Repeat::default();
+    let mut last = Instant::now();
+    let mut note = String::new();
+    let mut note_t = 0.0f32;
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        note_t = (note_t - dt).max(0.0);
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.start {
+            return Some(SeasonStep::Done);
+        }
+        let fixture = season.your_fixture();
+        let mut rows: Vec<&str> = Vec::new();
+        if season.phase == Phase::Done {
+            rows.push("BACK TO THE MENU");
+        } else if fixture.is_some() {
+            rows.push("PLAY MY GAME");
+            rows.push("SIM MY GAME");
+        } else {
+            rows.push("SIM THIS WEEK");
+        }
+        rows.push("STANDINGS");
+        rows.push("BRACKET");
+        if season.phase != Phase::Done {
+            rows.push("BACK TO THE MENU");
+        }
+        if pick >= rows.len() {
+            pick = rows.len() - 1;
+        }
+        if season.phase == Phase::Done {
+            // One row, one key: the season is over.
+            if input.pressed.a || input.pressed.b {
+                return Some(SeasonStep::Done);
+            }
+        } else {
+            if let d = nav.step(input.stick.y, dt) {
+                if d != 0 {
+                    pick = wrap(pick, rows.len(), -d);
+                }
+            }
+            if let d = nav_x.step(input.stick.x, dt) {
+                if d != 0 {
+                    page = wrap(page, 2, d);
+                }
+            }
+            if input.pressed.b {
+                return Some(SeasonStep::Done);
+            }
+            if input.pressed.a {
+                match rows[pick] {
+                    "PLAY MY GAME" => {
+                        if let Some((_, f)) = fixture {
+                            let theirs = if f.home == season.you { f.away } else { f.home };
+                            let championship = season.phase != Phase::Regular
+                                && season.round_name() == "CHAMPIONSHIP";
+                            // The final is played where the league plays it; any
+                            // other game is played at the home club's park.
+                            let venue = if championship {
+                                venues::CHAMPIONSHIP
+                            } else {
+                                2 + f.home
+                            };
+                            return Some(SeasonStep::Play(Kickoff {
+                                yours: season.you,
+                                theirs,
+                                receive: coin_seed() % 2 == 0,
+                                venue,
+                            }));
+                        }
+                    }
+                    "SIM MY GAME" | "SIM THIS WEEK" => {
+                        let played = season.phase != Phase::Regular
+                            && season.round_name() == "CHAMPIONSHIP";
+                        season.sim_rest();
+                        note = if played && season.champion.is_some() {
+                            "THE SEASON IS OVER".to_string()
+                        } else {
+                            "SIMULATED".to_string()
+                        };
+                        note_t = 1.4;
+                        pick = 0;
+                    }
+                    "STANDINGS" => page = 0,
+                    "BRACKET" => page = 1,
+                    _ => return Some(SeasonStep::Done),
+                }
+            }
+        }
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        night(&mut frame);
+        // Header: where in the season this is.
+        let head = match season.phase {
+            Phase::Regular => format!("WEEK {} OF {}", (season.week + 1).min(season.length()), season.length()),
+            Phase::Playoffs(_) => season.round_name().to_string(),
+            Phase::Done => "COMPLETE".to_string(),
+        };
+        frame.text_shadowed(20, 12, "SEASON", 2, accent(), 1);
+        frame.text_shadowed(132, 16, &head, 1, paper(), 1);
+        let rec = season.record_of(season.you);
+        let line = format!("{}  {}", all[season.you].abbr, rec.line());
+        frame.text_shadowed(
+            UI_W as i32 - 18 - text_width(&line, 1),
+            16,
+            &line,
+            1,
+            paper(),
+            1,
+        );
+        frame.fill_rect(20, 34, 600, 1, Rgb::new(48, 92, 148));
+
+        // Who is next.
+        badge(&mut frame, 46, 66, 34, &all[season.you], true);
+        frame.text_shadowed(70, 52, all[season.you].city, 2, paper(), 1);
+        let short = all[season.you].name.to_uppercase();
+        frame.text_shadowed(70, 70, &short, 2, all[season.you].accent, 1);
+        match fixture {
+            Some((_, f)) => {
+                let home = f.home == season.you;
+                let other = if home { f.away } else { f.home };
+                let where_ = if home { "HOME" } else { "AWAY" };
+                let next = format!("{} {}", if home { "VS" } else { "AT" }, all[other].full_name().to_uppercase());
+                frame.text_shadowed(250, 52, &next, 2, paper(), 1);
+                frame.text_shadowed(250, 70, where_, 1, dim(), 1);
+            }
+            None => {
+                frame.text_shadowed(250, 52, "NO GAME THIS WEEK", 2, dim(), 1);
+                frame.text_shadowed(250, 70, "THE LEAGUE PLAYS ON", 1, dim(), 1);
+            }
+        }
+
+        // Left: the player's division table. Right: the bracket, or the picture.
+        frame.fill_rect(20, 96, 1, 200, Rgb::new(38, 58, 88));
+        frame.text_shadowed(20, 96, all[season.you].division.label(), 1, accent(), 1);
+        let table = season.table(all[season.you].division);
+        for (n, (club, r)) in table.iter().enumerate() {
+            let y = 112 + n as i32 * 18;
+            let on = *club == season.you;
+            if on {
+                frame.fill_rect(16, y - 3, 232, 16, panel());
+            }
+            frame.text_shadowed(20, y, &format!("{}", n + 1), 1, dim(), 1);
+            frame.text_shadowed(36, y, all[*club].abbr, 1, if on { accent() } else { paper() }, 1);
+            frame.text_shadowed(80, y, &all[*club].city.to_uppercase(), 1, dim(), 1);
+            let right = format!("{:>5}  {:>4}", r.line(), r.diff());
+            frame.text_shadowed(248 - text_width(&right, 1), y, &right, 1, if on { paper() } else { dim() }, 1);
+        }
+
+        // Right half: the bracket once it exists, the division leaders before it.
+        if page == 1 && !season.rounds.is_empty() {
+            frame.text_shadowed(290, 96, "THE BRACKET", 1, accent(), 1);
+            for (r, round) in season.rounds.iter().enumerate() {
+                let x = 290 + r as i32 * 112;
+                frame.text_shadowed(x, 112, round.name, 1, dim(), 1);
+                for (n, f) in round.games.iter().enumerate() {
+                    let y = 128 + n as i32 * 30;
+                    let mine = f.home == season.you || f.away == season.you;
+                    let text = format!("{} {}", all[f.home].abbr, f.line());
+                    let text2 = all[f.away].abbr;
+                    frame.text_shadowed(x, y, &text, 1, if mine { accent() } else { paper() }, 1);
+                    frame.text_shadowed(x, y + 10, text2, 1, if mine { accent() } else { dim() }, 1);
+                }
+            }
+        } else {
+            frame.text_shadowed(290, 96, "PLAYOFF PICTURE", 1, accent(), 1);
+            let seeds = if season.rounds.is_empty() {
+                season.seeds()
+            } else {
+                Vec::new()
+            };
+            for (n, div) in Division::ALL.iter().enumerate() {
+                let rows = season.table(*div);
+                let y = 114 + n as i32 * 44;
+                frame.text_shadowed(290, y, div.label(), 1, dim(), 1);
+                for (k, (club, r)) in rows.iter().take(2).enumerate() {
+                    let seed = seeds.iter().position(|c| c == club).map(|i| i + 1).
+                        unwrap_or(0);
+                    let label = if seed > 0 { format!("#{seed} {}", all[*club].abbr) } else { all[*club].abbr.to_string() };
+                    frame.text_shadowed(290 + k as i32 * 96, y + 12, &label, 1, if *club == season.you { accent() } else { paper() }, 1);
+                    frame.text_shadowed(290 + k as i32 * 96, y + 24, &r.line(), 1, dim(), 1);
+                }
+            }
+        }
+
+        // Actions.
+        if season.phase == Phase::Done {
+            let champ = season.champion;
+            centered(&mut frame, 150, "CHAMPIONSHIP", 3, accent());
+            if let Some(c) = champ {
+                let yours = c == season.you;
+                centered(
+                    &mut frame,
+                    200,
+                    &all[c].full_name().to_uppercase(),
+                    3,
+                    all[c].accent,
+                );
+                centered(
+                    &mut frame,
+                    236,
+                    if yours { "YOU WON IT ALL" } else { "SEASON OVER" },
+                    2,
+                    if yours { accent() } else { dim() },
+                );
+            }
+        }
+        // The actions sit in one row along the bottom, above the footer.
+        let mut x = 24;
+        for (i, label) in rows.iter().enumerate() {
+            let on = i == pick && season.phase != Phase::Done;
+            let w = text_width(label, 1) + 18;
+            frame.rounded_rect(x, 292, w, 18, 4, if on { accent() } else { panel() });
+            frame.text_shadowed(
+                x + 9,
+                297,
+                label,
+                1,
+                if on { backdrop() } else { dim() },
+                1,
+            );
+            x += w + 8;
+        }
+        if note_t > 0.0 {
+            centered(&mut frame, 276, &note, 1, accent());
+        }
+        footer(
+            &mut frame,
+            "[UP/DOWN] ACTION   [LEFT/RIGHT] PAGE   [A] SELECT   [B] MENU",
+        );
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        beat();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Coin toss
 // ---------------------------------------------------------------------------
@@ -1412,7 +1797,7 @@ mod tests {
         }
         // And with nobody to avoid, every club in the list can come up.
         let list = ids_in(&all, Division::ALL[0]);
-        let mut seen = [false; 4];
+        let mut seen = vec![false; list.len()];
         for seed in 0..40u64 {
             let got = roll_club(&list, None, seed);
             seen[list.iter().position(|&i| i == got).expect("not in the list")] = true;

@@ -2,7 +2,7 @@
 //!
 //! A venue is the building around the field: the concrete is still the
 //! broadcast's, but the world outside it changes. There are two practice
-//! grounds, one for each of the sixteen clubs — each with something of its own
+//! grounds, one for each of the thirty-two clubs — each with something of its own
 //! city on the skyline — and four one-off grounds the league takes the game to.
 //!
 //! Everything here is generated from a fixed seed, so a ground looks the same
@@ -27,7 +27,7 @@ pub enum Kind {
     Practice,
     /// The same field with the roof on and the stands empty.
     ClosedPractice,
-    /// One of the sixteen clubs' own grounds, by club index.
+    /// One of the thirty-two clubs' own grounds, by club index.
     Home(usize),
     /// A dome on the sea bed, with the water and the fish outside it.
     Underwater,
@@ -42,7 +42,10 @@ pub enum Kind {
 }
 
 /// How many grounds the picker offers.
-pub const COUNT: usize = 23;
+pub const COUNT: usize = 39;
+
+/// The ground the league plays its final on.
+pub const CHAMPIONSHIP: usize = 38;
 
 const HOME_START: usize = 2;
 
@@ -64,11 +67,11 @@ impl Venue {
         match self.index {
             0 => Kind::Practice,
             1 => Kind::ClosedPractice,
-            i if i < HOME_START + 16 => Kind::Home(i - HOME_START),
-            18 => Kind::Underwater,
-            19 => Kind::Outback,
-            20 => Kind::Beach,
-            21 => Kind::Yacht,
+            i if i < HOME_START + 32 => Kind::Home(i - HOME_START),
+            34 => Kind::Underwater,
+            35 => Kind::Outback,
+            36 => Kind::Beach,
+            37 => Kind::Yacht,
             _ => Kind::Championship,
         }
     }
@@ -189,7 +192,7 @@ impl Venue {
 }
 
 // ---------------------------------------------------------------------------
-// The sixteen home grounds
+// The thirty-two home grounds
 // ---------------------------------------------------------------------------
 
 /// One club's ground: what its city puts on the skyline, and the weather it
@@ -311,6 +314,22 @@ fn cities() -> Vec<City> {
         City { suffix: "SANDSTORM MESA", landmark: Landmark::Butte, blurb: "The desert at dusk: mesas, cactus and one bright strip of sky.", towers: 1, brick: 1, palms: 2, pines: 0, stacks: 0, water: Water::None, ground: Ground::Dirt, layout: Layout::Sparse, spire: false, sky: [hex(0x2A1A38), hex(0x8A4A46), hex(0xE8B478)] },
         City { suffix: "RAINMAKER FIELD", landmark: Landmark::Needle, blurb: "Pines, water and glass: the rain comes in off the sound.", towers: 4, brick: 1, palms: 0, pines: 9, stacks: 0, water: Water::Harbour, ground: Ground::Lawn, layout: Layout::Cluster, spire: false, sky: [hex(0x0C1A20), hex(0x223C44), hex(0x8AA4A8)] },
         City { suffix: "ALTITUDE PARK", landmark: Landmark::CashRegister, blurb: "The mountains stand over the stand, and the ball carries up here.", towers: 2, brick: 1, palms: 0, pines: 8, stacks: 0, water: Water::None, ground: Ground::Snow, layout: Layout::Ring, spire: false, sky: [hex(0x0A1A30), hex(0x244260), hex(0xC8D2DC)] },
+        City { suffix: "THE BRICKYARD", landmark: Landmark::CityHallTower, blurb: "Brick works round a speedway, with the grandstands lit all night.", towers: 2, brick: 6, palms: 0, pines: 0, stacks: 3, water: Water::None, ground: Ground::Asphalt, layout: Layout::Industrial, spire: false, sky: [hex(0x16121C), hex(0x3E2E30), hex(0xB49A86)] },
+        City { suffix: "THE QUARRY", landmark: Landmark::Renaissance, blurb: "A limestone town: cut stone frontages and a river through the middle.", towers: 3, brick: 4, palms: 0, pines: 4, stacks: 0, water: Water::River, ground: Ground::Plaza, layout: Layout::Sparse, spire: false, sky: [hex(0x0E1A28), hex(0x2C3E52), hex(0xA8B4BE)] },
+        City { suffix: "LAKEFRONT WORKS", landmark: Landmark::Foshay, blurb: "Foundries along the lake, and the ore boats tied up two deep.", towers: 3, brick: 5, palms: 0, pines: 2, stacks: 2, water: Water::Lake, ground: Ground::Asphalt, layout: Layout::Industrial, spire: false, sky: [hex(0x0C1622), hex(0x2A3A4A), hex(0x9CAAB4)] },
+        City { suffix: "THE GALES", landmark: Landmark::Crown, blurb: "Snow off the lake, grain elevators, and the wind never stops.", towers: 2, brick: 5, palms: 0, pines: 6, stacks: 1, water: Water::Lake, ground: Ground::Snow, layout: Layout::Wall, spire: false, sky: [hex(0x0A1420), hex(0x243648), hex(0xC0CEDA)] },
+        City { suffix: "THE DERRICK YARD", landmark: Landmark::PyramidHall, blurb: "Derricks and refineries: a hot night, and the burn-off over the roofs.", towers: 4, brick: 2, palms: 2, pines: 0, stacks: 3, water: Water::None, ground: Ground::Asphalt, layout: Layout::Cluster, spire: false, sky: [hex(0x1E1424), hex(0x5A2E38), hex(0xD8A070)] },
+        City { suffix: "THE REVEL", landmark: Landmark::TwinSpires, blurb: "Iron balconies, a lit spire, and a band on every corner.", towers: 2, brick: 6, palms: 4, pines: 0, stacks: 0, water: Water::River, ground: Ground::Plaza, layout: Layout::Wall, spire: true, sky: [hex(0x1A1026), hex(0x3E2448), hex(0xD09A6E)] },
+        City { suffix: "BEALE GROUNDS", landmark: Landmark::Obelisk, blurb: "Brick warehouses, a river bluff, and the blues coming out of the doors.", towers: 2, brick: 5, palms: 0, pines: 3, stacks: 0, water: Water::River, ground: Ground::Lawn, layout: Layout::Sparse, spire: false, sky: [hex(0x141226), hex(0xC0A08A), hex(0xC8A07E)] },
+        City { suffix: "THE CAUSEWAY", landmark: Landmark::Crown, blurb: "Palms along the bay, a skyline on the water, and heat off the tarmac.", towers: 3, brick: 1, palms: 6, pines: 0, stacks: 0, water: Water::Ocean, ground: Ground::Sand, layout: Layout::Wall, spire: false, sky: [hex(0x123A56), hex(0x3E90B4), hex(0xF2E4C4)] },
+        City { suffix: "THE HARBOUR EAST", landmark: Landmark::CustomHouse, blurb: "Brick row houses, a harbour full of tugs, and the dockside cranes.", towers: 3, brick: 6, palms: 0, pines: 0, stacks: 1, water: Water::Harbour, ground: Ground::Asphalt, layout: Layout::Wall, spire: false, sky: [hex(0x0A1624), hex(0x24384C), hex(0x96A4AC)] },
+        City { suffix: "TOBACCO ROW", landmark: Landmark::CityHallTower, blurb: "Old warehouses on the hill, and the river running brown below them.", towers: 2, brick: 6, palms: 0, pines: 2, stacks: 1, water: Water::River, ground: Ground::Dirt, layout: Layout::Sparse, spire: true, sky: [hex(0x141020), hex(0xC0A08A), hex(0xC09A80)] },
+        City { suffix: "SPARROW WALK", landmark: Landmark::Needle, blurb: "A harbour town of brick and gables, with the hill lit behind it.", towers: 2, brick: 5, palms: 0, pines: 3, stacks: 0, water: Water::Harbour, ground: Ground::Plaza, layout: Layout::Sparse, spire: true, sky: [hex(0x0C1622), hex(0x26384A), hex(0xA6B2BA)] },
+        City { suffix: "THE SNOW BELT", landmark: Landmark::Foshay, blurb: "Lake-effect snow over the stands, and the city grey behind it.", towers: 1, brick: 5, palms: 0, pines: 8, stacks: 1, water: Water::Lake, ground: Ground::Snow, layout: Layout::Wall, spire: false, sky: [hex(0x0C1218), hex(0x2A3440), hex(0xC2CCD4)] },
+        City { suffix: "HARBOUR SOUTH", landmark: Landmark::Freedom, blurb: "A bay full of sailboats, palms down the strand, and the sun off the water.", towers: 3, brick: 1, palms: 8, pines: 0, stacks: 0, water: Water::Ocean, ground: Ground::Sand, layout: Layout::Ring, spire: false, sky: [hex(0x123C5E), hex(0x4A96B4), hex(0xF6E9C9)] },
+        City { suffix: "THE DELTA FLATS", landmark: Landmark::Renaissance, blurb: "Orchards and levees, a low skyline, and the river silver at dusk.", towers: 2, brick: 3, palms: 4, pines: 0, stacks: 1, water: Water::River, ground: Ground::Lawn, layout: Layout::Sparse, spire: false, sky: [hex(0x1A1424), hex(0x4C3444), hex(0xC0A08A)] },
+        City { suffix: "THE TIMBER LINE", landmark: Landmark::Needle, blurb: "Pines to the city limits, and a river running through the middle of it.", towers: 3, brick: 2, palms: 0, pines: 9, stacks: 0, water: Water::River, ground: Ground::Lawn, layout: Layout::Cluster, spire: false, sky: [hex(0x0C1A22), hex(0x24404A), hex(0x94ACB4)] },
+        City { suffix: "THE SUMMIT", landmark: Landmark::Butte, blurb: "The Wasatch over the stand, and snow on the peaks in every season.", towers: 2, brick: 1, palms: 0, pines: 7, stacks: 0, water: Water::Lake, ground: Ground::Snow, layout: Layout::Ring, spire: false, sky: [hex(0x0A1A30), hex(0x2A4A66), hex(0xD2DCE6)] },
     ]
 }
 
@@ -3185,11 +3204,11 @@ mod venue_tests {
                 index: match other {
                     Kind::Practice => 0,
                     Kind::ClosedPractice => 1,
-                    Kind::Underwater => 18,
-                    Kind::Outback => 19,
-                    Kind::Beach => 20,
-                    Kind::Yacht => 21,
-                    Kind::Championship => 22,
+                    Kind::Underwater => 34,
+                    Kind::Outback => 35,
+                    Kind::Beach => 36,
+                    Kind::Yacht => 37,
+                    Kind::Championship => 38,
                     Kind::Home(_) => unreachable!(),
                 },
             },
@@ -3250,10 +3269,16 @@ mod venue_tests {
     #[test]
     fn no_two_city_grounds_are_built_the_same_way() {
         let cities = cities();
-        assert_eq!(cities.len(), 16, "the league has sixteen home grounds");
+        assert_eq!(cities.len(), 32, "the league has one home ground per club");
         let mut seen = std::collections::HashSet::new();
         for c in &cities {
-            let key = (c.water, c.ground, c.layout);
+            // Water, ground and skyline shape, plus the counts that decide how
+            // much of each is built: two cities that agree on all of it are the
+            // same place with a different name over the gate.
+            let key = (
+                c.water, c.ground, c.layout, c.towers, c.brick, c.palms, c.pines, c.stacks,
+                c.spire,
+            );
             assert!(
                 seen.insert(key),
                 "{} is the same ground as another city ({key:?})",

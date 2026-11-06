@@ -23,7 +23,7 @@ ask you to confirm first (More info → Run anyway).
 ## Running it
 
 ```bash
-cargo run -- teams          # the sixteen-club league and every roster
+cargo run -- teams          # the thirty-two-club league and every roster
 cargo run -- rules          # the rule set and the penalty catalog
 cargo run -- sim --seed 7   # simulate a whole game, print the box score
 cargo run -- play --seed 12 # call the plays yourself via a text menu
@@ -173,13 +173,13 @@ On defense the same pad does different work:
 
 ### The start menu
 
-Bare `7on7` opens on the start menu: **EXHIBITION**, **CUSTOMIZATION**, **SETTINGS**,
-**QUIT**. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
+Bare `7on7` opens on the start menu: **EXHIBITION**, **SEASON**, **CUSTOMIZATION**,
+**SETTINGS**, **QUIT**. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
 skips the front end and goes straight to kickoff with the clubs named, which is what
 the film and timing paths use.
 
 **CUSTOMIZATION** is the league's paperwork, and it is for every club rather than
-only the one you are about to play: pick a club off the sixteen and the screen
+only the one you are about to play: pick a club off the thirty-two and the screen
 carries its **depth chart** and its **roster**. The depth chart is the eight
 positions down the left with the men who play them, best first, the way the game
 picks its seven — the starter in white, the man behind him greyed. The roster is
@@ -189,10 +189,10 @@ grid, so a side can be read before its roster is opened.
 
 ### Exhibition
 
-The league is sixteen clubs in four divisions — North, South, East and West — and
-the picker rolls them like a carousel: the badge in the middle, the city and the
+The league is thirty-two clubs, eight in each of four divisions — North, South, East and
+West — and the picker rolls them like a carousel: the badge in the middle, the city and the
 nickname underneath it, the clubs either side waiting their turn. Up and down change
-division, left and right roll through the four clubs in it, A takes the card you are
+division, left and right roll through the eight clubs in it, A takes the card you are
 on.
 
 Both sides are yours to pick. The first screen is your club, the second is the club
@@ -224,6 +224,19 @@ screen.
 
 The cities are real; every nickname, mark and colour set is invented for this game,
 so nothing on a jersey belongs to a club somebody already owns.
+
+### Season
+
+**SEASON** sits under EXHIBITION and plays a whole league year rather than one game.
+Pick a club, then pick the length — anything from four weeks to the full thirty-one —
+and the season is scheduled round robin, so every club plays every week and no two
+clubs meet twice until the league has been round. The top two in each division make
+an eight-club bracket, seeded by record, running quarterfinal, semifinal and
+championship; the final is played at the 7-on-7 Championship ground. The season
+screen carries the week, your next fixture, your division's table and the playoff
+picture, and left and right flip it to the bracket. **PLAY MY GAME** drops you into
+the fixture, **SIM MY GAME** hands that week to the simulation, and every other game
+in the league — playoffs included — is simulated as the weeks go by.
 
 ### Settings
 
@@ -790,7 +803,7 @@ beyond. The shot down the field ends in lit windows, rooflines and ground rather
 than in a black band. None of it is inside the boards: the paint still belongs to
 the players.
 
-The sixteen clubs each have their own park, and each one is its city: Boston's
+The thirty-two clubs each have their own park, and each one is its city: Boston's
 harbour and brick rowhouses, Chicago's stacks and steel, Miami's palms and pastel
 hotels, New York's wall of windows, Denver's pines under the mountains, and so on.
 

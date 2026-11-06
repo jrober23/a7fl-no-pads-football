@@ -388,7 +388,7 @@ fn cmd_rules() {
     println!("  fourth down  throw-off from the line of scrimmage replaces the punt");
     println!("  overtime     possessions from the 25, two first downs allowed, one timeout;");
     println!("               two-point conversions forced from the second overtime on");
-    println!("  ground       twenty-two grounds: two practice fields, sixteen club parks");
+    println!("  ground       thirty-eight grounds: two practice fields, thirty-two club parks,\n               and four one-offs");
     println!("               and four one-offs, chosen on the front end");
     println!("  mercy        five touchdowns in the first quarter ends the game, and");
     println!("               seven touchdowns from the second quarter on");
@@ -890,20 +890,39 @@ fn cmd_arcade(args: &[String]) {
         std::thread::sleep(std::time::Duration::from_millis(900));
     } else {
         match menu::run(&mut view, pad.as_mut(), &mut settings) {
-            Some(kick) => {
-                let teams = league_teams();
-                game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
-                game.set_opening_receiver(if kick.receive { 0 } else { 1 });
-                game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
-                    settings.difficulty,
-                ));
-                // The clock chosen on the setup card is the clock this game runs.
-                game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
-                mine = Some(0);
-                venue = kick.venue;
+            Some(menu::Front::Friendly(kick)) => {
+                let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed);
+                view = v;
+                pad = p;
+            }
+            Some(menu::Front::Season(mut season)) => {
+                // A season is a string of games: play the player's, simulate
+                // everything else, and hand each score back to the table. The
+                // front end keeps the season between games, so the only thing
+                // that has to survive a game is the view and the pad.
+                loop {
+                    let step = menu::season_hub(&mut view, pad.as_mut(), &mut season);
+                    match step {
+                        Some(menu::SeasonStep::Play(kick)) => {
+                            let game_seed =
+                                season.seed ^ 0x00A7_5EA5 ^ (season.week as u64) << 8;
+                            let (v, p, finished, score) =
+                                play_kickoff(view, pad, &settings, &kick, game_seed);
+                            view = v;
+                            pad = p;
+                            // A game left early is not a result: the fixture waits
+                            // for the player to play or simulate it.
+                            if finished {
+                                season.record(score);
+                            }
+                        }
+                        _ => break,
+                    }
+                }
             }
             None => return,
         }
+        return;
     }
 
     let flip_y = has(args, "--flip-y");
@@ -917,6 +936,43 @@ fn cmd_arcade(args: &[String]) {
         arcade = arcade.with_my_team(mine);
     }
     arcade.run();
+}
+
+/// Play one game on the front end's terms and give the machine back afterwards.
+///
+/// The arcade owns the view while a game is on, so a season has to be handed the
+/// view again after every game; this is the one place that happens for both an
+/// exhibition and a season fixture.
+fn play_kickoff(
+    view: view::View,
+    pad: Option<pad::Pad>,
+    settings: &settings::Settings,
+    kick: &menu::Kickoff,
+    seed: u64,
+) -> (view::View, Option<pad::Pad>, bool, (u32, u32)) {
+    let teams = league_teams();
+    let mut game = GameState::new(
+        teams[kick.yours].clone(),
+        teams[kick.theirs].clone(),
+        seed,
+    );
+    game.set_opening_receiver(if kick.receive { 0 } else { 1 });
+    game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(
+        settings.difficulty,
+    ));
+    // The clock chosen on the setup card is the clock this game runs.
+    game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
+    let mut arcade = arcade::Arcade::new(game, pad, view)
+        .with_camera(settings.camera)
+        .with_lens(settings.lens_zoom, settings.lens_tilt)
+        .with_settings(settings.clone())
+        .with_venue(kick.venue)
+        .with_my_team(0);
+    arcade.run();
+    let finished = arcade.finished();
+    let score = arcade.final_score();
+    let (view, pad) = arcade.into_parts();
+    (view, pad, finished, score)
 }
 
 fn cmd_film(args: &[String]) {

@@ -980,7 +980,7 @@ fn build_uniform(
     }
 }
 
-fn team_from_spec(spec: Club) -> Team {
+pub fn team_from_spec(spec: Club) -> Team {
     let roster = generate_roster(spec.seed, spec.level);
     let home = build_uniform(
         spec.primary,
@@ -1084,6 +1084,26 @@ pub fn clubs() -> Vec<Club> {
         Club { city: "Phoenix", name: "Sandstorm", abbr: "PHX", division: Division::West, primary: Rgb::hex(0xB5651D), secondary: Rgb::hex(0x7A4413), accent: Rgb::hex(0xF2E8CF), pattern: ShoulderStripe, seed: 0xA7F1_000E, level: 6 },
         Club { city: "Seattle", name: "Rainmakers", abbr: "SEA", division: Division::West, primary: Rgb::hex(0x14532D), secondary: Rgb::hex(0x0C3520), accent: Rgb::hex(0x7FD1AE), pattern: Solid, seed: 0xA7F1_000F, level: 5 },
         Club { city: "Denver", name: "Altitude", abbr: "DEN", division: Division::West, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xE0E7F1), pattern: SidePanel, seed: 0xA7F1_0010, level: 7 },
+        // North, the second four
+        Club { city: "Indianapolis", name: "Speedway", abbr: "IND", division: Division::North, primary: Rgb::hex(0x1C2E4A), secondary: Rgb::hex(0x101B2E), accent: Rgb::hex(0xF2C14E), pattern: SidePanel, seed: 0xA7F1_0011, level: 6 },
+        Club { city: "Columbus", name: "Quarry", abbr: "CMH", division: Division::North, primary: Rgb::hex(0x8A5A2B), secondary: Rgb::hex(0x5C3B1C), accent: Rgb::hex(0xF0E6D2), pattern: Solid, seed: 0xA7F1_0012, level: 4 },
+        Club { city: "Milwaukee", name: "Iron", abbr: "MIL", division: Division::North, primary: Rgb::hex(0x2B2F36), secondary: Rgb::hex(0x191C21), accent: Rgb::hex(0xE8B44A), pattern: ShoulderStripe, seed: 0xA7F1_0013, level: 5 },
+        Club { city: "Buffalo", name: "Gales", abbr: "BUF", division: Division::North, primary: Rgb::hex(0x274B7A), secondary: Rgb::hex(0x18304F), accent: Rgb::hex(0xD9E6F2), pattern: Hoops, seed: 0xA7F1_0014, level: 3 },
+        // South, the second four
+        Club { city: "Houston", name: "Derricks", abbr: "HOU", division: Division::South, primary: Rgb::hex(0x22303C), secondary: Rgb::hex(0x141E26), accent: Rgb::hex(0xE86A2C), pattern: Sash, seed: 0xA7F1_0015, level: 7 },
+        Club { city: "New Orleans", name: "Revelers", abbr: "NOL", division: Division::South, primary: Rgb::hex(0x4B1D5E), secondary: Rgb::hex(0x30123D), accent: Rgb::hex(0xF2C14E), pattern: Hoops, seed: 0xA7F1_0016, level: 5 },
+        Club { city: "Memphis", name: "Blues", abbr: "MEM", division: Division::South, primary: Rgb::hex(0x1B3A6B), secondary: Rgb::hex(0x102444), accent: Rgb::hex(0x9BD1F0), pattern: Solid, seed: 0xA7F1_0017, level: 4 },
+        Club { city: "Tampa", name: "Storm", abbr: "TPA", division: Division::South, primary: Rgb::hex(0x0F5C63), secondary: Rgb::hex(0x0A3D42), accent: Rgb::hex(0xF4E3B2), pattern: SidePanel, seed: 0xA7F1_0018, level: 6 },
+        // East, the second four
+        Club { city: "Baltimore", name: "Clippers", abbr: "BAL", division: Division::East, primary: Rgb::hex(0x1F2A44), secondary: Rgb::hex(0x121A2C), accent: Rgb::hex(0xE8573F), pattern: ShoulderStripe, seed: 0xA7F1_0019, level: 5 },
+        Club { city: "Richmond", name: "Founders", abbr: "RIC", division: Division::East, primary: Rgb::hex(0x5A2A2A), secondary: Rgb::hex(0x3A1A1A), accent: Rgb::hex(0xE8DCC8), pattern: Solid, seed: 0xA7F1_001A, level: 3 },
+        Club { city: "Providence", name: "Sparrows", abbr: "PVD", division: Division::East, primary: Rgb::hex(0x2E5D3A), secondary: Rgb::hex(0x1C3A24), accent: Rgb::hex(0xF2E8CF), pattern: Hoops, seed: 0xA7F1_001B, level: 4 },
+        Club { city: "Syracuse", name: "Squall", abbr: "SYR", division: Division::East, primary: Rgb::hex(0x3C4F76), secondary: Rgb::hex(0x27334C), accent: Rgb::hex(0xCFE3F5), pattern: SidePanel, seed: 0xA7F1_001C, level: 2 },
+        // West, the second four
+        Club { city: "San Diego", name: "Tide", abbr: "SDG", division: Division::West, primary: Rgb::hex(0x0E5A78), secondary: Rgb::hex(0x0A3E53), accent: Rgb::hex(0xF6E9C9), pattern: Sash, seed: 0xA7F1_001D, level: 6 },
+        Club { city: "Sacramento", name: "Delta", abbr: "SAC", division: Division::West, primary: Rgb::hex(0x3A6B4A), secondary: Rgb::hex(0x244630), accent: Rgb::hex(0xE9C46A), pattern: Solid, seed: 0xA7F1_001E, level: 4 },
+        Club { city: "Portland", name: "Timberline", abbr: "POR", division: Division::West, primary: Rgb::hex(0x1E4A34), secondary: Rgb::hex(0x12301F), accent: Rgb::hex(0xE0E7F1), pattern: ShoulderStripe, seed: 0xA7F1_001F, level: 5 },
+        Club { city: "Salt Lake", name: "Summit", abbr: "SLC", division: Division::West, primary: Rgb::hex(0x4A3A6B), secondary: Rgb::hex(0x2C2244), accent: Rgb::hex(0xF2F2EC), pattern: Hoops, seed: 0xA7F1_0020, level: 7 },
     ]
 }
 
@@ -1136,7 +1156,7 @@ mod tests {
     #[test]
     fn rosters_are_legal_and_unique() {
         let teams = league_teams();
-        assert_eq!(teams.len(), 16);
+        assert_eq!(teams.len(), 32);
         for t in &teams {
             assert!(t.roster.len() >= 14, "{} roster too small", t.abbr);
             let mut numbers: Vec<u8> = t.roster.iter().map(|p| p.number).collect();
@@ -1157,21 +1177,21 @@ mod tests {
     }
 
     #[test]
-    fn the_league_is_sixteen_clubs_in_four_divisions() {
+    fn the_league_is_thirty_two_clubs_in_four_divisions() {
         let all = clubs();
-        assert_eq!(all.len(), 16);
+        assert_eq!(all.len(), 32);
         for d in Division::ALL {
             let n = all.iter().filter(|c| c.division == d).count();
-            assert_eq!(n, 4, "{} has {n} clubs", d.label());
+            assert_eq!(n, 8, "{} has {n} clubs", d.label());
         }
         let mut marks: Vec<&str> = all.iter().map(|c| c.abbr).collect();
         marks.sort_unstable();
         marks.dedup();
-        assert_eq!(marks.len(), 16, "two clubs share a mark");
+        assert_eq!(marks.len(), 32, "two clubs share a mark");
         let mut names: Vec<String> = all.iter().map(|c| c.full_name()).collect();
         names.sort();
         names.dedup();
-        assert_eq!(names.len(), 16, "two clubs share a name");
+        assert_eq!(names.len(), 32, "two clubs share a name");
         // The menu picks by index, so the built league has to be in the same
         // order as the club list it draws.
         let teams = league_teams();

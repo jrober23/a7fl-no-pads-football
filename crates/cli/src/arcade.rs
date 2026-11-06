@@ -388,6 +388,22 @@ impl Arcade {
         self
     }
 
+    /// The score on the board, for whoever asked for the game.
+    pub fn final_score(&self) -> (u32, u32) {
+        (self.game.score[0], self.game.score[1])
+    }
+
+    /// True when the game ran to the final whistle rather than being quit.
+    pub fn finished(&self) -> bool {
+        self.game.phase == GamePhase::GameOver
+    }
+
+    /// Hand the view and the pad back, so the front end can run again after a
+    /// game: a season is a string of them.
+    pub fn into_parts(self) -> (View, Option<Pad>) {
+        (self.view, self.pad)
+    }
+
     pub fn run(&mut self) {
         let terminal_mode = !self.view.is_window();
         if terminal_mode {
@@ -443,8 +459,10 @@ impl Arcade {
             return false;
         };
         let kick = match menu::run(&mut self.view, self.pad.as_mut(), settings) {
-            Some(kick) => kick,
-            None => return false,
+            Some(menu::Front::Friendly(kick)) => kick,
+            // A season is run from the top of the program, not from inside a
+            // game: leaving one to the front end ends it here.
+            _ => return false,
         };
         let teams = league_teams();
         let seed = self.game.seed ^ 0x00A7_F1E5;
