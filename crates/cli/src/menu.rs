@@ -2167,9 +2167,16 @@ fn draw_field(frame: &mut Frame, defense: bool) {
         Rgb::hex(0x101C15),
     );
     let (x0, x1) = design::GRID_X;
+    let (y0, y1) = design::GRID_Y;
+    // A line every four yards each way, so a man can be read off the grid
+    // instead of guessed at from the middle of the field.
     for x in (x0..=x1).step_by(4) {
         let (px, _) = field_px(x as f32, 0.0);
         frame.fill_rect(px, FIELD_T, 1, FIELD_B - FIELD_T, Rgb::hex(0x1A2B20));
+    }
+    for y in (y0..=y1).step_by(4) {
+        let (_, py) = field_px(0.0, y as f32);
+        frame.fill_rect(FIELD_L, py, FIELD_R - FIELD_L, 1, Rgb::hex(0x16261C));
     }
     let (los, _) = field_px(0.0, 0.0);
     // The side the defense stands on is shaded, so the line reads as the line
@@ -2193,6 +2200,13 @@ fn draw_men(frame: &mut Frame, spots: &[Vec2; 7], sel: Option<usize>, defense: b
         if lit {
             ring(frame, px, py, 10, ui::ACCENT);
         }
+        // His job, beside him: a circle is a man, and the lettering is which man.
+        let label = if defense {
+            DefRole::ALL[role.index()].label()
+        } else {
+            role.label()
+        };
+        frame.text_shadowed(px + 13, py - 3, label, 1, color, 1);
     }
 }
 
@@ -4638,6 +4652,66 @@ mod tests {
     }
 
     #[test]
+    /// A picture of the drawing boards: a formation of circles, a play with its
+    /// paths, and a front of X's.
+    #[test]
+    fn the_drawing_boards_can_be_rendered_to_pictures() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let save = |name: &str, screen: &Frame| {
+            let mut canvas = Frame::new(crate::view::CANVAS_W, crate::view::CANVAS_H);
+            canvas.blit_up(screen, UI_SCALE);
+            nopads_render::write_png(format!("{dir}/{name}.png"), &canvas).expect("write png");
+        };
+        let book = nopads_core::design::DesignBook::from_built_in(Book::WestCoast);
+        let form = &book.offense[0];
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, false);
+        draw_men(&mut frame, &form.spots, Some(0), false);
+        cursor_box(&mut frame, form.spots[0].x as i8, form.spots[0].y as i8);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, "OFFENSE 1", ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "SET QB", 1, accent());
+        centered_in(&mut frame, 320, FIELD_B + 10, "THE LINE IS LEGAL", 1, ui::GOOD);
+        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [B] DONE");
+        save("play_formation", &frame);
+
+        let play = &book.plays[0][0];
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, false);
+        draw_routes(&mut frame, &form.spots, &play.routes, 0);
+        draw_men(&mut frame, &form.spots, None, false);
+        cursor_box(&mut frame, 5, 4);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &play.name, ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "DRAWING RB - PASS", 1, accent());
+        centered_in(
+            &mut frame,
+            320,
+            FIELD_B + 10,
+            "A PATH IS A ROUTE, STARTING FROM WHERE THE MAN LINES UP",
+            1,
+            dim(),
+        );
+        footer(
+            &mut frame,
+            "[STICK] CURSOR   [A] WAYPOINT   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
+        );
+        save("play_routes", &frame);
+
+        let front = &book.defense[0];
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, true);
+        draw_men(&mut frame, &front.spots, Some(5), true);
+        cursor_box(&mut frame, front.spots[5].x as i8, front.spots[5].y as i8);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, "DEFENSE 1", ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "SET CB", 1, accent());
+        centered_in(&mut frame, 320, FIELD_B + 10, "EVERY MAN IS SET", 1, ui::GOOD);
+        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [B] DONE");
+        save("play_front", &frame);
+    }
+
     fn the_front_end_can_be_rendered_to_pictures() {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {
             return;
