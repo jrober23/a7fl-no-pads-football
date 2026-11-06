@@ -1026,12 +1026,14 @@ fn play_drill(
 ) -> (view::View, Option<pad::Pad>) {
     let mode = match kind {
         menu::DrillKind::Tutorial(_) => arcade::Mode::Tutorial,
-        menu::DrillKind::Practice => arcade::Mode::Practice,
+        menu::DrillKind::Practice(_) => arcade::Mode::Practice,
         menu::DrillKind::Gauntlet => arcade::Mode::Gauntlet,
     };
     let track = match kind {
-        menu::DrillKind::Tutorial(menu::TutorialTrack::Defense) => arcade::Track::Defense,
-        menu::DrillKind::Tutorial(menu::TutorialTrack::Both) => arcade::Track::Both,
+        menu::DrillKind::Tutorial(menu::Track::Defense)
+        | menu::DrillKind::Practice(menu::Track::Defense) => arcade::Track::Defense,
+        menu::DrillKind::Tutorial(menu::Track::Both)
+        | menu::DrillKind::Practice(menu::Track::Both) => arcade::Track::Both,
         _ => arcade::Track::Offense,
     };
     let teams = league_teams();

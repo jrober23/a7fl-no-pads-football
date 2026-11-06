@@ -78,10 +78,11 @@ pub struct Sides {
     pub kits: [bool; 2],
 }
 
-/// Which of the tutoring sessions the player asked for: the offense, the
-/// defense, or both of them one after the other.
+/// Which side of the ball a session teaches: the offense, the defense, or both of
+/// them one after the other. The tutorial and the practice session both ask it,
+/// because both are played from one side.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TutorialTrack {
+pub enum Track {
     Offense,
     Defense,
     Both,
@@ -90,8 +91,8 @@ pub enum TutorialTrack {
 /// Which of the sessions under MORE MODES the player picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrillKind {
-    Tutorial(TutorialTrack),
-    Practice,
+    Tutorial(Track),
+    Practice(Track),
     Gauntlet,
 }
 
@@ -460,25 +461,43 @@ fn draw_modes(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
     );
 }
 
-/// The three tutoring sessions, drawn on the same screen the modes are.
+/// The three sides of the ball, and the line under them on the screen that asks.
 const TRACKS: [(&str, &str); 3] = [
     ("OFFENSE", "SNAP IT, THROW IT, RUN IT, SCORE IT"),
     ("DEFENSE", "CALL IT, STOP IT, COVER IT"),
     ("BOTH", "THE OFFENSE AND THEN THE DEFENSE"),
 ];
 
-fn draw_tutorial(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
+/// The same three for a practice session: the same question, with a session
+/// behind it instead of a list of steps.
+const PRACTICE_NOTES: [(&str, &str); 3] = [
+    ("OFFENSE", "YOUR CALL FROM YOUR BOOK, SNAP AFTER SNAP"),
+    ("DEFENSE", "CALL IT AND PLAY IT, SNAP AFTER SNAP"),
+    ("BOTH", "THE OFFENSE AND THEN THE DEFENSE"),
+];
+
+/// A screen that asks which side of the ball. The tutorial and the practice
+/// session are the same question, so they are the same screen with a different
+/// heading and a different line under it.
+fn draw_track_screen(
+    frame: &mut Frame,
+    title: &str,
+    caption: &str,
+    notes: [(&str, &str); 3],
+    pick: usize,
+    slide: &ui::Slide,
+) {
     let mut rows: Vec<(&str, String)> =
-        TRACKS.iter().map(|(name, _)| (*name, String::new())).collect();
+        notes.iter().map(|(name, _)| (*name, String::new())).collect();
     rows.push(("BACK", String::new()));
-    let note = TRACKS
+    let note = notes
         .get(pick)
         .map(|(_, line)| *line)
         .unwrap_or("BACK TO THE MODES");
     draw_option_screen(
         frame,
-        "TUTORIAL",
-        "WHICH SIDE OF THE BALL DO YOU WANT TAUGHT?",
+        title,
+        caption,
         &rows,
         slide,
         note,
@@ -486,7 +505,35 @@ fn draw_tutorial(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
     );
 }
 
-fn tutorial_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<TutorialTrack> {
+fn draw_tutorial(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
+    draw_track_screen(
+        frame,
+        "TUTORIAL",
+        "WHICH SIDE OF THE BALL DO YOU WANT TAUGHT?",
+        TRACKS,
+        pick,
+        slide,
+    );
+}
+
+fn draw_practice(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
+    draw_track_screen(
+        frame,
+        "PRACTICE",
+        "WHICH SIDE OF THE BALL DO YOU WANT TO PRACTISE?",
+        PRACTICE_NOTES,
+        pick,
+        slide,
+    );
+}
+
+fn track_screen(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    title: &str,
+    caption: &str,
+    notes: [(&str, &str); 3],
+) -> Option<Track> {
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -507,20 +554,44 @@ fn tutorial_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Tutori
         }
         slide.step(pick, dt);
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_tutorial(&mut frame, pick, &slide);
+        draw_track_screen(&mut frame, title, caption, notes, pick, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         if input.pressed.a {
             return match pick {
-                0 => Some(TutorialTrack::Offense),
-                1 => Some(TutorialTrack::Defense),
-                2 => Some(TutorialTrack::Both),
+                0 => Some(Track::Offense),
+                1 => Some(Track::Defense),
+                2 => Some(Track::Both),
                 _ => None,
             };
         }
         beat();
     }
+}
+
+fn tutorial_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Track> {
+    track_screen(
+        view,
+        pad,
+        "TUTORIAL",
+        "WHICH SIDE OF THE BALL DO YOU WANT TAUGHT?",
+        TRACKS,
+    )
+}
+
+/// Practice asks the same question the tutorial does, because a practice session
+/// is played from a side: offense or defense, or both one after the other. There
+/// is no toss in front of it -- the side is the choice, so a coin has nothing to
+/// decide.
+fn practice_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Track> {
+    track_screen(
+        view,
+        pad,
+        "PRACTICE",
+        "WHICH SIDE OF THE BALL DO YOU WANT TO PRACTISE?",
+        PRACTICE_NOTES,
+    )
 }
 
 fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<DrillKind> {
@@ -551,7 +622,7 @@ fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<DrillKind
         if input.pressed.a {
             return match pick {
                 0 => tutorial_screen(view, pad).map(DrillKind::Tutorial),
-                1 => Some(DrillKind::Practice),
+                1 => practice_screen(view, pad).map(DrillKind::Practice),
                 2 => Some(DrillKind::Gauntlet),
                 _ => None,
             };
@@ -1472,12 +1543,13 @@ fn pick_book(view: &mut View, pad: &mut Option<&mut Pad>, club: usize) -> Option
 
 /// One of the drills under MORE MODES, set up on the same clubs, side and book
 /// the exhibition screen asks for. A drill has no ground to pick and no clock to
-/// set: it is played on the practice field, and the toss is only about who
-/// returns first.
+/// set: it is played on the practice field. The toss belongs to the gauntlet, where
+/// it decides who brings the first return back; a session that has already chosen
+/// its side of the ball has nothing for a coin to decide.
 fn drill_kickoff(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
-    _kind: DrillKind,
+    kind: DrillKind,
 ) -> Option<Kickoff> {
     let all = clubs();
     let cards: Vec<Card> = all
@@ -1497,7 +1569,13 @@ fn drill_kickoff(
         .collect();
     let sides = choose_sides(view, pad, &all, &cards)?;
     let book = pick_book(view, pad, sides.yours)?;
-    let receive = coin_flip(view, pad, &all, sides.yours, sides.theirs, 0)?;
+    // Only the gauntlet needs a toss: it decides who brings the first one back.
+    // A tutorial or a practice session has already been told which side of the
+    // ball it is playing, so the coin has nothing left to decide.
+    let receive = match kind {
+        DrillKind::Gauntlet => coin_flip(view, pad, &all, sides.yours, sides.theirs, 0)?,
+        _ => true,
+    };
     Some(Kickoff {
         yours: sides.yours,
         theirs: sides.theirs,
@@ -3113,6 +3191,10 @@ mod tests {
         let mut tracks = Frame::new(UI_W, UI_H);
         draw_tutorial(&mut tracks, 1, &ui::Slide::new(1));
         save("tutorial_tracks", &tracks);
+
+        let mut practice = Frame::new(UI_W, UI_H);
+        draw_practice(&mut practice, 0, &ui::Slide::new(0));
+        save("practice_tracks", &practice);
 
         let (depth, roster) = depth_chart(&all[0]);
         let pages = roster.len().div_ceil(CHART_ROWS).max(1);

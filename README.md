@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.80-windows-x86_64.zip` from the
+Grab `7on7-v0.25.81-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -211,9 +211,13 @@ make a tackle inside ten yards, and break up or intercept a pass. **BOTH** runs 
 offense and then the defense. When the steps are done it tells you where the rest
 of the controls live, which is the controls page on the pause menu.
 
-**PRACTICE** is the same session without the list: your call from your book, no
+**PRACTICE** asks the same question the tutorial does — offense, defense or both —
+and then gives you the same session without the list: your call from your book, no
 clock, no downs, no turnover to lose, and the ball back on the same spot for the
-next snap. It is where a play gets learned without a game being spent on it.
+next snap. It is where a play gets learned without a game being spent on it. There
+is no toss in front of a practice session: the side of the ball is the choice, so
+there is nothing for a coin to decide. The toss is the gauntlet's, where it settles
+who brings the first return back.
 
 **THREE-ON-ONE GAUNTLET** is the drill a throw-off already is — one man with the
 ball and three gunners coming for him, nobody else on the field — played back and

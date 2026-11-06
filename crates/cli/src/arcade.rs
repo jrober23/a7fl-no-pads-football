@@ -623,7 +623,16 @@ impl Arcade {
     fn drill(&mut self) {
         match self.mode {
             Mode::Gauntlet => self.drill_returns(),
-            Mode::Practice => self.drill_offense(false),
+            Mode::Practice => match self.track {
+                Track::Offense => self.drill_offense(false),
+                Track::Defense => self.drill_defense(false),
+                Track::Both => {
+                    self.drill_offense(false);
+                    if !self.quit {
+                        self.drill_defense(false);
+                    }
+                }
+            },
             Mode::Tutorial => match self.track {
                 Track::Offense => self.drill_offense(true),
                 Track::Defense => self.drill_defense(true),
@@ -1058,9 +1067,14 @@ impl Arcade {
                     steps.get(step).map(|s| s.0).unwrap_or("DONE")
                 )
             }
-            Mode::Practice => {
-                "PRACTICE   NO CLOCK, NO DOWNS   THE SAME SPOT EVERY SNAP".to_string()
-            }
+            Mode::Practice => format!(
+                "PRACTICE   {}   NO CLOCK, NO DOWNS   THE SAME SPOT EVERY SNAP",
+                if self.teaching == Track::Defense {
+                    "DEFENSE"
+                } else {
+                    "OFFENSE"
+                }
+            ),
             Mode::Gauntlet => {
                 let mine = self.my_team.unwrap_or(0);
                 format!(
