@@ -721,6 +721,23 @@ fn draw_option_screen(
     note: &str,
     keys: &str,
 ) {
+    draw_option_rows(frame, title, caption, rows, slide, note, keys, 30, 6);
+}
+
+/// The same screen with a chosen row height: the shelf's start screen has eight
+/// rows in it, and eight of the standard rows run off the bottom of the canvas.
+#[allow(clippy::too_many_arguments)]
+fn draw_option_rows(
+    frame: &mut Frame,
+    title: &str,
+    caption: &str,
+    rows: &[(&str, String)],
+    slide: &ui::Slide,
+    note: &str,
+    keys: &str,
+    row_h: i32,
+    gap: i32,
+) {
     night(frame);
     let w = frame.w as i32;
     ui::heading(frame, w / 2, 22, title, ui::T_BODY, ui::ACCENT);
@@ -733,7 +750,6 @@ fn draw_option_screen(
     );
     let x = 110;
     let cw = w - 220;
-    let (row_h, gap) = (30, 6);
     let n = rows.len() as i32;
     let card_h = n * (row_h + gap) + ui::S3;
     ui::card(
@@ -2664,6 +2680,60 @@ const KEY_ROWS: [&str; 6] = ["ABCDEF", "GHIJKL", "MNOPQR", "STUVWX", "YZ0123", "
 const KEY_ACTIONS: [&str; 3] = ["SPACE", "DEL", "DONE"];
 const NAME_MAX: usize = 14;
 
+/// The keyboard, drawn from the state the loop keeps, so a picture of it needs no
+/// window and no pad.
+fn draw_name_screen(frame: &mut Frame, title: &str, prompt: &str, text: &str, row: usize, col: usize) {
+    night(frame);
+    ui::heading(frame, UI_W as i32 / 2, 16, title, ui::T_BODY, ui::ACCENT);
+    centered_in(frame, 320, 40, prompt, 1, dim());
+    let shown = format!("[ {} ]", text);
+    centered_in(frame, 320, 62, &shown, 1, ui::PAPER);
+    let x0 = 110;
+    let y0 = 96;
+    let cw = 70;
+    let chh = 30;
+    for (r, keys) in KEY_ROWS.iter().enumerate() {
+        for (c, ch) in keys.chars().enumerate() {
+            let x = x0 + c as i32 * cw;
+            let y = y0 + r as i32 * chh;
+            let lit = row == r && col == c;
+            frame.fill_rect(x, y, 60, 20, if lit { ui::ACCENT } else { Rgb::hex(0x1B2430) });
+            frame.text_shadowed(
+                x + 24,
+                y + 4,
+                &ch.to_string(),
+                1,
+                if lit { ui::INK } else { ui::PAPER },
+                1,
+            );
+        }
+    }
+    for (c, action) in KEY_ACTIONS.iter().enumerate() {
+        let x = x0 + c as i32 * 140;
+        let y = y0 + 6 * chh;
+        let lit = row == 6 && col == c;
+        frame.fill_rect(
+            x,
+            y,
+            130,
+            20,
+            if lit { ui::ACCENT } else { Rgb::hex(0x1B2430) },
+        );
+        frame.text_shadowed(
+            x + 12,
+            y + 4,
+            action,
+            1,
+            if lit { ui::INK } else { ui::PAPER },
+            1,
+        );
+    }
+    footer(
+        frame,
+        "[STICK] LETTERS   [A] TYPE   [B] KEEP IT AS IT IS   [START] DONE",
+    );
+}
+
 fn text_editor(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
@@ -2720,55 +2790,7 @@ fn text_editor(
             }
         }
         let mut frame = Frame::new(UI_W, UI_H);
-        night(&mut frame);
-        ui::heading(&mut frame, UI_W as i32 / 2, 16, title, ui::T_BODY, ui::ACCENT);
-        centered_in(&mut frame, 320, 40, prompt, 1, dim());
-        let shown = format!("[ {} ]", text);
-        centered_in(&mut frame, 320, 62, &shown, 1, ui::PAPER);
-        let x0 = 110;
-        let y0 = 96;
-        let cw = 70;
-        let chh = 30;
-        for (r, keys) in KEY_ROWS.iter().enumerate() {
-            for (c, ch) in keys.chars().enumerate() {
-                let x = x0 + c as i32 * cw;
-                let y = y0 + r as i32 * chh;
-                let lit = row == r && col == c;
-                frame.fill_rect(x, y, 60, 20, if lit { ui::ACCENT } else { Rgb::hex(0x1B2430) });
-                frame.text_shadowed(
-                    x + 24,
-                    y + 4,
-                    &ch.to_string(),
-                    1,
-                    if lit { ui::INK } else { ui::PAPER },
-                    1,
-                );
-            }
-        }
-        for (c, action) in KEY_ACTIONS.iter().enumerate() {
-            let x = x0 + c as i32 * 140;
-            let y = y0 + 6 * chh;
-            let lit = row == 6 && col == c;
-            frame.fill_rect(
-                x,
-                y,
-                130,
-                20,
-                if lit { ui::ACCENT } else { Rgb::hex(0x1B2430) },
-            );
-            frame.text_shadowed(
-                x + 12,
-                y + 4,
-                action,
-                1,
-                if lit { ui::INK } else { ui::PAPER },
-                1,
-            );
-        }
-        footer(
-            &mut frame,
-            "[STICK] LETTERS   [A] TYPE   [B] KEEP IT AS IT IS   [START] DONE",
-        );
+        draw_name_screen(&mut frame, title, prompt, text.as_str(), row, col);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2805,6 +2827,199 @@ fn book_status(book: &DesignBook) -> (String, Rgb) {
     }
 }
 
+/// The shelf, drawn from a list of books so the picture can be made without a
+/// store behind it or a pad in front of it.
+fn draw_shelf(frame: &mut Frame, books: &[DesignBook], pick: usize, slide: &ui::Slide) {
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    if books.is_empty() {
+        rows.push(("START A PLAYBOOK", "BLANK OR FROM A BOOK".to_string()));
+    } else {
+        for b in books {
+            let (status, _) = book_status(b);
+            let note = match status.as_str() {
+                "READY: A CLUB CAN TAKE THIS BOOK INTO A GAME" => "READY".to_string(),
+                other => other.to_string(),
+            };
+            rows.push((b.name.as_str(), note));
+        }
+        if books.len() < MAX_BOOKS {
+            rows.push(("NEW PLAYBOOK", String::new()));
+        }
+    }
+    let note = if books.is_empty() {
+        "NOTHING DRAWN YET".to_string()
+    } else {
+        let b = &books[pick.min(books.len().saturating_sub(1))];
+        book_status(b).0
+    };
+    draw_option_screen(
+        frame,
+        "PLAYBOOKS",
+        "EACH BOOK CARRIES ITS OWN PLAYS, FRONTS AND COVERAGE",
+        &rows,
+        slide,
+        &note,
+        "[UP/DOWN] PICK   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+    );
+}
+
+fn draw_start_book(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
+    let books = Book::ALL;
+    let mut rows: Vec<(&str, String)> =
+        vec![("BLANK SHEET", "DRAW IT ALL YOURSELF".to_string())];
+    for b in books.iter() {
+        rows.push((b.label(), String::new()));
+    }
+    let note = if pick == 0 {
+        "TWO FORMATIONS AND TWO FRONTS, WITH EVERY MAN ON THE FIELD"
+    } else {
+        books[pick - 1].blurb()
+    };
+    draw_option_rows(
+        frame,
+        "START A PLAYBOOK",
+        "A COPY OF A BOOK OR A BLANK SHEET: BOTH ARE YOURS TO CHANGE",
+        &rows,
+        slide,
+        note,
+        "[UP/DOWN] PICK   [A] START   [B] BACK",
+        24,
+        3,
+    );
+}
+
+fn draw_book_menu(frame: &mut Frame, book: &DesignBook, slide: &ui::Slide) {
+    let (status, _) = book_status(book);
+    let rows = [
+        (
+            "OFFENSE",
+            format!(
+                "{} FORMS - {} PLAYS",
+                book.offense.len(),
+                book.plays.iter().map(|p| p.len()).sum::<usize>()
+            ),
+        ),
+        (
+            "DEFENSE",
+            format!(
+                "{} FRONTS - {} CALLS",
+                book.defense.len(),
+                book.calls.iter().map(|c| c.len()).sum::<usize>()
+            ),
+        ),
+        ("RENAME THE BOOK", String::new()),
+        ("DELETE THE BOOK", String::new()),
+    ];
+    draw_option_screen(
+        frame,
+        &book.name,
+        "CIRCLES FOR THE OFFENSE, X'S FOR THE DEFENSE",
+        &rows,
+        slide,
+        &status,
+        "[UP/DOWN] PICK   [A] OPEN   [B] BACK",
+    );
+}
+
+fn counted(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+fn draw_offense_list(frame: &mut Frame, book: &DesignBook, slide: &ui::Slide) {
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    for (i, f) in book.offense.iter().enumerate() {
+        let n = book.plays_of(i).len();
+        rows.push((f.name.as_str(), counted(n, "PLAY", "PLAYS")));
+    }
+    if book.offense.len() < MAX_FORMATIONS {
+        rows.push(("NEW FORMATION", String::new()));
+    }
+    draw_option_screen(
+        frame,
+        "OFFENSE",
+        "TWO LINEMEN ON THE LINE, THE QUARTERBACK BEHIND THEM",
+        &rows,
+        slide,
+        "EACH FORMATION CARRIES ONE TO NINE PLAYS",
+        "[UP/DOWN] FORMATION   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+    );
+}
+
+fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::Slide) {
+    let plays = book.plays_of(fi).len();
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    for p in book.plays_of(fi) {
+        rows.push((
+            p.name.as_str(),
+            format!(
+                "{} - {} WAYPOINTS",
+                if p.family.is_pass() { "PASS" } else { "RUN" },
+                p.routes.iter().map(|r| r.len()).sum::<usize>()
+            ),
+        ));
+    }
+    if plays < MAX_PLAYS {
+        rows.push(("NEW PLAY", String::new()));
+    }
+    draw_option_screen(
+        frame,
+        &book.offense[fi].name,
+        "ONE TO NINE PLAYS. DRAW EACH MAN'S PATH WITH THE STICK.",
+        &rows,
+        slide,
+        "A RUN'S BACK PATH IS THE BALL; A PASS'S PATHS ARE THE ROUTES",
+        "[UP/DOWN] PLAY   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+    );
+}
+
+fn draw_defense_list(frame: &mut Frame, book: &DesignBook, slide: &ui::Slide) {
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    for (i, f) in book.defense.iter().enumerate() {
+        let n = book.calls_of(i).len();
+        rows.push((f.name.as_str(), counted(n, "CALL", "CALLS")));
+    }
+    if book.defense.len() < MAX_FORMATIONS {
+        rows.push(("NEW FRONT", String::new()));
+    }
+    draw_option_screen(
+        frame,
+        "DEFENSE",
+        "STAND SEVEN MEN WHERE YOU WANT THEM",
+        &rows,
+        slide,
+        "EACH FRONT CARRIES ONE TO NINE CALLS",
+        "[UP/DOWN] FRONT   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+    );
+}
+
+fn draw_call_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::Slide) {
+    let calls = book.calls_of(fi).len();
+    let mut rows: Vec<(&str, String)> = Vec::new();
+    for c in book.calls_of(fi) {
+        rows.push((
+            c.name.as_str(),
+            format!(
+                "{} - {}{}",
+                c.coverage.label(),
+                if c.press { "PRESS" } else { "OFF" },
+                if c.has_drop() { " - DRAWN" } else { "" }
+            ),
+        ));
+    }
+    if calls < MAX_PLAYS {
+        rows.push(("NEW CALL", String::new()));
+    }
+    draw_option_screen(
+        frame,
+        &book.defense[fi].name,
+        "ONE TO NINE CALLS OFF THIS FRONT",
+        &rows,
+        slide,
+        "LEFT/RIGHT CHANGES THE COVERAGE; [A] DRAWS THE DROPS",
+        "[UP/DOWN] CALL   [LEFT/RIGHT] COVERAGE   [A] OPEN   [Y] RENAME   [X] DELETE",
+    );
+}
+
 /// Where a designed book starts: a blank sheet or a copy of one the league runs.
 fn start_book(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
     let books: Vec<Book> = Book::ALL.to_vec();
@@ -2827,26 +3042,8 @@ fn start_book(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             }
         }
         slide.step(pick, dt);
-        let mut rows: Vec<(&str, String)> =
-            vec![("BLANK SHEET", "DRAW IT ALL YOURSELF".to_string())];
-        for b in &books {
-            rows.push((b.label(), String::new()));
-        }
-        let note = if pick == 0 {
-            "TWO FORMATIONS AND TWO FRONTS, WITH EVERY MAN ON THE FIELD"
-        } else {
-            books[pick - 1].blurb()
-        };
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            "START A PLAYBOOK",
-            "A COPY OF A BOOK OR A BLANK SHEET: BOTH ARE YOURS TO CHANGE",
-            &rows,
-            &slide,
-            note,
-            "[UP/DOWN] PICK   [A] START   [B] BACK",
-        );
+        draw_start_book(&mut frame, pick, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2884,31 +3081,14 @@ fn design_hub(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             return Some(());
         }
         let books = design::shelf();
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        if books.is_empty() {
-            rows.push(("START A PLAYBOOK", "BLANK OR FROM A BOOK".to_string()));
-        } else {
-            for b in &books {
-                let (status, _) = book_status(b);
-                let note = match status.as_str() {
-                    "READY: A CLUB CAN TAKE THIS BOOK INTO A GAME" => "READY".to_string(),
-                    other => other.to_string(),
-                };
-                rows.push((b.name.as_str(), note));
-            }
-            if books.len() < MAX_BOOKS {
-                rows.push(("NEW PLAYBOOK", String::new()));
-            }
-        }
-        let note = if books.is_empty() {
-            "NOTHING DRAWN YET".to_string()
-        } else {
-            let b = &books[pick.min(books.len().saturating_sub(1))];
-            book_status(b).0
-        };
         if let d = nav.step(input.stick.y, dt) {
             if d != 0 {
-                pick = wrap(pick, rows.len().max(1), -d);
+                let count = if books.is_empty() {
+                    1
+                } else {
+                    books.len() + usize::from(books.len() < MAX_BOOKS)
+                };
+                pick = wrap(pick, count, -d);
             }
         }
         slide.step(pick, dt);
@@ -2944,15 +3124,7 @@ fn design_hub(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             continue;
         }
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            "PLAYBOOKS",
-            "EACH BOOK CARRIES ITS OWN PLAYS, FRONTS AND COVERAGE",
-            &rows,
-            &slide,
-            &note,
-            "[UP/DOWN] PICK   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
-        );
+        draw_shelf(&mut frame, &books, pick, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2978,32 +3150,9 @@ fn book_menu(view: &mut View, pad: &mut Option<&mut Pad>, index: usize) -> Optio
         let Some(book) = design::book_at(index) else {
             return Some(());
         };
-        let (status, _) = book_status(&book);
-        let rows = [
-            (
-                "OFFENSE",
-                format!(
-                    "{} / {} FORMATIONS - {} PLAYS",
-                    book.offense.len(),
-                    MAX_FORMATIONS,
-                    book.plays.iter().map(|p| p.len()).sum::<usize>()
-                ),
-            ),
-            (
-                "DEFENSE",
-                format!(
-                    "{} / {} FRONTS - {} CALLS",
-                    book.defense.len(),
-                    MAX_FORMATIONS,
-                    book.calls.iter().map(|c| c.len()).sum::<usize>()
-                ),
-            ),
-            ("RENAME THE BOOK", String::new()),
-            ("DELETE THE BOOK", String::new()),
-        ];
         if let d = nav.step(input.stick.y, dt) {
             if d != 0 {
-                pick = wrap(pick, rows.len(), -d);
+                pick = wrap(pick, 4, -d);
             }
         }
         slide.step(pick, dt);
@@ -3031,15 +3180,7 @@ fn book_menu(view: &mut View, pad: &mut Option<&mut Pad>, index: usize) -> Optio
             continue;
         }
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            &book.name,
-            "CIRCLES FOR THE OFFENSE, X'S FOR THE DEFENSE",
-            &rows,
-            &slide,
-            &status,
-            "[UP/DOWN] PICK   [A] OPEN   [B] BACK",
-        );
+        draw_book_menu(&mut frame, &book, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3118,23 +3259,8 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             continue;
         }
         slide.step(sel, dt);
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        for (i, f) in book.offense.iter().enumerate() {
-            rows.push((f.name.as_str(), format!("{} PLAYS", book.plays_of(i).len())));
-        }
-        if book.offense.len() < MAX_FORMATIONS {
-            rows.push(("NEW FORMATION", String::new()));
-        }
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            "OFFENSE",
-            "TWO LINEMEN ON THE LINE, THE QUARTERBACK BEHIND THEM",
-            &rows,
-            &slide,
-            "EACH FORMATION CARRIES ONE TO NINE PLAYS",
-            "[UP/DOWN] FORMATION   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
-        );
+        draw_offense_list(&mut frame, &book, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3204,30 +3330,8 @@ fn play_list(
             continue;
         }
         slide.step(sel, dt);
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        for p in book.plays_of(fi) {
-            rows.push((
-                p.name.as_str(),
-                format!(
-                    "{} - {} WAYPOINTS",
-                    if p.family.is_pass() { "PASS" } else { "RUN" },
-                    p.routes.iter().map(|r| r.len()).sum::<usize>()
-                ),
-            ));
-        }
-        if plays < MAX_PLAYS {
-            rows.push(("NEW PLAY", String::new()));
-        }
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            &book.offense[fi].name.clone(),
-            "ONE TO NINE PLAYS. DRAW EACH MAN'S PATH WITH THE STICK.",
-            &rows,
-            &slide,
-            "A RUN'S BACK PATH IS THE BALL; A PASS'S PATHS ARE THE ROUTES",
-            "[UP/DOWN] PLAY   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
-        );
+        draw_play_list(&mut frame, book, fi, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3307,23 +3411,8 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             continue;
         }
         slide.step(sel, dt);
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        for (i, f) in book.defense.iter().enumerate() {
-            rows.push((f.name.as_str(), format!("{} CALLS", book.calls_of(i).len())));
-        }
-        if book.defense.len() < MAX_FORMATIONS {
-            rows.push(("NEW FRONT", String::new()));
-        }
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            "DEFENSE",
-            "STAND SEVEN MEN WHERE YOU WANT THEM",
-            &rows,
-            &slide,
-            "EACH FRONT CARRIES ONE TO NINE CALLS",
-            "[UP/DOWN] FRONT   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
-        );
+        draw_defense_list(&mut frame, &book, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3427,31 +3516,8 @@ fn call_list(
             continue;
         }
         slide.step(sel, dt);
-        let mut rows: Vec<(&str, String)> = Vec::new();
-        for c in book.calls_of(fi) {
-            rows.push((
-                c.name.as_str(),
-                format!(
-                    "{} - {}{}",
-                    c.coverage.label(),
-                    if c.press { "PRESS" } else { "OFF" },
-                    if c.has_drop() { " - DRAWN" } else { "" }
-                ),
-            ));
-        }
-        if calls < MAX_PLAYS {
-            rows.push(("NEW CALL", String::new()));
-        }
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            &book.defense[fi].name.clone(),
-            "ONE TO NINE CALLS OFF THIS FRONT",
-            &rows,
-            &slide,
-            "LEFT/RIGHT CHANGES THE COVERAGE; [A] DRAWS THE DROPS",
-            "[UP/DOWN] CALL   [LEFT/RIGHT] COVERAGE   [A] OPEN   [Y] RENAME   [X] DELETE",
-        );
+        draw_call_list(&mut frame, book, fi, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -5147,6 +5213,70 @@ mod tests {
 
     /// A picture of the drawing boards: a formation of circles with a job on
     /// every spot, a play drawn with the pen, a front of X's, and a coverage
+    /// Every screen of the editor, so the whole flow can be read as pictures
+    /// rather than walked with a pad.
+    #[test]
+    fn the_playbook_editor_can_be_rendered_screen_by_screen() {
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let save = |name: &str, screen: &Frame| {
+            let mut canvas = Frame::new(crate::view::CANVAS_W, crate::view::CANVAS_H);
+            canvas.blit_up(screen, UI_SCALE);
+            nopads_render::write_png(format!("{dir}/{name}.png"), &canvas).expect("write png");
+        };
+        let mut first = DesignBook::from_built_in(Book::WestCoast);
+        first.name = "SATURDAY BOOK".to_string();
+        first.offense[0].name = "TRIPS RIGHT".to_string();
+        first.plays[0][0].name = "MESH AND WHEEL".to_string();
+        first.defense[0].name = "WIDE 9".to_string();
+        first.calls[0][0].name = "COVER 2 CLOUD".to_string();
+        let mut second = DesignBook::from_built_in(Book::Power);
+        second.name = "GOAL LINE BOOK".to_string();
+        let shelf = [first.clone(), second];
+        let slide = ui::Slide::new(0);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_shelf(&mut frame, &shelf, 0, &slide);
+        save("design_shelf", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_start_book(&mut frame, 1, &slide);
+        save("design_start_book", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_book_menu(&mut frame, &first, &slide);
+        save("design_book_menu", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_offense_list(&mut frame, &first, &slide);
+        save("design_offense", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_play_list(&mut frame, &first, 0, &slide);
+        save("design_plays", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_defense_list(&mut frame, &first, &slide);
+        save("design_defense", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_call_list(&mut frame, &first, 0, &slide);
+        save("design_calls", &frame);
+
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_name_screen(
+            &mut frame,
+            "NAME THE PLAY",
+            "STICK TO A LETTER, [A] TO TYPE IT",
+            "MESH WHEEL",
+            4,
+            2,
+        );
+        save("design_name", &frame);
+    }
+
     /// drawn behind a call.
     #[test]
     fn the_drawing_boards_can_be_rendered_to_pictures() {

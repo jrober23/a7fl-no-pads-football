@@ -255,9 +255,16 @@ pub fn row(
     font::draw_styled(frame, x + S4, ty, label, T_LABEL, ink, 1, false);
     if let Some(v) = value {
         if !v.is_empty() {
-            let vx = x + w - S4 - font::text_width(v, T_LABEL) as i32;
+            // A long value keeps clear of its label: the row drops the value to
+            // the caption size rather than letting the two run together. Short
+            // values, which is most of them, are untouched.
+            let room = w - S4 * 3;
+            let wide = font::text_width(label, T_LABEL) as i32 + font::text_width(v, T_LABEL) as i32;
+            let scale = if wide > room { T_CAPTION } else { T_LABEL };
+            let vx = x + w - S4 - font::text_width(v, scale) as i32;
+            let vy = ty + (font::text_height(T_LABEL) as i32 - font::text_height(scale) as i32) / 2;
             let vink = MUTED.lerp(accent, heat);
-            font::draw_styled(frame, vx, ty, v, T_LABEL, vink, 1, false);
+            font::draw_styled(frame, vx, vy, v, scale, vink, 1, false);
         }
     }
 }
