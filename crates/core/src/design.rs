@@ -122,6 +122,11 @@ pub struct DesignPlay {
     /// The drawn path for each spot, in yards from the line of scrimmage. Empty
     /// means the man on that spot stays in and blocks.
     pub routes: [Vec<Vec2>; 7],
+    /// The spot whose man takes the ball on a run. Any spot can be pointed at,
+    /// so the handoff goes to the man the player picked rather than to whichever
+    /// job is called the back: a tight end standing in the backfield carries it
+    /// the same way the back does. Ignored on a pass.
+    pub carrier: usize,
 }
 
 impl DesignPlay {
@@ -130,6 +135,7 @@ impl DesignPlay {
             name,
             family: PlayFamily::QuickPass,
             routes: Default::default(),
+            carrier: OffRole::Back.index(),
         }
     }
 
@@ -148,10 +154,18 @@ impl DesignPlay {
                 .map(|q| grid(Vec2::new(spot.x + q.x, spot.y + q.y)))
                 .collect();
         }
+        // The man who carries in the league's play carries here too: a copied
+        // jet sweep still goes to the tight end, and a copied draw to the
+        // quarterback.
+        let carrier = p
+            .carrier_role()
+            .map(|role| form.slot_of(role))
+            .unwrap_or_else(|| form.slot_of(OffRole::Back));
         DesignPlay {
             name: p.name.to_string(),
             family: p.family,
             routes,
+            carrier,
         }
     }
 
@@ -161,6 +175,18 @@ impl DesignPlay {
 
     pub fn path(&self, slot: usize) -> &[Vec2] {
         self.routes.get(slot).map(|r| r.as_slice()).unwrap_or(&[])
+    }
+
+    /// The job of the man who takes the ball, read through the spot the player
+    /// pointed at rather than through a job on its own.
+    pub fn carrier_role(&self, form: &DesignFormation) -> OffRole {
+        form.roles.get(self.carrier).copied().unwrap_or(OffRole::Back)
+    }
+
+    /// True when the ball is going to a man on the line, which the rules do not
+    /// allow: a lineman is neither a back nor an eligible receiver.
+    pub fn carrier_is_line(&self, form: &DesignFormation) -> bool {
+        self.carrier_role(form).is_line()
     }
 }
 
@@ -406,6 +432,16 @@ impl DesignBook {
             for p in plays {
                 if !p.has_path() {
                     out.push(format!("{}: EVERY PLAY NEEDS A DRAWN PATH", p.name));
+                } else if p.family.is_run() && p.path(p.carrier).is_empty() {
+                    // The paths are drawn, but not on the man taking the ball:
+                    // the run would have nobody to hand it to.
+                    out.push(format!(
+                        "{}: THE MAN TAKING THE HANDOFF NEEDS A PATH",
+                        p.name
+                    ));
+                }
+                if p.family.is_run() && p.carrier_is_line(f) {
+                    out.push(format!("{}: ONLY A BACK CAN TAKE THE HANDOFF", p.name));
                 }
                 if p.name.trim().is_empty() {
                     out.push(format!("{}: A PLAY NEEDS A NAME", f.name));
@@ -820,6 +856,17 @@ fn design_play(
             .map(|q| Vec2::new(q.x - spot.x, q.y - spot.y))
             .collect();
         match role {
+            // Whoever the player pointed at takes the ball: the handoff goes to
+            // the man, not to the job he is wearing, so the tight end standing in
+            // the backfield carries it exactly as the back does, and a picked
+            // quarterback keeps it.
+            _ if !pass && slot == p.carrier && !drawn.is_empty() => {
+                if role == OffRole::Qb {
+                    assignments.push((role, Assign::QbCarry { points: rel }));
+                } else {
+                    assignments.push((role, Assign::Carry { points: rel }));
+                }
+            }
             OffRole::Qb => {
                 assignments.push((
                     role,
@@ -870,8 +917,6 @@ fn design_play(
                             .ceil() as u8;
                         assignments.push((role, Assign::Route { points: rel, depth }));
                     }
-                } else if role == OffRole::Back && !drawn.is_empty() {
-                    assignments.push((role, Assign::Carry { points: rel }));
                 } else {
                     assignments.push((
                         role,
@@ -1106,12 +1151,13 @@ pub fn text() -> String {
         for (fi, plays) in book.plays.iter().enumerate() {
             for p in plays {
                 out.push_str(&format!(
-                    "play2 {} {} {} {} {}\n",
+                    "play2 {} {} {} {} {} {}\n",
                     bi,
                     fi,
                     word(&p.name),
                     family_name(p.family),
-                    routes_text(&p.routes)
+                    routes_text(&p.routes),
+                    p.carrier
                 ));
             }
         }
@@ -1270,6 +1316,13 @@ pub fn parse(text: &str) {
                     continue;
                 };
                 let Some(routes) = parts.next() else { continue };
+                // The spot taking the handoff is written after the paths, and
+                // defaulted to the back for a play saved before the pick existed.
+                let carrier = parts
+                    .next()
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .filter(|c| *c < 7)
+                    .unwrap_or(OffRole::Back.index());
                 let b = entry(&mut books, bi);
                 if let Some(list) = b.plays.get_mut(fi) {
                     if list.len() < MAX_PLAYS {
@@ -1277,6 +1330,7 @@ pub fn parse(text: &str) {
                             name: unword(name),
                             family,
                             routes: parse_routes(routes),
+                            carrier,
                         });
                     }
                 }
@@ -1385,6 +1439,7 @@ pub fn parse(text: &str) {
                             name: unword(name),
                             family,
                             routes: drawn,
+                            carrier: OffRole::Back.index(),
                         });
                     }
                 }
@@ -1544,6 +1599,96 @@ mod tests {
             other => panic!("the drawn route did not become a path: {other:?}"),
         }
         let _ = spot;
+        clear();
+    }
+
+    #[test]
+    fn the_man_the_player_points_at_takes_the_handoff() {
+        let _store = store_lock();
+        clear();
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        // The tight end stands in the backfield beside the back, and the ball is
+        // going to him: the carrier is a spot on the drawing, not the job that
+        // happens to be called Back.
+        let te = book.offense[0].slot_of(OffRole::Slot);
+        let back = book.offense[0].slot_of(OffRole::Back);
+        book.offense[0].spots[te] = Vec2::new(-4.0, 2.0);
+        let back_spot = book.offense[0].spots[back];
+        book.plays[0][0].family = PlayFamily::RunInside;
+        book.plays[0][0].carrier = te;
+        book.plays[0][0].routes = Default::default();
+        book.plays[0][0].routes[te] = vec![Vec2::new(-2.0, 2.0), Vec2::new(7.0, 0.0)];
+        book.plays[0][0].routes[back] = vec![Vec2::new(back_spot.x + 2.0, back_spot.y)];
+        assert!(book.problems().is_empty(), "{:?}", book.problems());
+        assert_eq!(book.plays[0][0].carrier_role(&book.offense[0]), OffRole::Slot);
+
+        let i = add(book);
+        let plays = offense_plays_at(i);
+        assert_eq!(
+            plays[0].carrier_role(),
+            Some(OffRole::Slot),
+            "the ball goes to the tight end, not to the back"
+        );
+        assert!(
+            matches!(plays[0].assignment(OffRole::Slot), Some(Assign::Carry { .. })),
+            "his drawn path is the ball: {:?}",
+            plays[0].assignment(OffRole::Slot)
+        );
+        assert!(
+            matches!(plays[0].assignment(OffRole::Back), Some(Assign::RunBlock { .. })),
+            "the back blocks on a run that is not his: {:?}",
+            plays[0].assignment(OffRole::Back)
+        );
+        // The path is written relative to his own feet: (-2, 2) and (7, 0) drawn
+        // from a man standing on (-4, 2).
+        assert_eq!(
+            plays[0].assignment(OffRole::Slot).and_then(assign_points),
+            Some(vec![Vec2::new(2.0, 0.0), Vec2::new(11.0, -2.0)]),
+            "the drawn path is the run"
+        );
+        clear();
+    }
+
+    #[test]
+    fn a_run_whose_carrier_has_no_path_is_refused() {
+        let _store = store_lock();
+        clear();
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        // Paths are drawn, but none of them is on the man taking the ball.
+        book.plays[0][0].family = PlayFamily::RunInside;
+        book.plays[0][0].carrier = 4;
+        book.plays[0][0].routes[4] = Vec::new();
+        let problems = book.problems();
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("THE MAN TAKING THE HANDOFF NEEDS A PATH")),
+            "{problems:?}"
+        );
+        clear();
+    }
+
+    #[test]
+    fn the_handoff_survives_the_save_file() {
+        let _store = store_lock();
+        clear();
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        book.plays[0][0].family = PlayFamily::RunInside;
+        book.plays[0][0].routes[5] = vec![Vec2::new(-1.0, -9.0)];
+        book.plays[0][0].carrier = 5;
+        add(book);
+        let written = text();
+        clear();
+        parse(&written);
+        let back = book_at(0).expect("the book comes back");
+        assert_eq!(
+            back.plays[0][0].carrier, 5,
+            "the man taking the handoff is written down with the play"
+        );
+        assert_eq!(back.plays[0][0].carrier_role(&back.offense[0]), OffRole::WideL);
         clear();
     }
 

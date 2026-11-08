@@ -2300,18 +2300,41 @@ fn draw_men(
     }
 }
 
-fn draw_routes(frame: &mut Frame, spots: &[Vec2; 7], routes: &[Vec<Vec2>; 7], sel: usize) {
+fn draw_routes(
+    frame: &mut Frame,
+    spots: &[Vec2; 7],
+    routes: &[Vec<Vec2>; 7],
+    sel: usize,
+    carrier: Option<usize>,
+) {
     for slot in 0..7 {
         let spot = spots[slot];
-        let color = if slot == sel { ui::ACCENT } else { ui::GOOD };
+        // The man taking the ball is drawn heavier and white, so the run is one
+        // glance at the picture rather than a word to read.
+        let (color, width) = if carrier == Some(slot) {
+            (ui::PAPER, 3)
+        } else if slot == sel {
+            (ui::ACCENT, 2)
+        } else {
+            (ui::GOOD, 2)
+        };
         let mut prev = field_px(spot.x, spot.y);
         for p in &routes[slot] {
             let next = field_px(p.x, p.y);
-            frame.line(prev.0, prev.1, next.0, next.1, color, 2);
+            frame.line(prev.0, prev.1, next.0, next.1, color, width);
             disc(frame, next.0, next.1, 2, color);
             prev = next;
         }
     }
+}
+
+/// The ball itself, on the man who is going to carry it: a small white mark at
+/// his feet and the word beside him, so the playbook shows the handoff and not
+/// only the path.
+fn draw_ball(frame: &mut Frame, spots: &[Vec2; 7], carrier: usize) {
+    let (px, py) = field_px(spots[carrier].x, spots[carrier].y);
+    frame.fill_rect(px - 2, py - 10, 5, 4, ui::PAPER);
+    frame.text_shadowed(px + 13, py + 7, "BALL", 1, ui::PAPER, 1);
 }
 
 fn draw_drops(frame: &mut Frame, spots: &[Vec2; 7], drops: &[Vec<Vec2>; 7], sel: usize) {
@@ -2500,6 +2523,16 @@ fn play_editor(
                 PlayFamily::QuickPass
             };
         }
+        if input.pressed.shoulder {
+            // Who takes the ball: the five skill spots in the order they line
+            // up, the quarterback included, so the man in the backfield the
+            // player wants is the man who gets it whatever job he is wearing.
+            let can: Vec<usize> = (0..7).filter(|s| !form.roles[*s].is_line()).collect();
+            if !can.is_empty() {
+                let at = can.iter().position(|s| *s == play.carrier).unwrap_or(0);
+                play.carrier = can[(at + 1) % can.len()];
+            }
+        }
         if input.pressed.select {
             play.routes[sel].clear();
             pen = false;
@@ -2525,8 +2558,16 @@ fn play_editor(
         let drawn = play.has_path();
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, false);
-        draw_routes(&mut frame, &form.spots, &play.routes, sel);
+        let ball = if play.family.is_pass() {
+            None
+        } else {
+            Some(play.carrier)
+        };
+        draw_routes(&mut frame, &form.spots, &play.routes, sel, ball);
         draw_men(&mut frame, &form.spots, &bits, None, false);
+        if ball.is_some() {
+            draw_ball(&mut frame, &form.spots, play.carrier);
+        }
         if let Some(p) = play.routes[sel].last() {
             let a = field_px(p.x, p.y);
             let b = field_px(cursor.0 as f32, cursor.1 as f32);
@@ -2564,18 +2605,32 @@ fn play_editor(
                 1,
                 dim(),
             ),
+            (true, false) if play.path(play.carrier).is_empty() => centered_in(
+                &mut frame,
+                320,
+                FIELD_B + 10,
+                &format!(
+                    "{} HAS NO PATH TO RUN: DRAW HIS PATH OR PICK ANOTHER MAN",
+                    play.carrier_role(form).label()
+                ),
+                1,
+                ui::DANGER,
+            ),
             (true, false) => centered_in(
                 &mut frame,
                 320,
                 FIELD_B + 10,
-                "ON A RUN THE BACK'S PATH IS THE BALL; THE OTHERS BLOCK ALONG THEIRS",
+                &format!(
+                    "{} TAKES THE HANDOFF: HIS PATH IS THE BALL, THE OTHERS BLOCK",
+                    play.carrier_role(form).label()
+                ),
                 1,
                 dim(),
             ),
         }
         footer(
             &mut frame,
-            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
+            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [SELECT] WIPE  [B] DONE",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2976,13 +3031,20 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
     let plays = book.plays_of(fi).len();
     let mut rows: Vec<(&str, String)> = Vec::new();
     for p in book.plays_of(fi) {
+        let ways = p.routes.iter().map(|r| r.len()).sum::<usize>();
         rows.push((
             p.name.as_str(),
-            format!(
-                "{} - {} WAYPOINTS",
-                if p.family.is_pass() { "PASS" } else { "RUN" },
-                p.routes.iter().map(|r| r.len()).sum::<usize>()
-            ),
+            if p.family.is_pass() {
+                format!("PASS - {} WAYPOINTS", ways)
+            } else {
+                // Whose ball it is, by the job he is wearing: a run to the tight
+                // end standing in the backfield says TE here, not RB.
+                format!(
+                    "{} RUNS - {} WAYPOINTS",
+                    p.carrier_role(&book.offense[fi]).label(),
+                    ways
+                )
+            },
         ));
     }
     if plays < MAX_PLAYS {
@@ -2994,7 +3056,7 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         "ONE TO NINE PLAYS. DRAW EACH MAN'S PATH WITH THE STICK.",
         &rows,
         slide,
-        "A RUN'S BACK PATH IS THE BALL; A PASS'S PATHS ARE THE ROUTES",
+        "ON A RUN THE MAN NAMED TAKES THE BALL; A PASS'S PATHS ARE THE ROUTES",
         "[UP/DOWN] PLAY   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
     );
 }
@@ -5520,7 +5582,7 @@ mod tests {
 
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, false);
-        draw_routes(&mut frame, &form.spots, &play.routes, slot);
+        draw_routes(&mut frame, &form.spots, &play.routes, slot, None);
         draw_men(&mut frame, &form.spots, &bits, None, false);
         cursor_box(&mut frame, 6, 3);
         ui::heading(&mut frame, UI_W as i32 / 2, 16, &play.name, ui::T_BODY, ui::ACCENT);
@@ -5535,9 +5597,42 @@ mod tests {
         );
         footer(
             &mut frame,
-            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PASS/RUN   [SELECT] WIPE   [B] DONE",
+            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [SELECT] WIPE  [B] DONE",
         );
         save("play_routes", &frame);
+
+        // A run with the ball going to the man the player pointed at: the tight
+        // end standing in the backfield, drawn heavier with the ball beside him.
+        let mut run = book.plays[0][0].clone();
+        run.name = "TE COUNTER".to_string();
+        run.family = PlayFamily::RunInside;
+        run.routes = Default::default();
+        run.carrier = slot;
+        let tes = form.spots[slot];
+        run.routes[slot] = (1..=9)
+            .map(|d| Vec2::new(tes.x + d as f32, tes.y - d as f32 * 0.6))
+            .collect();
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_field(&mut frame, false);
+        draw_routes(&mut frame, &form.spots, &run.routes, slot, Some(slot));
+        draw_men(&mut frame, &form.spots, &bits, None, false);
+        draw_ball(&mut frame, &form.spots, slot);
+        cursor_box(&mut frame, tes.x as i8, tes.y as i8);
+        ui::heading(&mut frame, UI_W as i32 / 2, 16, &run.name, ui::T_BODY, ui::ACCENT);
+        centered_in(&mut frame, 320, 40, "DRAWING TE - RUN - PEN DOWN", 1, accent());
+        centered_in(
+            &mut frame,
+            320,
+            FIELD_B + 10,
+            "TE TAKES THE HANDOFF: HIS PATH IS THE BALL, THE OTHERS BLOCK",
+            1,
+            dim(),
+        );
+        footer(
+            &mut frame,
+            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [SELECT] WIPE  [B] DONE",
+        );
+        save("play_run", &frame);
 
         let front = book.defense[0].clone();
         let fbits = def_bits(&front.roles);
