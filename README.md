@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.103-windows-x86_64.zip` from the
+Grab `7on7-v0.25.104-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -151,8 +151,9 @@ same page from every pause menu):
 | X / West | — | Open the audible over the field; once the ball is live, throw to X, or dive as a runner |
 | Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or stiff-arm as a runner (slide as a quarterback) |
 | Select / Minus | — | Change camera |
-| RT / ZR | — | Hold for the play preview: the shot lifts over the route tree until you let go |
-| LB / L1 | — | Dummy count at the line: bark the snap count and try to draw a defender across |
+| LT / ZL | — | Hold for the play preview: the shot lifts over the route tree until you let go; in the play editor it cycles the handoff |
+| LB / L1 | — | Dummy count at the line: bark the snap count and try to draw a defender across; in the play editor it cycles a pass's drop |
+| RT / ZR | — | Throw the throw-off |
 | RB / R1 | — | On defense, check to another call: three at a time, over the field |
 | Start | — | Pause: resume, camera, quit |
 
@@ -626,7 +627,7 @@ the spot, so a player who wanted another game had to start the program again.
 
 The line of scrimmage is a place to work now, not a menu to get through.
 
-Holding RT at the line is the play preview: the shot lifts straight up over the
+Holding LT at the line is the play preview: the shot lifts straight up over the
 whole route tree — it rises into the sky shot, and every frame of the rise is square
 to the field rather than tilted across it, because only the height and the distance
 travel and the axis never leaves the ball's lane — and the routes are drawn on the

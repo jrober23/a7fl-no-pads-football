@@ -2820,8 +2820,8 @@ fn play_editor(
                 PlayFamily::QuickPass
             };
         }
-        // The quarterback's own setup: a run's handoff, a pass's drop. They are
-        // the two things about a play that are not a man's path.
+        // The quarterback's own setup: a run's handoff on LT, a pass's drop on LB.
+        // They are the two things about a play that are not a man's path.
         if input.pressed.preview && !play.family.is_pass() {
             play.handoff = play.handoff.next();
         }
