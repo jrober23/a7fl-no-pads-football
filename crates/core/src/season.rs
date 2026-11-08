@@ -8,6 +8,7 @@
 
 use crate::game::GameState;
 use crate::math::Rng;
+use crate::playbook::Book;
 use crate::team::{clubs, team_from_spec, Division};
 
 /// The longest season the round-robin can give: every club meets every other.
@@ -109,6 +110,9 @@ pub struct Season {
     pub rounds: Vec<Round>,
     pub champion: Option<usize>,
     pub phase: Phase,
+    /// The book the player runs in his own games: his club's own unless he picked
+    /// another one when the season was set up.
+    pub book: Book,
 }
 
 impl Season {
@@ -139,14 +143,16 @@ impl Season {
             order.insert(1, last);
         }
         schedule.truncate(weeks.clamp(1, MAX_WEEKS));
+        let you = you.min(n - 1);
         Season {
             seed,
-            you: you.min(n - 1),
+            you,
             weeks: schedule,
             week: 0,
             rounds: Vec::new(),
             champion: None,
             phase: Phase::Regular,
+            book: clubs()[you].book,
         }
     }
 
@@ -431,6 +437,16 @@ fn sim_fixture(fixture: &mut Fixture, seed: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_season_opens_on_the_club_book_and_can_run_another() {
+        // The book the player's own games are played from: his club's until he
+        // picks another on the way in, and then that one every week of the year.
+        let mut season = Season::new(3, 8, 12);
+        assert_eq!(season.book, clubs()[3].book, "his club's book by default");
+        season.book = Book::Custom(1);
+        assert_eq!(season.book, Book::Custom(1), "and the one he picked after");
+    }
 
     #[test]
     fn every_club_plays_once_a_week_and_never_itself() {

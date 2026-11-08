@@ -195,11 +195,13 @@ the film and timing paths use.
 **MORE MODES** is the three sessions that are drills rather than games: no clock, no
 season, nothing on the scoreboard, and you leave when you have had enough.
 
-All three ask for the same two clubs, the same side of the ball and the same
-playbook the exhibition screen does — home team, away team, which end you take,
-which book you run — so a drill is played with the club and the plays you meant to
-practise. The pause menu inside them is the game's: same resume, same controls
-page, same lens.
+All three ask for the same two clubs and the same side of the ball the exhibition
+screen does — home team, away team, which end you take — so a drill is played with
+the club you meant to practise with. **PRACTICE** goes on to ask which book to run,
+the same picker the exhibition screen uses, so a book drawn on the shelf is what the
+snap is played from. The tutorial and the gauntlet do not ask: the tutorial teaches
+off the club's own plays, and a return drill runs none. The pause menu inside them
+is the game's: same resume, same controls page, same lens.
 
 **TUTORIAL** opens a second screen: **OFFENSE**, **DEFENSE** or **BOTH**. The
 offense session is one control at a time, lined up on the ten. It asks for four
@@ -238,7 +240,8 @@ going for the pick.
   book holds two to five formations a side, each with one to nine plays, and two
   to five fronts, each with one to nine calls. Y renames a book, a formation, a
   play, a front or a call from the screen that lists it. Once a book is legal it
-  is **MY PLAYBOOK** in the book picker, and a created club can carry it. On
+  stands in the book picker beside the league's, so it can be run in exhibition, in
+  a season and in practice, and a created club can carry it. On
   defense at the line, tap **LT** to press the corners or back them off.
 
 What you make — the clubs, the kits and the playbook — is kept in `custom.txt`
@@ -314,7 +317,8 @@ so nothing on a jersey belongs to a club somebody already owns.
 ### Season
 
 **SEASON** sits under EXHIBITION and plays a whole league year rather than one game.
-Pick a club, then pick the length — anything from four weeks to the full thirty-one —
+Pick a club, then the book it runs — the league's or one off your own shelf — and
+then the length, anything from four weeks to the full thirty-one —
 and the season is scheduled round robin, so every club plays every week and no two
 clubs meet twice until the league has been round. The top two in each division make
 an eight-club bracket, seeded by record, running quarterfinal, semifinal and

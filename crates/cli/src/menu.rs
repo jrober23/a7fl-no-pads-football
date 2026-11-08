@@ -3649,11 +3649,13 @@ fn drill_kickoff(
         })
         .collect();
     let sides = choose_sides(view, pad, &all, &cards)?;
-    // The gauntlet is a return drill: there is no book to run in it, so it does
-    // not ask for one. The sessions that do run plays ask which.
+    // Two of the three run no book of the player's: the gauntlet is a return
+    // drill with no plays in it, and the tutorial teaches off the club's own
+    // plays so the lesson is the same one whatever is on the shelf. Practice
+    // asks which book to run.
     let book = match kind {
-        DrillKind::Gauntlet => all[sides.yours].book,
-        _ => pick_book(view, pad, sides.yours)?,
+        DrillKind::Gauntlet | DrillKind::Tutorial(_) => all[sides.yours].book,
+        DrillKind::Practice(_) => pick_book(view, pad, sides.yours)?,
     };
     // How hard the other lot play is a question for the field, not a number
     // buried in the settings screen: the drills that play against them ask it.
@@ -4293,8 +4295,14 @@ fn season_setup(
         })
         .collect();
     let (you, _) = pick_team(view, pad, &all, &cards, None, "YOUR CLUB THIS SEASON")?.club(&all, None);
+    // The book he runs all year, picked once before the first week rather than
+    // before every one: a book is the season's plan, and the picker offers his
+    // own shelf beside the league's.
+    let book = pick_book(view, pad, you)?;
     let weeks = season_length(view, pad, you, &all)?;
-    Some(Season::new(you, weeks, coin_seed()))
+    let mut season = Season::new(you, weeks, coin_seed());
+    season.book = book;
+    Some(season)
 }
 
 /// The lengths on offer. The last is the full round-robin: every club twice a
@@ -4554,7 +4562,7 @@ pub fn season_hub(
                                 kits: [true, false],
                                 receive: coin_seed() % 2 == 0,
                                 venue,
-                                book: clubs()[season.you].book,
+                                book: season.book,
                             }));
                         }
                     }
