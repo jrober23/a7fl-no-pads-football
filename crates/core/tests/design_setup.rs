@@ -91,3 +91,67 @@ fn a_designed_option_is_the_quarterbacks_play() {
     );
     design::clear();
 }
+
+/// A designed option is the player's play: nobody gives it away at the mesh
+/// until he pitches it. The quarterback keeps it for as long as he is on the pad.
+#[test]
+fn a_designed_option_is_not_given_away_at_the_mesh() {
+    design::clear();
+    let mut book = DesignBook::blank();
+    let form = book.offense[0].clone();
+    let qb = form
+        .roles
+        .iter()
+        .position(|r| *r == OffRole::Qb)
+        .expect("a quarterback");
+    let back = form
+        .roles
+        .iter()
+        .position(|r| *r == OffRole::Back)
+        .expect("a back");
+    book.plays[0][0].family = PlayFamily::RunInside;
+    book.plays[0][0].handoff = Handoff::Option;
+    book.plays[0][0].carrier = back;
+    book.plays[0][0].routes[qb] = vec![Vec2::new(-1.0, 0.0), Vec2::new(1.0, 3.0)];
+    book.plays[0][0].routes[back] = vec![Vec2::new(-8.0, 2.0), Vec2::new(-5.0, 5.0)];
+    let slot = design::add(book);
+    let plays = design::offense_plays_at(slot);
+    assert_eq!(plays[0].carrier_role(), Some(OffRole::Qb));
+
+    let teams = Box::leak(Box::new(nopads_core::team::league_teams()));
+    let defs = Box::leak(Box::new(nopads_core::playbook::defensive_playbook()));
+    let play = Box::leak(Box::new(plays[0].clone()));
+    let setup = nopads_core::sim::SnapSetup {
+        los: 40.0,
+        ball_y: 0.0,
+        direction: 1,
+        down: 1,
+        to_go: 10.0,
+        seed: 9,
+        offense_team: 0,
+        defense_team: 1,
+        is_try: false,
+    };
+    let mut sim = nopads_core::sim::PlaySim::new(&teams[0], &teams[1], play, &defs[0], &setup);
+    let keeper = (0..7)
+        .find(|&i| OffRole::ALL[sim.players[i].role_index] == OffRole::Qb)
+        .expect("the quarterback is on the field");
+    sim.request_snap();
+    // A player on the pad running the keep: the ball stays with him.
+    for _ in 0..180 {
+        sim.set_control(Some(nopads_core::sim::QbControl {
+            move_dir: Vec2::new(1.0, 0.0),
+            ..Default::default()
+        }));
+        sim.step(1.0 / 60.0);
+        if sim.result.is_some() {
+            break;
+        }
+        assert_eq!(
+            sim.ball.holder,
+            Some(keeper),
+            "an option is kept until the player gives it"
+        );
+    }
+    design::clear();
+}

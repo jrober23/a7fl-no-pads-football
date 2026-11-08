@@ -317,7 +317,7 @@ impl Handoff {
 
     pub fn label(self) -> &'static str {
         match self {
-            Handoff::Plain => "HANDOFF",
+            Handoff::Plain => "PLAIN",
             Handoff::Forward => "FORWARD",
             Handoff::Inside => "INSIDE",
             Handoff::Lateral => "OUTSIDE",

@@ -729,6 +729,7 @@ impl Arcade {
                 run_call: false,
                 targets: Vec::new(),
                 pitch_targets: Vec::new(),
+                just_snapped: false,
             };
             let finished = snap_loop(
                 &mut SnapScreen {
@@ -936,6 +937,7 @@ impl Arcade {
                 run_call: false,
                 targets: Vec::new(),
                 pitch_targets: Vec::new(),
+                just_snapped: false,
             };
             let finished = snap_loop(
                 &mut SnapScreen {
@@ -2089,6 +2091,7 @@ impl Arcade {
                 run_call: false,
                 targets: Vec::new(),
                 pitch_targets: Vec::new(),
+                just_snapped: false,
             };
             let finished = snap_loop(
                 &mut SnapScreen {
@@ -3950,6 +3953,8 @@ struct OffenseSnap<'a> {
     // On a run the same four buttons are the pitch: the men coming round behind
     // the ball, in the order their buttons come up.
     pitch_targets: Vec<(OffRole, usize)>,
+    // The ball went on this frame, so the press that sent it is spent.
+    just_snapped: bool,
 }
 
 impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
@@ -4002,7 +4007,10 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 return Flow::Restart;
             }
             if input.pressed.a {
+                let before = sim.phase;
                 sim.request_snap();
+                // A is the snap. It is not also the pitch or the pass.
+                self.just_snapped = sim.phase != before;
             }
         } else {
             sim.set_preview(false);
@@ -4036,7 +4044,18 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
             sim.pitch_targets()
         };
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
-        let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
+        // The press that snapped the ball is the snap and nothing else. The snap
+        // lands inside the same frame, so by the time the pad is read for the play
+        // the quarterback is already holding it -- and A, still down from the
+        // snap, was being read as the first pitch. On a designed option that gave
+        // the ball to the man drawn for on every snap, before the player had
+        // decided anything, which is not a read at all.
+        let snap_frame = std::mem::take(&mut self.just_snapped);
+        let down = if snap_frame {
+            [false; 4]
+        } else {
+            [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y]
+        };
         // The option is live while somebody is behind the ball: on those buttons
         // the pitch comes first, and a runner's moves wait until there is nobody
         // left to pitch to.
@@ -4044,7 +4063,7 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
         if self.running {
             // A pass wound up before he crossed the line is not a throw any more.
             self.charge = None;
-            if !pitching {
+            if !pitching && !snap_frame {
                 runner_moves(input, |kind, side| {
                     if side == 0.0 {
                         sim.request_move(kind);
