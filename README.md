@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.97-windows-x86_64.zip` from the
+Grab `7on7-v0.25.98-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -259,9 +259,16 @@ going for the pick.
   gives it on to the trailer when they come for the keeper. The defense is drawn
   the same way: a front of X's, then a call whose
   coverage you draw defender by defender, each drop a path on the same grid. A
-  book holds two to five formations a side, each with one to nine plays, and two
-  to five fronts, each with one to nine calls. Y renames a book, a formation, a
-  play, a front or a call from the screen that lists it. Once a book is legal it
+  The formations of a book are listed by name with the formation itself drawn
+  beside the list — the men as circles (X's on defense) on the yard grid with a
+  job against each one — so a name and the shape it stands in are read at once,
+  and a new formation is named as it is made, before a man has been moved. A on
+  a formation opens a drop-down: **EDIT FORMATION** and, on offense, **EDIT
+  PLAYS** (on defense, **EDIT CALLS**), with rename and delete on it too, so the
+  shape and the plays under it are two roads out of the same name rather than one
+  screen behind the other. A book holds two to five formations a side, each with
+  one to nine plays, and two to five fronts, each with one to nine calls. Y
+  renames a book, a play or a call from the screen that lists it. Once a book is legal it
   stands at the top of the book picker ahead of the league's, marked **READY** and
   taken with A, so it can be run in exhibition, in a season and in practice, and a
   created club can carry it. A book still being drawn is listed too, marked **NEEDS

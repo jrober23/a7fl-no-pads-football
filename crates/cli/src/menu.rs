@@ -2322,6 +2322,10 @@ const FIELD_R: i32 = 594;
 const FIELD_T: i32 = 58;
 const FIELD_B: i32 = 282;
 
+/// How much room a job's name takes on the small picture, shadow and all: the
+/// glyphs are seven pixels tall, and two names set that close read as one.
+const LABEL_H: i32 = 10;
+
 fn field_px(x: f32, y: f32) -> (i32, i32) {
     let (x0, x1) = design::GRID_X;
     let (y0, y1) = design::GRID_Y;
@@ -3186,25 +3190,6 @@ fn counted(n: usize, one: &str, many: &str) -> String {
     format!("{n} {}", if n == 1 { one } else { many })
 }
 
-fn draw_offense_list(frame: &mut Frame, book: &DesignBook, slide: &ui::Slide) {
-    let mut rows: Vec<(&str, String)> = Vec::new();
-    for (i, f) in book.offense.iter().enumerate() {
-        let n = book.plays_of(i).len();
-        rows.push((f.name.as_str(), counted(n, "PLAY", "PLAYS")));
-    }
-    if book.offense.len() < MAX_FORMATIONS {
-        rows.push(("NEW FORMATION", String::new()));
-    }
-    draw_option_screen(
-        frame,
-        "OFFENSE",
-        "TWO LINEMEN ON THE LINE, THE QUARTERBACK BEHIND THEM",
-        &rows,
-        slide,
-        "EACH FORMATION CARRIES ONE TO NINE PLAYS",
-        "[UP/DOWN] FORMATION   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
-    );
-}
 
 fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::Slide) {
     let plays = book.plays_of(fi).len();
@@ -3240,24 +3225,327 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
     );
 }
 
-fn draw_defense_list(frame: &mut Frame, book: &DesignBook, slide: &ui::Slide) {
-    let mut rows: Vec<(&str, String)> = Vec::new();
-    for (i, f) in book.defense.iter().enumerate() {
-        let n = book.calls_of(i).len();
-        rows.push((f.name.as_str(), counted(n, "CALL", "CALLS")));
+/// A formation or front as a picture: the grid, the line of scrimmage and the
+/// seven men on it with their job beside each one. It is the editor's own drawing
+/// made small, so the list can show what the name is over.
+#[allow(clippy::too_many_arguments)]
+fn draw_form_picture(
+    frame: &mut Frame,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    spots: &[Vec2; 7],
+    roles: &[u8; 7],
+    defense: bool,
+) {
+    ui::card(frame, x, y, w, h, ui::EDGE, 1.0);
+    let (l, t) = (x + 10, y + 12);
+    let (fw, fh) = (w - 20, h - 24);
+    frame.fill_rect(l, t, fw, fh, Rgb::hex(0x101C15));
+    let (gx0, gx1) = design::GRID_X;
+    let (gy0, gy1) = design::GRID_Y;
+    let map = |gx: f32, gy: f32| -> (i32, i32) {
+        let fx = ((gx - gx0 as f32) / (gx1 - gx0) as f32).clamp(0.0, 1.0);
+        let fy = ((gy - gy0 as f32) / (gy1 - gy0) as f32).clamp(0.0, 1.0);
+        (l + (fx * fw as f32) as i32, t + (fy * fh as f32) as i32)
+    };
+    for gx in (gx0..=gx1).step_by(4) {
+        let (px, _) = map(gx as f32, 0.0);
+        frame.fill_rect(px, t, 1, fh, Rgb::hex(0x1A2B20));
     }
-    if book.defense.len() < MAX_FORMATIONS {
-        rows.push(("NEW FRONT", String::new()));
+    for gy in (gy0..=gy1).step_by(4) {
+        let (_, py) = map(0.0, gy as f32);
+        frame.fill_rect(l, py, fw, 1, Rgb::hex(0x16261C));
     }
-    draw_option_screen(
+    let (los, _) = map(0.0, 0.0);
+    frame.fill_rect(los - 1, t, 3, fh, ui::EDGE);
+    // The names are placed as they are drawn: the picture is small, and four men
+    // on the line stand a yard apart, so a label that would sit on top of one
+    // already written goes to the other side of its man, or under him.
+    let mut used: Vec<(i32, i32, i32, i32)> = Vec::new();
+    for slot in 0..7 {
+        let (px, py) = map(spots[slot].x, spots[slot].y);
+        if defense {
+            cross(frame, px, py, 4, ui::PAPER);
+        } else {
+            disc(frame, px, py, 4, ui::PAPER);
+        }
+        let label = job_label(roles, slot, defense);
+        let lw = text_width(label, 1);
+        let mut at = (px + 8, py - 3);
+        for candidate in [
+            (px + 8, py - 4),
+            (px - 8 - lw, py - 4),
+            (px + 8, py + 10),
+            (px - 8 - lw, py + 10),
+        ] {
+            if label_fits(&used, candidate.0, candidate.1, lw) {
+                at = candidate;
+                break;
+            }
+        }
+        used.push((at.0, at.1, lw, LABEL_H));
+        frame.text_shadowed(at.0, at.1, label, 1, ui::MUTED, 1);
+    }
+}
+
+/// True when a label at `(x, y)` would not sit on a label already placed.
+fn label_fits(used: &[(i32, i32, i32, i32)], x: i32, y: i32, w: i32) -> bool {
+    !used.iter().any(|b| {
+        let (bx, by, bw, bh) = *b;
+        x < bx + bw && bx < x + w && y < by + bh && by < y + LABEL_H
+    })
+}
+
+/// The list of formations with the one under the bar drawn beside it: the name
+/// says what it is and the picture says where the men stand, so neither has to be
+/// guessed at from the other.
+fn draw_formations(
+    frame: &mut Frame,
+    book: &DesignBook,
+    defense: bool,
+    pick: usize,
+    slide: &ui::Slide,
+) {
+    night(frame);
+    let w = frame.w as i32;
+    let (title, cap, new_row) = if defense {
+        (
+            "DEFENSE",
+            "THE NAME AND THE FRONT IT STANDS IN",
+            "NEW FRONT",
+        )
+    } else {
+        (
+            "OFFENSE",
+            "THE NAME, AND THE FORMATION IT STANDS IN",
+            "NEW FORMATION",
+        )
+    };
+    ui::heading(frame, w / 2, 18, title, ui::T_BODY, ui::ACCENT);
+    ui::caption(
         frame,
-        "DEFENSE",
-        "STAND SEVEN MEN WHERE YOU WANT THEM",
-        &rows,
-        slide,
-        "EACH FRONT CARRIES ONE TO NINE CALLS",
-        "[UP/DOWN] FRONT   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+        w / 2 - ui::tracked_width(cap, ui::T_CAPTION, 1) / 2,
+        44,
+        cap,
+        dim(),
     );
+
+    let forms: Vec<(&str, String)> = if defense {
+        book.defense
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.as_str(), counted(book.calls_of(i).len(), "CALL", "CALLS")))
+            .collect()
+    } else {
+        book.offense
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (f.name.as_str(), counted(book.plays_of(i).len(), "PLAY", "PLAYS")))
+            .collect()
+    };
+    let x = 34;
+    let cw = 196;
+    let row_h = 22;
+    let gap = 4;
+    let rows = forms.len() + usize::from(forms.len() < MAX_FORMATIONS);
+    let card_h = rows.max(1) as i32 * (row_h + gap) - gap + ui::S3;
+    ui::card(frame, x - ui::S3, 64, cw + ui::S3 * 2, card_h, ui::ACCENT, 1.0);
+    for (i, (name, value)) in forms.iter().enumerate() {
+        ui::row(
+            frame,
+            x,
+            74 + i as i32 * (row_h + gap),
+            cw,
+            row_h,
+            name,
+            Some(value),
+            slide.heat(i),
+            ui::ACCENT,
+        );
+    }
+    if forms.len() < MAX_FORMATIONS {
+        ui::row(
+            frame,
+            x,
+            74 + forms.len() as i32 * (row_h + gap),
+            cw,
+            row_h,
+            new_row,
+            None,
+            slide.heat(forms.len()),
+            ui::ACCENT,
+        );
+    }
+
+    // The picture: the formation itself, or the shape a new one would start from.
+    let pick = pick.min(forms.len());
+    let (spots, roles, name, about) = if pick < forms.len() {
+        if defense {
+            let f = &book.defense[pick];
+            (
+                f.spots,
+                def_bits(&f.roles),
+                f.name.to_uppercase(),
+                forms[pick].1.clone(),
+            )
+        } else {
+            let f = &book.offense[pick];
+            (
+                f.spots,
+                off_bits(&f.roles),
+                f.name.to_uppercase(),
+                forms[pick].1.clone(),
+            )
+        }
+    } else if defense {
+        let f = DesignFront::blank(forms.len());
+        (
+            f.spots,
+            def_bits(&f.roles),
+            new_row.to_string(),
+            "A FOUR-MAN FRONT TO START FROM".to_string(),
+        )
+    } else {
+        let f = DesignFormation::blank(forms.len(), Formation::Pistol);
+        (
+            f.spots,
+            off_bits(&f.roles),
+            new_row.to_string(),
+            "A PISTOL SET TO START FROM".to_string(),
+        )
+    };
+    draw_form_picture(frame, 258, 64, 348, 186, &spots, &roles, defense);
+    centered(
+        frame,
+        260,
+        &format!("{name}  -  {about}"),
+        ui::T_CAPTION,
+        ui::PAPER,
+    );
+    footer(
+        frame,
+        "[UP/DOWN] FORMATION   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+    );
+}
+
+/// What opening a formation offers. The two drawings hang off one door each, so
+/// the formation and its plays are two roads out of the name rather than one
+/// screen behind the other.
+#[derive(Clone, Copy)]
+enum FormDoor {
+    Shape,
+    Plays,
+    Rename,
+    Delete,
+    Back,
+}
+
+/// The drop-down over the formation list: the two ways to draw it, and the two
+/// things that are about the name.
+fn draw_form_menu(
+    frame: &mut Frame,
+    book: &DesignBook,
+    defense: bool,
+    fi: usize,
+    pick: usize,
+    slide: &ui::Slide,
+) {
+    draw_formations(frame, book, defense, fi, &ui::Slide::new(fi));
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    frame.fill_rect_alpha(0, 0, w, h, ui::INK, 0.62);
+    let rows = [
+        "EDIT FORMATION",
+        if defense { "EDIT CALLS" } else { "EDIT PLAYS" },
+        "RENAME IT",
+        "DELETE IT",
+        "CLOSE",
+    ];
+    let row_h = 24;
+    let gap = 3;
+    let cw = 208;
+    let x = (w - cw) / 2;
+    let card_h = rows.len() as i32 * (row_h + gap) - gap + ui::S3 * 2;
+    let y = (h - card_h) / 2;
+    let name = if defense {
+        book.defense.get(fi).map(|f| f.name.clone())
+    } else {
+        book.offense.get(fi).map(|f| f.name.clone())
+    };
+    if let Some(name) = name {
+        centered(frame, y - 20, &name.to_uppercase(), ui::T_CAPTION, ui::PAPER);
+    }
+    ui::card(
+        frame,
+        x - ui::S3,
+        y,
+        cw + ui::S3 * 2,
+        card_h,
+        ui::ACCENT,
+        1.0,
+    );
+    for (i, label) in rows.iter().enumerate() {
+        ui::row(
+            frame,
+            x,
+            y + ui::S3 + i as i32 * (row_h + gap),
+            cw,
+            row_h,
+            label,
+            None,
+            slide.heat(i),
+            ui::ACCENT,
+        );
+    }
+    frame.fill_rect(0, h - 26, w, 26, ui::INK);
+    footer(frame, "[UP/DOWN] CHOOSE   [A] GO   [B] CLOSE");
+}
+
+/// The drop-down, held open until the player picks a door or closes it.
+fn form_menu(
+    view: &mut View,
+    pad: &mut Option<&mut Pad>,
+    book: &DesignBook,
+    defense: bool,
+    fi: usize,
+) -> Option<FormDoor> {
+    let mut pick = 0usize;
+    let mut nav = Repeat::default();
+    let mut slide = ui::Slide::new(0);
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        if input.pressed.b {
+            return Some(FormDoor::Back);
+        }
+        if let d = nav.step(input.stick.y, dt) {
+            if d != 0 {
+                pick = wrap(pick, 5, -d);
+            }
+        }
+        slide.step(pick, dt);
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_form_menu(&mut frame, book, defense, fi, pick, &slide);
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        if input.pressed.a {
+            return Some(match pick {
+                0 => FormDoor::Shape,
+                1 => FormDoor::Plays,
+                2 => FormDoor::Rename,
+                3 => FormDoor::Delete,
+                _ => FormDoor::Back,
+            });
+        }
+        beat();
+    }
 }
 
 fn draw_call_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::Slide) {
@@ -3500,22 +3788,44 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         if input.pressed.a {
             if sel < book.offense.len() {
-                let mut spots = book.offense[sel].spots;
-                let mut roles = off_bits(&book.offense[sel].roles);
-                spots_editor(
-                    view,
-                    pad,
-                    &format!("OFFENSE {}", sel + 1),
-                    &mut spots,
-                    &mut roles,
-                    false,
-                )?;
-                book.offense[sel].spots = spots;
-                book.offense[sel].roles = off_roles(&roles);
-                keep_book(&book);
-                play_list(view, pad, &mut book, sel)?;
+                match form_menu(view, pad, &book, false, sel)? {
+                    FormDoor::Shape => {
+                        let mut spots = book.offense[sel].spots;
+                        let mut roles = off_bits(&book.offense[sel].roles);
+                        spots_editor(
+                            view,
+                            pad,
+                            &book.offense[sel].name.to_uppercase(),
+                            &mut spots,
+                            &mut roles,
+                            false,
+                        )?;
+                        book.offense[sel].spots = spots;
+                        book.offense[sel].roles = off_roles(&roles);
+                        keep_book(&book);
+                    }
+                    FormDoor::Plays => play_list(view, pad, &mut book, sel)?,
+                    FormDoor::Rename => {
+                        let mut name = book.offense[sel].name.clone();
+                        name_something(view, pad, "FORMATION", &mut name)?;
+                        book.offense[sel].name = name;
+                        keep_book(&book);
+                    }
+                    FormDoor::Delete => {
+                        book.offense.remove(sel);
+                        book.plays.remove(sel);
+                        keep_book(&book);
+                        sel = sel.min(book.offense.len().saturating_sub(1));
+                    }
+                    FormDoor::Back => {}
+                }
             } else if book.offense.len() < MAX_FORMATIONS {
-                let f = DesignFormation::blank(book.offense.len(), Formation::Pistol);
+                // A new formation is named as it is made: the name is the first
+                // thing about it, before a man has been moved.
+                let mut f = DesignFormation::blank(book.offense.len(), Formation::Pistol);
+                let mut name = f.name.clone();
+                name_something(view, pad, "FORMATION", &mut name)?;
+                f.name = name;
                 let play = DesignPlay::blank(format!("{} 1", f.name));
                 book.offense.push(f);
                 book.plays.push(vec![play]);
@@ -3528,7 +3838,7 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         slide.step(sel, dt);
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_offense_list(&mut frame, &book, &slide);
+        draw_formations(&mut frame, &book, false, sel, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3650,22 +3960,42 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         if input.pressed.a {
             if sel < book.defense.len() {
-                let mut spots = book.defense[sel].spots;
-                let mut roles = def_bits(&book.defense[sel].roles);
-                spots_editor(
-                    view,
-                    pad,
-                    &format!("DEFENSE {}", sel + 1),
-                    &mut spots,
-                    &mut roles,
-                    true,
-                )?;
-                book.defense[sel].spots = spots;
-                book.defense[sel].roles = def_roles(&roles);
-                keep_book(&book);
-                call_list(view, pad, &mut book, sel)?;
+                match form_menu(view, pad, &book, true, sel)? {
+                    FormDoor::Shape => {
+                        let mut spots = book.defense[sel].spots;
+                        let mut roles = def_bits(&book.defense[sel].roles);
+                        spots_editor(
+                            view,
+                            pad,
+                            &book.defense[sel].name.to_uppercase(),
+                            &mut spots,
+                            &mut roles,
+                            true,
+                        )?;
+                        book.defense[sel].spots = spots;
+                        book.defense[sel].roles = def_roles(&roles);
+                        keep_book(&book);
+                    }
+                    FormDoor::Plays => call_list(view, pad, &mut book, sel)?,
+                    FormDoor::Rename => {
+                        let mut name = book.defense[sel].name.clone();
+                        name_something(view, pad, "FRONT", &mut name)?;
+                        book.defense[sel].name = name;
+                        keep_book(&book);
+                    }
+                    FormDoor::Delete => {
+                        book.defense.remove(sel);
+                        book.calls.remove(sel);
+                        keep_book(&book);
+                        sel = sel.min(book.defense.len().saturating_sub(1));
+                    }
+                    FormDoor::Back => {}
+                }
             } else if book.defense.len() < MAX_FORMATIONS {
-                let f = DesignFront::blank(book.defense.len());
+                let mut f = DesignFront::blank(book.defense.len());
+                let mut name = f.name.clone();
+                name_something(view, pad, "FRONT", &mut name)?;
+                f.name = name;
                 book.defense.push(f);
                 book.calls.push(vec![DesignCall::blank(
                     "COVER 1".to_string(),
@@ -3680,7 +4010,7 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         }
         slide.step(sel, dt);
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_defense_list(&mut frame, &book, &slide);
+        draw_formations(&mut frame, &book, true, sel, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -5427,6 +5757,38 @@ mod tests {
         );
     }
 
+    /// The formation list, the picture beside it and the doors off a formation,
+    /// so the branch can be looked at rather than argued about.
+    #[test]
+    fn the_formations_can_be_rendered_to_pictures() {
+        let book = DesignBook::from_built_in(Book::WestCoast);
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_formations(&mut frame, &book, false, 0, &ui::Slide::new(0));
+        // The picture is a picture: seven men are drawn on it, in the page's
+        // brightest ink, inside the box the field sits in.
+        let men = (60..250)
+            .flat_map(|y| (258..606).map(move |x| (x, y)))
+            .filter(|(x, y)| frame.get(*x, *y) == ui::PAPER)
+            .count();
+        assert!(men > 40, "the formation is not drawn: {men} pixels of men");
+        if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+            return;
+        }
+        let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+        let save = |name: &str, screen: &Frame| {
+            std::fs::create_dir_all(&dir).ok();
+            nopads_render::capture::write_png(&format!("{dir}/{name}.png"), screen)
+                .expect("write png");
+        };
+        save("formations_offense", &frame);
+        let mut def = Frame::new(UI_W, UI_H);
+        draw_formations(&mut def, &book, true, 0, &ui::Slide::new(0));
+        save("formations_defense", &def);
+        let mut menu = Frame::new(UI_W, UI_H);
+        draw_form_menu(&mut menu, &book, false, 1, 1, &ui::Slide::new(1));
+        save("formation_menu", &menu);
+    }
+
     /// The list of modes, one picture per entry, so the notes can be read rather
     /// than argued about.
     #[test]
@@ -5700,7 +6062,7 @@ mod tests {
         save("design_book_menu", &frame);
 
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_offense_list(&mut frame, &first, &slide);
+        draw_formations(&mut frame, &first, false, 0, &slide);
         save("design_offense", &frame);
 
         let mut frame = Frame::new(UI_W, UI_H);
@@ -5708,7 +6070,7 @@ mod tests {
         save("design_plays", &frame);
 
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_defense_list(&mut frame, &first, &slide);
+        draw_formations(&mut frame, &first, true, 0, &slide);
         save("design_defense", &frame);
 
         let mut frame = Frame::new(UI_W, UI_H);
