@@ -1654,6 +1654,43 @@ mod tests {
             Some(vec![Vec2::new(2.0, 0.0), Vec2::new(11.0, -2.0)]),
             "the drawn path is the run"
         );
+
+        // And it is his in the sim: the back is right beside him in the
+        // backfield, and the ball still goes to the man the drawing points at.
+        let teams = crate::team::league_teams();
+        let defs = crate::playbook::defensive_playbook();
+        let setup = crate::sim::SnapSetup {
+            los: 40.0,
+            ball_y: 0.0,
+            direction: 1,
+            down: 1,
+            to_go: 10.0,
+            seed: 7,
+            offense_team: 0,
+            defense_team: 1,
+            is_try: false,
+        };
+        let mut sim = crate::sim::PlaySim::new(&teams[0], &teams[1], &plays[0], &defs[0], &setup);
+        let mut guard = 0;
+        while !sim.is_snapped() && guard < 240 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        guard = 0;
+        while sim.carrier.is_none() && guard < 400 {
+            sim.step(1.0 / 60.0);
+            guard += 1;
+        }
+        assert_eq!(
+            sim.carrier,
+            Some(OffRole::Slot.index()),
+            "the tight end takes the handoff"
+        );
+        assert_ne!(
+            sim.ball.holder,
+            Some(OffRole::Back.index()),
+            "and the back never has it"
+        );
         clear();
     }
 

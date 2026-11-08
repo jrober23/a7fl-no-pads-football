@@ -1662,15 +1662,40 @@ impl<'a> PlaySim<'a> {
         // completed here rather than at the snap itself: a run play gives the ball
         // to the back on its own beat, while a play-action fake schedules one too
         // and the quarterback keeps it.
-        if self.carrier.is_none() && self.play.family.is_run() {
+        // A play action is not a handoff: the fake is sold and the ball is
+        // thrown, so only the run families mesh here.
+        let a_run = matches!(
+            self.play.family,
+            PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun
+        );
+        if self.carrier.is_none() && a_run {
             if let Some((idx, at)) = self.handoff {
-                if self.t >= at && !self.players[idx].down {
+                let hand = self.players[self.qb].pos;
+                let man = self.players[idx].pos;
+                // A handoff is two men meeting, not the ball moving on a timer.
+                // The man it is going to has to be behind the line and has to
+                // have actually got to the quarterback: a wide receiver sweeping
+                // across takes it as he crosses his face, and never while he is
+                // still standing out on the line of scrimmage.
+                let there = (man.x - self.los) * self.dirf() <= 0.0 && man.dist(hand) <= 3.5;
+                if self.t >= at && !self.players[idx].down && there {
                     self.carrier = Some(idx);
                     self.ball.holder = Some(idx);
                     let name = self.name_of(idx);
                     self.events.push(SimEvent {
                         t: self.t,
                         text: format!("{name} takes the handoff"),
+                    });
+                } else if self.t >= at + 2.0 {
+                    // He never came for it: the quarterback keeps the ball rather
+                    // than standing there holding a handoff nobody took.
+                    self.handoff = None;
+                    self.carrier = Some(self.qb);
+                    let name = self.name_of(idx);
+                    let qb_name = self.name_of(self.qb);
+                    self.events.push(SimEvent {
+                        t: self.t,
+                        text: format!("{qb_name} keeps it: {name} never came for the handoff"),
                     });
                 }
             }
@@ -1682,10 +1707,17 @@ impl<'a> PlaySim<'a> {
             let role = OffRole::ALL[self.players[i].role_index];
             let is_qb = role == OffRole::Qb;
             if is_qb && self.handoff.is_some() {
-                // Sell the fake and mesh with the back.
+                // Sell the fake and mesh with the man the ball is going to. A man
+                // coming round from wide is met where he crosses, not chased
+                // across the field: the quarterback stands his ground for him.
                 let (car, _) = self.handoff.unwrap();
-                let target = self.players[car].pos + Vec2::new(-self.dirf() * 0.9, 0.0);
-                let spd = self.speed_cap(i) * 0.5;
+                let me = self.players[i].pos;
+                let target = if me.dist(self.players[car].pos) < 8.0 {
+                    self.players[car].pos + Vec2::new(-self.dirf() * 0.9, 0.0)
+                } else {
+                    me
+                };
+                let spd = self.speed_cap(i) * 0.9;
                 self.steer(i, target, spd, dt);
                 continue;
             }
@@ -2227,7 +2259,26 @@ impl<'a> PlaySim<'a> {
 
     fn update_off_other(&mut self, i: usize, dt: f32) {
         let role = OffRole::ALL[self.players[i].role_index];
-        let assignment = self.play.assignment(role).cloned();
+        // A man the play is drawn for on a run runs that path before the ball is
+        // his: the handoff finds him on the move, so a jet sweep comes across the
+        // quarterback's face instead of drifting upfield waiting to be handed a
+        // ball he never went to get.
+        let assignment = match self.play.assignment(role) {
+            // Only on runs: on a play action the man with the ball drawn for him
+            // is running the fake, and how deep he goes is the play's business.
+            Some(Assign::Carry { .. })
+                if matches!(
+                    self.play.family,
+                    PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun
+                ) =>
+            {
+                Some(Assign::Route {
+                    points: Vec::new(),
+                    depth: 1,
+                })
+            }
+            other => other.cloned(),
+        };
         let p = self.players[i].pos;
         let dirf = self.dirf();
 
@@ -6188,8 +6239,10 @@ mod tests {
         let carrier = sim.carrier.expect("the handoff");
         let mut guard = 0;
         while sim.wrap.is_none() && sim.result.is_none() && guard < 400 {
-            // Just inside the tackle radius, and well outside an arm's length.
-            sim.players[7].pos = sim.players[carrier].pos + Vec2::new(TACKLE_RADIUS - 0.02, 0.0);
+            // Just inside the tackle radius, and well outside an arm's length. On
+            // his back side, so the runner's own stride does not carry him into
+            // the tackler between the hit and the frame it is measured on.
+            sim.players[7].pos = sim.players[carrier].pos - Vec2::new(TACKLE_RADIUS - 0.02, 0.0);
             sim.players[7].stun = 0.0;
             sim.players[7].down = false;
             sim.players[7].tackle_cooldown = 0.0;
@@ -6198,8 +6251,11 @@ mod tests {
         }
         assert!(sim.wrap.is_some(), "no tackle was attempted from the radius");
         let gap = sim.players[carrier].pos.dist(sim.players[7].pos);
+        // The runner is moving: between the hit and this frame he covers ground,
+        // so the bound allows a stride and no more. A snap to inside the man's
+        // body would still land under it.
         assert!(
-            (BODY_RADIUS * 2.0..=HOLD_DISTANCE + 0.05).contains(&gap),
+            (BODY_RADIUS * 2.0..=HOLD_DISTANCE + 0.2).contains(&gap),
             "the wrap started with the tackler {gap:.2} yards away: inside him, or a glide in"
         );
     }

@@ -3,7 +3,7 @@
 
 use nopads_core::math::Vec2;
 use nopads_core::playbook::{defensive_playbook, Assign, Formation, OffRole, Play, PlayFamily};
-use nopads_core::sim::{OptionChoice, PlaySim, QbControl, SnapSetup};
+use nopads_core::sim::{OptionChoice, PlaySim, QbControl, SnapSetup, SNAP_DELAY};
 use nopads_core::team::league_teams;
 
 fn setup(seed: u64) -> SnapSetup {
@@ -380,4 +380,78 @@ fn the_computer_gives_it_on_again_when_they_come_for_the_keeper() {
         "he gave it on rather than take the hit"
     );
     assert_ne!(sim.ball.holder, Some(sim.qb));
+}
+
+/// A jet sweep: the wide man is the one who carries, and his path brings him
+/// behind the quarterback rather than starting where he stands.
+#[test]
+fn a_jet_sweep_takes_the_ball_only_when_he_gets_behind_the_ball() {
+    let mut play = option_play();
+    play.name = "JET SWEEP";
+    play.family = PlayFamily::RunOutside;
+    let block = || Assign::RunBlock {
+        aim: Vec2::new(1.0, 0.0),
+        seal: false,
+    };
+    // Work the sweep off where he actually lines up, so it comes across the
+    // quarterback's face whichever side of the formation he is on.
+    let wing = play.alignment(OffRole::WideL);
+    play.assignments = vec![
+        (
+            OffRole::Qb,
+            Assign::PassBlock {
+                slide: 0.0,
+                max_depth: 1.0,
+            },
+        ),
+        (OffRole::Lg, block()),
+        (OffRole::Rg, block()),
+        (OffRole::Back, block()),
+        (OffRole::Slot, block()),
+        (OffRole::WideL, Assign::Carry {
+            points: vec![
+                Vec2::new(-3.0, -wing.y * 0.95),
+                Vec2::new(-2.0, -wing.y * 0.5),
+                Vec2::new(2.0, -wing.y * 0.1),
+            ],
+        }),
+        (OffRole::WideR, block()),
+    ];
+    let mut sim = to_the_ball_ai(play, 51);
+    let qb = man(&sim, OffRole::Qb);
+    let wide = man(&sim, OffRole::WideL);
+    // The beat the handoff used to be handed over on has gone by and he is still
+    // standing out on the line: the ball stays with the quarterback.
+    let mut guard = 0;
+    while sim.t < SNAP_DELAY + 0.7 && guard < 240 {
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert_eq!(
+        sim.ball.holder,
+        Some(qb),
+        "the ball is not beamed out to a man still on the line"
+    );
+    let qb_spot = sim.players[qb].pos;
+    // He comes round, and the ball changes hands when he is behind the line and
+    // has actually got to the quarterback.
+    let mut guard = 0;
+    while sim.ball.holder == Some(qb) && guard < 480 {
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert_eq!(
+        sim.ball.holder,
+        Some(wide),
+        "the sweep takes the handoff: t={:.2} wide={:?} qb={:?} behind={}",
+        sim.t,
+        sim.players[wide].pos,
+        sim.players[qb].pos,
+        sim.behind_the_line()
+    );
+    assert!(sim.behind_the_line(), "and he took it behind the line");
+    assert!(
+        sim.players[qb].pos.dist(qb_spot) < 2.5,
+        "the quarterback held his ground instead of chasing him across the field"
+    );
 }
