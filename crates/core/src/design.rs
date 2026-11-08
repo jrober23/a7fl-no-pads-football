@@ -484,6 +484,19 @@ impl DesignBook {
             for p in plays {
                 if !p.has_path() {
                     out.push(format!("{}: EVERY PLAY NEEDS A DRAWN PATH", p.name));
+                } else if p.family.is_run() && p.handoff == Handoff::Option {
+                    // The two men the option needs are the one keeping it and the
+                    // one taking the pitch: neither can be done without a path.
+                    let qb = f.roles.iter().position(|r| *r == OffRole::Qb);
+                    if qb.map(|s| p.path(s).is_empty()).unwrap_or(true) {
+                        out.push(format!("{}: AN OPTION NEEDS THE QB'S PATH", p.name));
+                    }
+                    if p.path(p.carrier).is_empty() {
+                        out.push(format!(
+                            "{}: THE MAN THE OPTION PITCHES TO NEEDS A PATH",
+                            p.name
+                        ));
+                    }
                 } else if p.family.is_run() && p.path(p.carrier).is_empty() {
                     // The paths are drawn, but not on the man taking the ball:
                     // the run would have nobody to hand it to.
@@ -893,6 +906,9 @@ fn design_play(
     p: &DesignPlay,
 ) -> Play {
     let pass = p.family.is_pass();
+    // An option is a run the quarterback owns: he keeps it at the mesh, and the
+    // man the play was drawn for runs his path as the man he can pitch it to.
+    let option_run = !pass && p.handoff == Handoff::Option;
     // The player's drop if he set one, the family's own if he left it alone.
     let drop = p.drop.yards().unwrap_or(match p.family {
         PlayFamily::QuickPass | PlayFamily::Screen => 3.0,
@@ -909,11 +925,16 @@ fn design_play(
             .map(|q| Vec2::new(q.x - spot.x, q.y - spot.y))
             .collect();
         match role {
+            // On an option the quarterback is the runner whatever the drawing
+            // says: his path is the keep, and the man pointed at is the pitch.
+            OffRole::Qb if option_run => {
+                assignments.push((role, Assign::QbCarry { points: rel }));
+            }
             // Whoever the player pointed at takes the ball: the handoff goes to
             // the man, not to the job he is wearing, so the tight end standing in
             // the backfield carries it exactly as the back does, and a picked
             // quarterback keeps it.
-            _ if !pass && slot == p.carrier && !drawn.is_empty() => {
+            _ if !pass && !option_run && slot == p.carrier && !drawn.is_empty() => {
                 if role == OffRole::Qb {
                     assignments.push((role, Assign::QbCarry { points: rel }));
                 } else {
@@ -1115,6 +1136,7 @@ fn handoff_name(h: Handoff) -> &'static str {
         Handoff::Inside => "inside",
         Handoff::Lateral => "lateral",
         Handoff::Fake => "fake",
+        Handoff::Option => "option",
     }
 }
 
@@ -1125,6 +1147,7 @@ fn parse_handoff(s: &str) -> Option<Handoff> {
         "inside" => Handoff::Inside,
         "lateral" => Handoff::Lateral,
         "fake" => Handoff::Fake,
+        "option" => Handoff::Option,
         _ => return None,
     })
 }

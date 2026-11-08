@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.100-windows-x86_64.zip` from the
+Grab `7on7-v0.25.101-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -264,9 +264,13 @@ going for the pick.
   What kind of give it is, the designer sets, and it changes the play: **FORWARD**
   hands it in front of the runner, **INSIDE** hands it back and across the
   quarterback's face, **OUTSIDE** is a toss that can be made with the runner
-  already level with the ball, and **FAKE** is sold and kept — the runner runs his
+  already level with the ball, **FAKE** is sold and kept — the runner runs his
   path as a decoy and the quarterback keeps it, so a run becomes a bootleg and a
-  pass becomes a play action. On a pass the same screen sets the drop: **3 STEP**,
+  pass becomes a play action — and **OPTION** is the read give: the quarterback
+  keeps it at the mesh and the man the play was drawn for runs his path as the
+  pitch, so whoever is behind the ball is on a face button until the line is
+  crossed and the decision is the player's. An option needs both paths drawn,
+  the quarterback's keep and the pitch man's route. On a pass the same screen sets the drop: **3 STEP**,
   **5 STEP** or **7 STEP**, and the routes have that many steps' worth of time to
   get open. Left trigger cycles the handoff, left bumper the drop, and the line
   under the play's name says which one is set.

@@ -532,3 +532,31 @@ fn the_handoff_is_a_meeting_and_the_buttons_are_the_pitch() {
         "the man behind him is on one: {targets:?}"
     );
 }
+
+/// The option as the designer makes it: a run with the read give, so the ball
+/// stays with the quarterback at the snap and the drawn man is on a button.
+#[test]
+fn a_designed_option_keeps_it_and_pitches_back_to_the_drawn_man() {
+    let mut play = option_play();
+    play.name = "DRAWN OPTION";
+    play.family = PlayFamily::RunInside;
+    play.handoff = Handoff::Option;
+    let mut sim = to_the_ball_with(play, 26);
+    let qb = man(&sim, OffRole::Qb);
+    let back = man(&sim, OffRole::Back);
+    assert_eq!(sim.ball.holder, Some(qb), "an option is never handed over");
+    assert_eq!(sim.carrier, Some(qb), "the quarterback is the runner");
+    assert!(
+        sim.pitch_targets().iter().any(|(_, i)| *i == back),
+        "the drawn man is on a button: {:?}",
+        sim.pitch_targets()
+    );
+    let mut guard = 0;
+    while sim.players[back].pos.x > sim.players[qb].pos.x && guard < 60 {
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert!(sim.pitch(back), "the pitch goes to him");
+    assert_eq!(sim.ball.holder, Some(back), "and he has the ball");
+    assert_eq!(sim.carrier, Some(back), "he is the runner now");
+}

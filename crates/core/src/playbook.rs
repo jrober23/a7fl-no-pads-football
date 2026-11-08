@@ -303,12 +303,16 @@ pub enum Handoff {
     /// Sold and kept: the runner runs his path as a decoy and the quarterback
     /// never gives it up.
     Fake,
+    /// The read give: the quarterback keeps at the mesh and pitches back to the
+    /// man the play was drawn for, or keeps it himself. Whoever is behind the
+    /// ball is on a button until the line is crossed.
+    Option,
 }
 
 impl Handoff {
     /// True when the ball actually changes hands.
     pub fn gives_it(self) -> bool {
-        !matches!(self, Handoff::Fake)
+        !matches!(self, Handoff::Fake | Handoff::Option)
     }
 
     pub fn label(self) -> &'static str {
@@ -318,6 +322,7 @@ impl Handoff {
             Handoff::Inside => "INSIDE",
             Handoff::Lateral => "OUTSIDE",
             Handoff::Fake => "FAKE",
+            Handoff::Option => "OPTION",
         }
     }
 
@@ -328,7 +333,8 @@ impl Handoff {
             Handoff::Forward => Handoff::Inside,
             Handoff::Inside => Handoff::Lateral,
             Handoff::Lateral => Handoff::Fake,
-            Handoff::Fake => Handoff::Plain,
+            Handoff::Fake => Handoff::Option,
+            Handoff::Option => Handoff::Plain,
         }
     }
 }

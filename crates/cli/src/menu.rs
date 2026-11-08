@@ -2841,18 +2841,25 @@ fn play_editor(
         }
         let role = form.roles[sel];
         let drawn = play.has_path();
+        let qb = form.roles.iter().position(|r| *r == OffRole::Qb);
+        let option = !play.family.is_pass() && play.handoff == Handoff::Option;
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, false);
+        // On an option the ball is the quarterback's: he keeps it, and the man
+        // the play was drawn for is the one the pitch goes to.
         let ball = if play.family.is_pass() {
             None
+        } else if option {
+            qb.or(Some(play.carrier))
         } else {
             Some(play.carrier)
         };
         draw_routes(&mut frame, &form.spots, &play.routes, sel, ball);
         draw_men(&mut frame, &form.spots, &bits, None, false);
-        if ball.is_some() {
-            draw_ball(&mut frame, &form.spots, play.carrier);
-            draw_pitch_tags(&mut frame, &form.spots, &play.routes, play.carrier);
+        if let Some(ball) = ball {
+            draw_ball(&mut frame, &form.spots, ball);
+            let tag = if option { play.carrier } else { ball };
+            draw_pitch_tags(&mut frame, &form.spots, &play.routes, tag);
         }
         if let Some(p) = play.routes[sel].last() {
             let a = field_px(p.x, p.y);
@@ -2871,6 +2878,8 @@ fn play_editor(
                 if play.family.is_pass() { "PASS" } else { "RUN" },
                 if play.family.is_pass() {
                     format!("DROP {}", play.drop.label())
+                } else if play.handoff == Handoff::Option {
+                    "OPTION: QB KEEPS AND PITCHES".to_string()
                 } else {
                     format!("HANDOFF {}", play.handoff.label())
                 },
@@ -2893,6 +2902,27 @@ fn play_editor(
                 320,
                 FIELD_B + 10,
                 "EVERY YARD YOU DRAW IS A WAYPOINT: THE ROUTE STARTS AT HIS FEET",
+                1,
+                dim(),
+            ),
+            (true, false) if option && qb.map(|s| play.path(s).is_empty()).unwrap_or(true) => {
+                centered_in(
+                    &mut frame,
+                    320,
+                    FIELD_B + 10,
+                    "AN OPTION NEEDS THE QB'S PATH: [X] TO THE QB, THEN DRAW IT",
+                    1,
+                    ui::DANGER,
+                )
+            }
+            (true, false) if option => centered_in(
+                &mut frame,
+                320,
+                FIELD_B + 10,
+                &format!(
+                    "OPTION: THE QB KEEPS AND PITCHES TO {} - A PATH IS A PITCH",
+                    play.carrier_role(form).label()
+                ),
                 1,
                 dim(),
             ),
@@ -3308,6 +3338,12 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
             p.name.as_str(),
             if p.family.is_pass() {
                 format!("PASS - {} - {} WAYPOINTS", p.drop.label(), ways)
+            } else if p.handoff == Handoff::Option {
+                format!(
+                    "OPTION - QB KEEPS - PITCH TO {} - {} WAYPOINTS",
+                    p.carrier_role(&book.offense[fi]).label(),
+                    ways
+                )
             } else {
                 // Whose ball it is, by the job he is wearing: a run to the tight
                 // end standing in the backfield says TE here, not RB.
