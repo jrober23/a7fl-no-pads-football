@@ -289,13 +289,12 @@ impl Assign {
 /// action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Handoff {
-    /// The plain exchange, the one every drawn play had before there was a
-    /// choice: the ball changes hands at the mesh.
-    #[default]
-    Plain,
     /// Handed forward, in front of the runner, behind the line.
     Forward,
     /// Handed back and inside, the runner coming across the quarterback's face.
+    /// This is the plain exchange a drawn play starts as: the ball changes hands
+    /// at the mesh, so there is no separate plain handoff to choose.
+    #[default]
     Inside,
     /// Tossed out behind the runner on a sweep. The only one that can be made
     /// with the runner level with the ball.
@@ -317,7 +316,6 @@ impl Handoff {
 
     pub fn label(self) -> &'static str {
         match self {
-            Handoff::Plain => "PLAIN",
             Handoff::Forward => "FORWARD",
             Handoff::Inside => "INSIDE",
             Handoff::Lateral => "OUTSIDE",
@@ -329,12 +327,11 @@ impl Handoff {
     /// The next kind across, for the editor's button.
     pub fn next(self) -> Handoff {
         match self {
-            Handoff::Plain => Handoff::Forward,
             Handoff::Forward => Handoff::Inside,
             Handoff::Inside => Handoff::Lateral,
             Handoff::Lateral => Handoff::Fake,
             Handoff::Fake => Handoff::Option,
-            Handoff::Option => Handoff::Plain,
+            Handoff::Option => Handoff::Forward,
         }
     }
 }
@@ -480,7 +477,7 @@ fn play(
         family,
         formation,
         drop,
-        handoff: Handoff::Plain,
+        handoff: Handoff::Inside,
         run_side,
         flip: false,
         assignments: assignments.to_vec(),

@@ -1145,6 +1145,26 @@ impl<'a> PlaySim<'a> {
             .unwrap_or(0)
     }
 
+    /// Which way the ball is going, taken off the runner's own drawn path.
+    ///
+    /// Negative or positive is a sideline, zero is dead straight at the line.
+    /// The quarterback uses it to take his side of the runner before giving the
+    /// ball up: a give runs the runner's way, never across him.
+    fn runner_side(&self, car: usize) -> f32 {
+        // Where the run ends up, not where it starts from: a man lined up at the
+        // ball and sent straight has no side, one drawn away from the ball has
+        // the side he was drawn to, whether his path is one point or several.
+        let drift = match self.players[car].route.last() {
+            Some(last) => last.y - self.setup.ball_y,
+            None => 0.0,
+        };
+        if drift.abs() < 1.0 {
+            0.0
+        } else {
+            drift.signum()
+        }
+    }
+
     fn setup_handoff(&mut self) {
         let carrier_role = self.play.carrier_role();
         self.possession_start = Some(0);
@@ -1688,7 +1708,13 @@ impl<'a> PlaySim<'a> {
                 let reach = if kind == Handoff::Lateral { 3.5 } else { 3.0 };
                 let legal = kind == Handoff::Lateral
                     || (man.x - self.los) * self.dirf() <= 0.0;
-                let there = man.dist(hand) <= reach;
+                // The ball goes the runner's way: a quarterback standing on the
+                // far side of him would be handing it back across him, against
+                // the run. He steps round to the runner's inside and gives it
+                // from there, so the ball travels the way the play does.
+                let side = self.runner_side(idx);
+                let across_him = side != 0.0 && (hand.y - man.y) * side > 0.8;
+                let there = man.dist(hand) <= reach && !across_him;
                 if self.t >= at && !self.players[idx].down && legal && there {
                     self.carrier = Some(idx);
                     self.ball.holder = Some(idx);
@@ -1738,7 +1764,12 @@ impl<'a> PlaySim<'a> {
                         self.players[i].waypoint += 1;
                     }
                 } else if self.players[i].pos.dist(self.players[car].pos) < 8.0 {
-                    let target = self.players[car].pos + Vec2::new(-self.dirf() * 0.9, 0.0);
+                    // The meeting point is on the runner's inside, not straight
+                    // behind him: a back sweeping left is handed the ball from
+                    // his right, so the give runs left with him.
+                    let side = self.runner_side(car);
+                    let target = self.players[car].pos
+                        + Vec2::new(-self.dirf() * 0.9, -side * 0.7);
                     self.steer(i, target, self.speed_cap(i) * 0.9, dt);
                 }
                 continue;

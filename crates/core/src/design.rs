@@ -184,7 +184,7 @@ impl DesignPlay {
             family: PlayFamily::QuickPass,
             routes: Default::default(),
             carrier: OffRole::Back.index(),
-            handoff: Handoff::Plain,
+            handoff: Handoff::Inside,
             drop: Drop::None,
         }
     }
@@ -216,7 +216,7 @@ impl DesignPlay {
             family: p.family,
             routes,
             carrier,
-            handoff: Handoff::Plain,
+            handoff: Handoff::Inside,
             drop: Drop::None,
         }
     }
@@ -1131,7 +1131,6 @@ fn family_name(f: PlayFamily) -> &'static str {
 
 fn handoff_name(h: Handoff) -> &'static str {
     match h {
-        Handoff::Plain => "plain",
         Handoff::Forward => "forward",
         Handoff::Inside => "inside",
         Handoff::Lateral => "lateral",
@@ -1142,7 +1141,9 @@ fn handoff_name(h: Handoff) -> &'static str {
 
 fn parse_handoff(s: &str) -> Option<Handoff> {
     Some(match s {
-        "plain" => Handoff::Plain,
+        // A book drawn before the plain exchange was folded into the inside
+        // handoff still loads: it was the ball changing hands at the mesh.
+        "plain" => Handoff::Inside,
         "forward" => Handoff::Forward,
         "inside" => Handoff::Inside,
         "lateral" => Handoff::Lateral,
@@ -1578,7 +1579,7 @@ pub fn parse(text: &str) {
                             family,
                             routes: drawn,
                             carrier: OffRole::Back.index(),
-                            handoff: Handoff::Plain,
+                            handoff: Handoff::Inside,
                             drop: Drop::None,
                         });
                     }

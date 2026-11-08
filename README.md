@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.105-windows-x86_64.zip` from the
+Grab `7on7-v0.25.106-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -253,7 +253,10 @@ going for the pick.
   can come out of the catcher's hands. The ball is handed over by the two men
   meeting, not by a button: the quarterback runs his own drawn path — his start,
   and the line he takes to the mesh — and gives it up as soon as he and the man
-  the play was drawn for get to each other. Draw the quarterback a path that
+  the play was drawn for get to each other. The give goes the runner's way: he
+  takes the runner's inside first, so a back sweeping left is handed the ball
+  from his right and the ball travels left with him — he steps round rather than
+  hand it back across the runner, against the run. Draw the quarterback a path that
   crosses the runner's and that crossing is where the handoff happens; leave him
   no path and he stands and waits for the runner to come to him. Whoever has it
   can give it on while he is still behind the line, so a back who takes the first
@@ -264,7 +267,7 @@ going for the pick.
 
   What kind of give it is, the designer sets, and it changes the play: **FORWARD**
   hands it in front of the runner, **INSIDE** hands it back and across the
-  quarterback's face, **OUTSIDE** is a toss that can be made with the runner
+  quarterback's face and is the plain exchange every play starts as, **OUTSIDE** is a toss that can be made with the runner
   already level with the ball, **FAKE** is sold and kept — the runner runs his
   path as a decoy and the quarterback keeps it, so a run becomes a bootleg and a
   pass becomes a play action — and **OPTION** is the read give: the quarterback

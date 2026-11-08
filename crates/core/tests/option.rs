@@ -32,7 +32,7 @@ fn option_play() -> Play {
         family: PlayFamily::QbRun,
         formation: Formation::Pistol,
         drop: 0.0,
-        handoff: Handoff::Plain,
+        handoff: Handoff::Inside,
         run_side: 1,
         flip: false,
         assignments: vec![
