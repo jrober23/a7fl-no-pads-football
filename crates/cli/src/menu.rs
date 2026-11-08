@@ -97,6 +97,51 @@ pub enum DrillKind {
 }
 
 /// What the player asked the front end for.
+/// A play the designer has just drawn and wants to see run: which book on the
+/// shelf, which formation in it, and where the play sits in the book's call
+/// sheet -- the index the game counts plays by.
+#[derive(Clone, Copy, Debug)]
+pub struct PlayTest {
+    pub slot: usize,
+    pub formation: usize,
+    pub play: usize,
+}
+
+/// The play the designer has asked to see run.
+///
+/// The front end does not own the view or the pad while a screen is up, so it
+/// cannot start a snap itself: the editor leaves the request here and unwinds
+/// to the top of the menu, which hands it to the game. The game runs the play
+/// and hands the front end back at the list the request came from.
+static TEST_REQUEST: std::sync::Mutex<Option<PlayTest>> = std::sync::Mutex::new(None);
+
+fn request_test(at: PlayTest) {
+    if let Ok(mut held) = TEST_REQUEST.lock() {
+        *held = Some(at);
+    }
+}
+
+fn take_request() -> Option<PlayTest> {
+    TEST_REQUEST.lock().ok().and_then(|mut held| held.take())
+}
+
+/// The field a designed play is tried on: a practice session running the book
+/// it was drawn for, so it is the player's own play and not the league's. The
+/// clubs are the league's first two and the ground is the practice field, the
+/// same as every other drill.
+fn test_kickoff(at: &PlayTest) -> Kickoff {
+    let theirs = usize::from(clubs().len() > 1);
+    Kickoff {
+        yours: 0,
+        theirs,
+        player_home: true,
+        kits: [true, false],
+        receive: true,
+        venue: 0,
+        book: Book::Custom(at.slot as u8),
+    }
+}
+
 pub enum Front {
     /// One exhibition game.
     Friendly(Kickoff),
@@ -106,6 +151,9 @@ pub enum Front {
     /// the same clubs and the same book the game would have been played with, and
     /// the difficulty it was told to play against.
     Drill(DrillKind, Kickoff, usize),
+    /// A play the designer has just drawn, run on the practice field with the
+    /// book he drew it for: one snap, called for him, and then back to the list.
+    Test(Box<Kickoff>, PlayTest),
 }
 
 /// What the player picked under GAME MODES: a game, a season of them, or one of
@@ -134,9 +182,45 @@ pub fn run(
     settings: &mut Settings,
     splash: bool,
 ) -> Option<Front> {
+    run_from(view, pad, settings, splash, None)
+}
+
+/// Run the front end, opening on the play list a tried play came out of.
+///
+/// A play tried from the desk is not a game the player came to the front end
+/// for: he lands back where he was drawing it, one press from the next one.
+pub fn run_from(
+    view: &mut View,
+    pad: Option<&mut Pad>,
+    settings: &mut Settings,
+    splash: bool,
+    resume: Option<PlayTest>,
+) -> Option<Front> {
     let mut pad = pad;
     if splash {
         splash_screen(view, &mut pad)?;
+    }
+    if let Some(at) = resume {
+        design::select(at.slot);
+        // The list the play came off, then the doors behind it, so B walks back
+        // out the way he came in rather than dropping him on the title screen.
+        let back = (|| {
+            let mut book = design::book()?;
+            if at.formation < book.plays.len() {
+                play_list(view, &mut pad, &mut book, at.formation, at.play)?;
+            }
+            offense_list(view, &mut pad)?;
+            book_menu(view, &mut pad, at.slot)?;
+            design_hub(view, &mut pad)?;
+            Some(())
+        })();
+        if back.is_none() {
+            if let Some(at) = take_request() {
+                return Some(Front::Test(Box::new(test_kickoff(&at)), at));
+            }
+            // The book is gone, or the window is: the loop below finds out
+            // which, rather than taking the design down with it.
+        }
     }
     loop {
         match start_screen(view, &mut pad, settings)? {
@@ -164,7 +248,13 @@ pub fn run(
                 roster_grid(view, &mut pad)?;
             }
             Start::Customize => {
-                customize_screen(view, &mut pad)?;
+                let drawn = customize_screen(view, &mut pad);
+                // A play asked for from the editor leaves the desk through none
+                // of its own doors: it is handed to the game instead.
+                if let Some(at) = take_request() {
+                    return Some(Front::Test(Box::new(test_kickoff(&at)), at));
+                }
+                drawn?;
             }
             Start::Settings => {
                 settings_screen(view, &mut pad, settings)?;
@@ -2661,7 +2751,7 @@ fn play_editor(
     pad: &mut Option<&mut Pad>,
     form: &DesignFormation,
     play: &mut DesignPlay,
-) -> Option<()> {
+) -> Option<bool> {
     let bits = off_bits(&form.roles);
     let mut sel = 0usize;
     let mut cursor = (form.spots[0].x as i8, form.spots[0].y as i8);
@@ -2676,7 +2766,12 @@ fn play_editor(
         last = now;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.b {
-            return Some(());
+            return Some(false);
+        }
+        // Straight out to the field. What he has just drawn is saved on the way,
+        // so the snap he is about to watch is the one under his pen.
+        if input.pressed.throw {
+            return Some(true);
         }
         let mut moved = false;
         if let d = nav_x.step(input.stick.x, dt) {
@@ -2826,7 +2921,7 @@ fn play_editor(
         }
         footer(
             &mut frame,
-            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [LB] DROP  [LT] HANDOFF",
+            "[STICK] DRAW  [A] PEN  [RT] RUN IT  [X] MAN  [Y] PASS/RUN  [RB] WHO RUNS  [LB] DROP  [LT] HANDOFF",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -3235,7 +3330,7 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         &rows,
         slide,
         "ON A RUN THE MAN NAMED TAKES THE BALL; A PASS'S PATHS ARE THE ROUTES",
-        "[UP/DOWN] PLAY   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
+        "[UP/DOWN] PLAY   [A] OPEN   [RT] RUN IT   [Y] RENAME   [X] DELETE   [B] BACK",
     );
 }
 
@@ -3818,7 +3913,7 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
                         book.offense[sel].roles = off_roles(&roles);
                         keep_book(&book);
                     }
-                    FormDoor::Plays => play_list(view, pad, &mut book, sel)?,
+                    FormDoor::Plays => play_list(view, pad, &mut book, sel, 0)?,
                     FormDoor::Rename => {
                         let mut name = book.offense[sel].name.clone();
                         name_something(view, pad, "FORMATION", &mut name)?;
@@ -3860,13 +3955,27 @@ fn offense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
     }
 }
 
+/// Where a play sits in its book's call sheet: the formations in the order the
+/// book lists them, each one's plays behind it. It is the index the game is
+/// handed to call a play with, so it has to be the one the game counts to.
+fn call_sheet_index(book: &DesignBook, fi: usize, sel: usize) -> Option<usize> {
+    if fi >= book.offense.len() || sel >= book.plays_of(fi).len() {
+        return None;
+    }
+    let before: usize = (0..fi).map(|i| book.plays_of(i).len()).sum();
+    Some(before + sel)
+}
+
+/// The plays of one formation, and the two ways out of the list: open one to
+/// draw it, or ask to see it run.
 fn play_list(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     book: &mut DesignBook,
     fi: usize,
+    start: usize,
 ) -> Option<()> {
-    let mut sel = 0usize;
+    let mut sel = start.min(book.plays_of(fi).len().saturating_sub(1));
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
@@ -3903,6 +4012,13 @@ fn play_list(
             last = Instant::now();
             continue;
         }
+        if input.pressed.throw && sel < plays {
+            // A play in the list is a thing to watch as well as a thing to open.
+            if let (Some(slot), Some(at)) = (design::current(), call_sheet_index(book, fi, sel)) {
+                request_test(PlayTest { slot, formation: fi, play: at });
+                return None;
+            }
+        }
         if input.pressed.a {
             if sel >= plays {
                 if plays >= MAX_PLAYS {
@@ -3914,9 +4030,23 @@ fn play_list(
             }
             let form = book.offense[fi].clone();
             let mut play = book.plays[fi][sel].clone();
-            play_editor(view, pad, &form, &mut play)?;
+            let drawn = play_editor(view, pad, &form, &mut play);
+            // Saved first, whatever he does with it: the snap that is about to
+            // be run is the one he has just drawn.
             book.plays[fi][sel] = play;
             keep_book(book);
+            match drawn {
+                None => return None,
+                Some(true) => {
+                    if let (Some(slot), Some(at)) =
+                        (design::current(), call_sheet_index(book, fi, sel))
+                    {
+                        request_test(PlayTest { slot, formation: fi, play: at });
+                    }
+                    return None;
+                }
+                Some(false) => {}
+            }
             view.reset();
             last = Instant::now();
             continue;
@@ -5970,6 +6100,27 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn a_designed_play_is_tried_where_the_call_sheet_has_it() {
+        let _held = shelf_lock();
+        design::clear();
+        // A play in each of two formations: the second one is the case that
+        // matters, because the game counts plays across the whole book rather
+        // than formation by formation.
+        let mut book = DesignBook::blank();
+        book.plays[0][0].name = "FIRST".to_string();
+        book.plays[1].push(DesignPlay::blank("SECOND".to_string()));
+        let last = book.offense.len() - 1;
+        let sel = book.plays_of(last).len() - 1;
+        let at = call_sheet_index(&book, last, sel).expect("the play just drawn");
+        assert_eq!(at, book.plays_of(0).len() + sel);
+        let slot = design::add(book);
+        let plays = design::offense_plays_at(slot);
+        assert_eq!(plays[at].name, "SECOND", "the call-sheet index names the play");
+        assert_eq!(design::current(), Some(slot));
+        design::clear();
     }
 
     #[test]

@@ -900,11 +900,21 @@ fn cmd_arcade(args: &[String]) {
         println!("Starting in a moment.");
         std::thread::sleep(std::time::Duration::from_millis(900));
     } else {
+        // Where the front end comes back to after a play has been tried: the
+        // list it was drawn in, rather than the title screen.
+        let mut resume: Option<menu::PlayTest> = None;
         loop {
         // What the player has made is part of the league: it is read before the
         // first menu, so a created club is on every picker from the start.
         menu::load_custom();
-        match menu::run(&mut view, pad.as_mut(), &mut settings, true) {
+        let splash = resume.is_none();
+        match menu::run_from(
+            &mut view,
+            pad.as_mut(),
+            &mut settings,
+            splash,
+            resume.take(),
+        ) {
             Some(menu::Front::Friendly(kick)) => {
                 let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed, false);
                 view = v;
@@ -915,9 +925,27 @@ fn cmd_arcade(args: &[String]) {
                 // A drill hands the view back when the player leaves it, and the
                 // front end is where they land: the modes are a place to come
                 // back to, not a game to finish.
-                let (v, p) = play_drill(view, pad, &settings, kind, &kick, difficulty, seed);
+                let (v, p) = play_drill(view, pad, &settings, kind, &kick, difficulty, seed, None);
                 view = v;
                 pad = p;
+            }
+            Some(menu::Front::Test(kick, at)) => {
+                // One snap of the play he has just drawn, on the practice field,
+                // and then straight back to the desk he drew it at.
+                let difficulty = settings.difficulty;
+                let (v, p) = play_drill(
+                    view,
+                    pad,
+                    &settings,
+                    menu::DrillKind::Practice(menu::Track::Offense),
+                    &kick,
+                    difficulty,
+                    seed,
+                    Some(at.play),
+                );
+                view = v;
+                pad = p;
+                resume = Some(at);
             }
             Some(menu::Front::Season(mut season)) => {
                 // A season is a string of games: play the player's, simulate
@@ -1027,6 +1055,7 @@ fn play_drill(
     kick: &menu::Kickoff,
     difficulty: usize,
     seed: u64,
+    start_play: Option<usize>,
 ) -> (view::View, Option<pad::Pad>) {
     let mode = match kind {
         menu::DrillKind::Tutorial(_) => arcade::Mode::Tutorial,
@@ -1058,6 +1087,11 @@ fn play_drill(
         .with_contain(difficulty != 0)
         // The toss is shared: whoever won it brings the first one back.
         .with_first_return(if kick.receive { 0 } else { 1 });
+    if let Some(play) = start_play {
+        // A designed play is called for him: the first thing he sees is the play
+        // he drew running, not the sheet he would call it from.
+        arcade = arcade.with_start_play(play);
+    }
     arcade.run();
     arcade.into_parts()
 }

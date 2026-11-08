@@ -328,6 +328,9 @@ pub struct Arcade {
     contain: bool,
     /// Who gets the first return in the gauntlet, from the opening toss.
     first_return: usize,
+    /// A play the session opens on, called for the player: the one he has just
+    /// drawn, run before the call sheet is ever shown.
+    start_call: Option<usize>,
 }
 
 /// What the player asked for at the final whistle.
@@ -381,6 +384,7 @@ impl Arcade {
             teaching: Track::Offense,
             contain: true,
             first_return: 0,
+            start_call: None,
             game,
             pad,
             view,
@@ -475,6 +479,13 @@ impl Arcade {
     /// Which club gets the first return of the gauntlet, from the opening toss.
     pub fn with_first_return(mut self, side: usize) -> Self {
         self.first_return = side.min(1);
+        self
+    }
+
+    /// Open the session on a play already called: a designed play is run the
+    /// moment it is asked for, rather than after a walk through the sheet.
+    pub fn with_start_play(mut self, play: usize) -> Self {
+        self.start_call = Some(play);
         self
     }
 
@@ -689,7 +700,14 @@ impl Arcade {
                     return;
                 }
             }
-            let Some(play) = self.call_sheet() else {
+            // A tested play is called for him; anything else comes off the sheet.
+            let auto = self.start_call.take();
+            let tested = auto.is_some();
+            let called = auto.and_then(|i| self.book.get(i).cloned());
+            let Some(play) = (match called {
+                Some(play) => Some(play),
+                None => self.call_sheet(),
+            }) else {
                 return;
             };
             let dir = 1i8;
@@ -747,13 +765,14 @@ impl Arcade {
             let Some(result) = sim.result.clone() else {
                 continue;
             };
-            let mut card = vec![
-                self.drill_header(),
-                String::new(),
-                format!("  {}", result.description.to_uppercase()),
-                String::new(),
-                format!("  {:.0} YARDS ON THE PLAY", result.yards),
-            ];
+            let mut card = vec![self.drill_header()];
+            if tested {
+                card.push(format!("  TESTING {}", play.name.to_uppercase()));
+            }
+            card.push(String::new());
+            card.push(format!("  {}", result.description.to_uppercase()));
+            card.push(String::new());
+            card.push(format!("  {:.0} YARDS ON THE PLAY", result.yards));
             if tutorial && tutorial_met(self.drill_step, result.outcome, result.touchdown) {
                 self.drill_step += 1;
                 card.push(String::new());
