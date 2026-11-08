@@ -3577,24 +3577,56 @@ fn choose_sides(
     })
 }
 
-/// Every book a side can take into a game: the player's own shelf and then the
+/// Every book the picker lists: the whole shelf, finished or not, and then the
 /// league's.
 fn selectable_books() -> Vec<Book> {
-    // The player's own books first: the shelf is what he came to this screen to
-    // run, and a book listed under seven league ones is a book he has to go
-    // looking for. Each legal book is its own entry; the league's follow it.
-    let mut out: Vec<Book> = Vec::new();
-    for (i, book) in nopads_core::design::shelf().iter().enumerate() {
-        if book.is_legal() {
-            out.push(Book::Custom(i as u8));
-        }
-    }
+    // Every book on the shelf, not only the finished ones. A book the player has
+    // half drawn is still his book, and a picker that hides it is a picker that
+    // tells him it does not exist; an unfinished one is listed with what it is
+    // missing and simply cannot be taken until it is done.
+    let mut out: Vec<Book> = (0..nopads_core::design::count())
+        .map(|i| Book::Custom(i as u8))
+        .collect();
     out.extend(Book::ALL);
     out
 }
 
+/// The books that can be taken into a game: every finished book on the shelf and
+/// all of the league's.
+fn legal_books() -> Vec<Book> {
+    selectable_books()
+        .into_iter()
+        .filter(|b| book_is_ready(*b))
+        .collect()
+}
+
+/// True when a book can be run: the league's always can, the player's once every
+/// rule of its drawing is satisfied.
+fn book_is_ready(book: Book) -> bool {
+    match book {
+        Book::Custom(slot) => nopads_core::design::has_book_at(slot as usize),
+        _ => true,
+    }
+}
+
+/// What the picker says under a book: the league's own summary, and for a book
+/// off the shelf the one thing that is keeping it out of a game, or that it is
+/// ready.
+fn book_note(book: Book) -> String {
+    match book {
+        Book::Custom(slot) => match nopads_core::design::book_at(slot as usize) {
+            Some(b) => match b.problems().first() {
+                Some(why) => format!("NOT READY: {why}"),
+                None => "READY: A CLUB CAN TAKE THIS BOOK INTO A GAME".to_string(),
+            },
+            None => "THIS BOOK IS NO LONGER ON THE SHELF".to_string(),
+        },
+        _ => book.blurb().to_string(),
+    }
+}
+
 fn step_book(current: Book, d: i8) -> Book {
-    let all = selectable_books();
+    let all = legal_books();
     let i = all.iter().position(|b| *b == current).unwrap_or(0);
     all[step_index(i, all.len(), d)]
 }
@@ -3604,16 +3636,34 @@ fn step_book(current: Book, d: i8) -> Book {
 fn draw_book_picker(frame: &mut Frame, club: &str, own: Book, books: &[Book], slide: &ui::Slide) {
     let rows: Vec<(&str, String)> = books
         .iter()
-        .map(|b| (b.label(), if *b == own { "YOUR CLUB".to_string() } else { String::new() }))
+        .map(|b| {
+            // A book of the player's says whether it can be run yet; the club's
+            // own says that it is the club's.
+            let value = if *b == own {
+                "YOUR CLUB".to_string()
+            } else if matches!(b, Book::Custom(_)) {
+                if book_is_ready(*b) {
+                    "READY".to_string()
+                } else {
+                    "NEEDS WORK".to_string()
+                }
+            } else {
+                String::new()
+            };
+            (b.label(), value)
+        })
         .collect();
-    let book = books.get(slide.row()).copied().unwrap_or(own);
+    let book = books
+        .get(slide.row().min(books.len().saturating_sub(1)))
+        .copied()
+        .unwrap_or(own);
     draw_option_screen(
         frame,
         "PLAYBOOK",
         &format!("{} RUNS {}", club, own.label()),
         &rows,
         slide,
-        book.blurb(),
+        &book_note(book),
         "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
     );
 }
@@ -3650,7 +3700,13 @@ fn pick_book(view: &mut View, pad: &mut Option<&mut Pad>, club: usize) -> Option
             return None;
         }
         if input.pressed.a {
-            return Some(books[pick]);
+            let book = books[pick];
+            // A book that is not finished cannot be taken into a game -- the play
+            // it would call does not exist yet -- so A leaves the reason on the
+            // screen instead of starting a game that would break.
+            if book_is_ready(book) {
+                return Some(book);
+            }
         }
         beat();
     }
@@ -5258,6 +5314,71 @@ mod tests {
     /// every spot, a play drawn with the pen, a front of X's, and a coverage
     /// Every screen of the editor, so the whole flow can be read as pictures
     /// rather than walked with a pad.
+    /// The design shelf is one store for the whole binary, so every test that
+    /// touches it takes this lock.
+    fn shelf_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn a_book_drawn_on_the_shelf_reaches_the_picker_after_a_restart() {
+        let _held = shelf_lock();
+        // The whole wire, end to end: a legal book goes on the shelf, the save
+        // file is written and read back the way the game does it, and the picker
+        // has to offer it.
+        nopads_core::design::clear();
+        let mut book = DesignBook::from_built_in(Book::WestCoast);
+        book.name = "SATURDAY BOOK".to_string();
+        assert!(book.is_legal(), "the book the editor makes is legal");
+        nopads_core::design::add(book);
+        let text = nopads_core::custom::text();
+        nopads_core::design::clear();
+        nopads_core::custom::parse(&text);
+        let shelf = nopads_core::design::shelf();
+        assert_eq!(shelf.len(), 1, "the shelf comes back");
+        assert!(shelf[0].is_legal(), "and the book is still legal");
+        assert_eq!(shelf[0].name, "SATURDAY BOOK");
+        let books = selectable_books();
+        assert!(
+            books.contains(&Book::Custom(0)),
+            "the picker offers the book: {books:?}"
+        );
+        assert_eq!(Book::Custom(0).label(), "SATURDAY BOOK", "under its own name");
+        nopads_core::design::clear();
+    }
+
+    #[test]
+    fn an_unfinished_book_is_listed_and_says_what_it_needs() {
+        let _held = shelf_lock();
+        nopads_core::design::clear();
+        nopads_core::design::add(DesignBook::from_built_in(Book::WestCoast));
+        let mut half = DesignBook::from_built_in(Book::AirRaid);
+        half.name = "HALF DRAWN".to_string();
+        half.offense.truncate(1);
+        half.plays.truncate(1);
+        nopads_core::design::add(half);
+
+        let books = selectable_books();
+        assert!(
+            books.contains(&Book::Custom(1)),
+            "the picker still lists a book that is not finished: {books:?}"
+        );
+        assert!(book_is_ready(Book::Custom(0)), "the finished one can be run");
+        assert!(!book_is_ready(Book::Custom(1)), "the half-drawn one cannot");
+        let note = book_note(Book::Custom(1));
+        assert!(note.starts_with("NOT READY: "), "and it says why: {note}");
+        assert!(note.contains("OFFENSE NEEDS"), "in the book's own terms: {note}");
+        assert!(
+            !legal_books().contains(&Book::Custom(1)),
+            "a club cannot be handed a book that is not finished"
+        );
+        assert!(legal_books().contains(&Book::Custom(0)));
+        nopads_core::design::clear();
+    }
+
     #[test]
     fn a_long_list_of_books_scrolls_instead_of_running_off_the_screen() {
         // Eight rows in a card that holds six: the pick is always one of them,
@@ -5275,6 +5396,7 @@ mod tests {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {
             return;
         }
+        let _held = shelf_lock();
         let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
         let save = |name: &str, screen: &Frame| {
             let mut canvas = Frame::new(crate::view::CANVAS_W, crate::view::CANVAS_H);
@@ -5342,6 +5464,17 @@ mod tests {
         let mut frame = Frame::new(UI_W, UI_H);
         draw_book_picker(&mut frame, "BOS", Book::Spread, &books, &ui::Slide::new(books.len() - 1));
         save("design_picker_last", &frame);
+        // And one that is not finished yet: it is on the list, it says what it is
+        // waiting for, and it cannot be taken.
+        let mut half = first.clone();
+        half.name = "HALF DRAWN".to_string();
+        half.offense.truncate(1);
+        half.plays.truncate(1);
+        nopads_core::design::add(half);
+        books.insert(1, Book::Custom(1));
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_book_picker(&mut frame, "BOS", Book::Spread, &books, &ui::Slide::new(1));
+        save("design_picker_unfinished", &frame);
         nopads_core::design::clear();
     }
 
