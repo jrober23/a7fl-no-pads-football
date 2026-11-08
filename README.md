@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.96-windows-x86_64.zip` from the
+Grab `7on7-v0.25.97-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -187,7 +187,7 @@ On defense the same pad does different work:
 
 Bare `7on7` opens on the splash — the **7ON7** mark, the name and a football above
 it — and a press of any face button, START or SELECT goes on to the start menu:
-**GAME MODES**, **SEASON**, **ROSTER**, **CUSTOMIZATION**, **SETTINGS**, **QUIT**.
+**GAME MODES**, **ROSTER**, **CUSTOMIZATION**, **SETTINGS**, **QUIT**.
 The mark is drawn from the same geometry the club badges are, not loaded from a
 file, so it scales with the interface grid. Coming back to the front end from a
 game does not show the splash again. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
@@ -197,10 +197,11 @@ the film and timing paths use.
 ### Game modes
 
 **GAME MODES** is everything you can play: **EXHIBITION** is one game picked in a
-minute, and under it are the three sessions that are drills rather than games — no
-clock, no season, nothing on the scoreboard, and you leave when you have had enough.
+minute, **SEASON** is a whole league year, and with them are the three sessions that
+are drills rather than games — no clock, nothing on the scoreboard, and you leave
+when you have had enough.
 
-All four ask for the same two clubs and the same side of the ball the exhibition
+The exhibition and the three drills ask for the same two clubs and the same side of the ball the exhibition
 screen does — home team, away team, which end you take — so a drill is played with
 the club you meant to practise with. **PRACTICE** goes on to ask which book to run,
 the same picker the exhibition screen uses, so a book drawn on the shelf is what the

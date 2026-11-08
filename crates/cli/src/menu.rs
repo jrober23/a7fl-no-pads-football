@@ -108,14 +108,15 @@ pub enum Front {
     Drill(DrillKind, Kickoff, usize),
 }
 
-/// What the player picked under GAME MODES: a game, or one of the drills.
+/// What the player picked under GAME MODES: a game, a season of them, or one of
+/// the drills.
 enum ModesPick {
     Exhibition,
+    Season,
     Drill(DrillKind),
 }
 
 enum Start {
-    Season,
     Modes,
     Roster,
     Customize,
@@ -139,15 +140,15 @@ pub fn run(
     }
     loop {
         match start_screen(view, &mut pad, settings)? {
-            Start::Season => {
-                if let Some(season) = season_setup(view, &mut pad, settings) {
-                    return Some(Front::Season(Box::new(season)));
-                }
-            }
             Start::Modes => match modes_screen(view, &mut pad) {
                 Some(ModesPick::Exhibition) => {
                     if let Some(kick) = exhibition(view, &mut pad, settings) {
                         return Some(Front::Friendly(kick));
+                    }
+                }
+                Some(ModesPick::Season) => {
+                    if let Some(season) = season_setup(view, &mut pad, settings) {
+                        return Some(Front::Season(Box::new(season)));
                     }
                 }
                 Some(ModesPick::Drill(kind)) => {
@@ -483,17 +484,15 @@ fn splash_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
 /// first, and it is laid out corner to corner on the grid rather than in a list
 /// of numbers that only means anything on one canvas.
 fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
-    const LABELS: [&str; 6] = [
+    const LABELS: [&str; 5] = [
         "GAME MODES",
-        "SEASON",
         "ROSTER",
         "CUSTOMIZATION",
         "SETTINGS",
         "QUIT",
     ];
-    const NOTES: [&str; 6] = [
-        "EXHIBITION, TUTORIAL, PRACTICE, THE GAUNTLET",
-        "A CLUB, A LEAGUE, A SEASON",
+    const NOTES: [&str; 5] = [
+        "EXHIBITION, SEASON, TUTORIAL, PRACTICE, THE GAUNTLET",
         "DEPTH CHART AND ROSTER FOR EVERY CLUB",
         "MAKE A CLUB, REPAINT A KIT",
         "CAMERA, LENS AND DISPLAY",
@@ -505,7 +504,8 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
     let cx = w / 2;
 
     // The card sits where the title used to: GAME MODES is the first choice on
-    // the screen, and EXHIBITION is the first of the modes behind it.
+    // the screen, and everything that starts a game -- or a season, or a drill --
+    // is behind it, so the menu itself is only the things that are not playing.
     let card_w = (w - 160).clamp(220, 360);
     let row_h = 24;
     let gap = 5;
@@ -551,7 +551,7 @@ fn start_screen(
     pad: &mut Option<&mut Pad>,
     _settings: &mut Settings,
 ) -> Option<Start> {
-    const ITEMS: usize = 6;
+    const ITEMS: usize = 5;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -583,10 +583,9 @@ fn start_screen(
         if input.pressed.a {
             return Some(match pick {
                 0 => Start::Modes,
-                1 => Start::Season,
-                2 => Start::Roster,
-                3 => Start::Customize,
-                4 => Start::Settings,
+                1 => Start::Roster,
+                2 => Start::Customize,
+                3 => Start::Settings,
                 _ => Start::Quit,
             });
         }
@@ -598,11 +597,13 @@ fn start_screen(
 // Game modes
 // ---------------------------------------------------------------------------
 
-/// What sits under GAME MODES, with the line the screen says about each. The
-/// exhibition is a game and the rest are drills; the only difference is the
-/// clock, so they are one list rather than two screens.
-const MODES: [(&str, &str); 4] = [
+/// What sits under GAME MODES, with the line the screen says about each. One
+/// game, a year of them, and the drills that have no clock; they are one list
+/// because they are all ways to start playing, and a menu of ways to play
+/// belongs behind the one row that says so.
+const MODES: [(&str, &str); 5] = [
     ("EXHIBITION", "ONE GAME, PICKED IN A MINUTE"),
+    ("SEASON", "A CLUB, A LEAGUE, A WHOLE YEAR"),
     ("TUTORIAL", "THE OFFENSE ONE CONTROL AT A TIME, OFF THE TEN"),
     (
         "PRACTICE",
@@ -625,7 +626,7 @@ fn draw_modes(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
     draw_option_screen(
         frame,
         "GAME MODES",
-        "A GAME OR A DRILL: THE CLOCK IS THE ONLY DIFFERENCE",
+        "ONE GAME, A YEAR OF THEM, OR A DRILL",
         &rows,
         slide,
         note,
@@ -857,9 +858,10 @@ fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<ModesPick
         if input.pressed.a {
             return match pick {
                 0 => Some(ModesPick::Exhibition),
-                1 => tutorial_screen(view, pad).map(|t| ModesPick::Drill(DrillKind::Tutorial(t))),
-                2 => practice_screen(view, pad).map(|t| ModesPick::Drill(DrillKind::Practice(t))),
-                3 => Some(ModesPick::Drill(DrillKind::Gauntlet)),
+                1 => Some(ModesPick::Season),
+                2 => tutorial_screen(view, pad).map(|t| ModesPick::Drill(DrillKind::Tutorial(t))),
+                3 => practice_screen(view, pad).map(|t| ModesPick::Drill(DrillKind::Practice(t))),
+                4 => Some(ModesPick::Drill(DrillKind::Gauntlet)),
                 _ => None,
             };
         }
