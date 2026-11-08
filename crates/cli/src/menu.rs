@@ -2337,6 +2337,19 @@ fn draw_ball(frame: &mut Frame, spots: &[Vec2; 7], carrier: usize) {
     frame.text_shadowed(px + 13, py + 7, "BALL", 1, ui::PAPER, 1);
 }
 
+/// The men the ball can be pitched to: on a run, everyone who has a path and is
+/// not the man carrying it. They are the four face buttons in the game, so the
+/// drawing says who is on a button and who is staying in to block.
+fn draw_pitch_tags(frame: &mut Frame, spots: &[Vec2; 7], routes: &[Vec<Vec2>; 7], carrier: usize) {
+    for (slot, route) in routes.iter().enumerate() {
+        if slot == carrier || route.is_empty() {
+            continue;
+        }
+        let (px, py) = field_px(spots[slot].x, spots[slot].y);
+        frame.text_shadowed(px + 13, py + 7, "PITCH", 1, ui::GOOD, 1);
+    }
+}
+
 fn draw_drops(frame: &mut Frame, spots: &[Vec2; 7], drops: &[Vec<Vec2>; 7], sel: usize) {
     for slot in 0..7 {
         if drops[slot].is_empty() {
@@ -2567,6 +2580,7 @@ fn play_editor(
         draw_men(&mut frame, &form.spots, &bits, None, false);
         if ball.is_some() {
             draw_ball(&mut frame, &form.spots, play.carrier);
+            draw_pitch_tags(&mut frame, &form.spots, &play.routes, play.carrier);
         }
         if let Some(p) = play.routes[sel].last() {
             let a = field_px(p.x, p.y);
@@ -2621,7 +2635,7 @@ fn play_editor(
                 320,
                 FIELD_B + 10,
                 &format!(
-                    "{} TAKES THE HANDOFF: HIS PATH IS THE BALL, THE OTHERS BLOCK",
+                    "{} CARRIES IT: A PATH IS A PITCH, NO PATH MEANS HE BLOCKS",
                     play.carrier_role(form).label()
                 ),
                 1,
@@ -5612,11 +5626,18 @@ mod tests {
         run.routes[slot] = (1..=9)
             .map(|d| Vec2::new(tes.x + d as f32, tes.y - d as f32 * 0.6))
             .collect();
+        // A wide man coming round the back: he is on a button, not a blocker.
+        let sweeping = form.slot_of(OffRole::WideL);
+        let swspot = form.spots[sweeping];
+        run.routes[sweeping] = (1..=8)
+            .map(|d| Vec2::new(swspot.x - d as f32 * 0.6, swspot.y + d as f32 * 1.4))
+            .collect();
         let mut frame = Frame::new(UI_W, UI_H);
         draw_field(&mut frame, false);
         draw_routes(&mut frame, &form.spots, &run.routes, slot, Some(slot));
         draw_men(&mut frame, &form.spots, &bits, None, false);
         draw_ball(&mut frame, &form.spots, slot);
+        draw_pitch_tags(&mut frame, &form.spots, &run.routes, slot);
         cursor_box(&mut frame, tes.x as i8, tes.y as i8);
         ui::heading(&mut frame, UI_W as i32 / 2, 16, &run.name, ui::T_BODY, ui::ACCENT);
         centered_in(&mut frame, 320, 40, "DRAWING TE - RUN - PEN DOWN", 1, accent());
@@ -5624,7 +5645,7 @@ mod tests {
             &mut frame,
             320,
             FIELD_B + 10,
-            "TE TAKES THE HANDOFF: HIS PATH IS THE BALL, THE OTHERS BLOCK",
+            "TE CARRIES IT: A PATH IS A PITCH, NO PATH MEANS HE BLOCKS",
             1,
             dim(),
         );

@@ -235,11 +235,15 @@ going for the pick.
   any of the seven can line up anywhere the rules allow, with the line rule and
   the quarterback checked while you draw. A play is drawn with the stick: A puts
   the pen down, every yard you walk the path picks up a waypoint, and A lifts it
-  again. On a run the shoulder button picks which man takes the handoff -- the
-  quarterback, the back, the tight end or either wide man -- and he is drawn with
-  the ball at his feet and his path in white while the rest block along theirs, so
-  a tight end standing in the backfield carries it exactly as the running back
-  does. The defense is drawn the same way: a front of X's, then a call whose
+  again. On a run the shoulder button picks which man takes the ball on the snap --
+  the quarterback, the back, the tight end or either wide man -- and he is drawn
+  with it at his feet and his path in white. Every other man with a path is marked
+  **PITCH**: those are the men coming round behind the ball, and in the game they
+  are the four face buttons, so pressing one pitches back to him and not pressing
+  any of them leaves the ball with the man who has it. A man with no path blocks.
+  That is the whole read option: point the ball at the quarterback, draw the back
+  and the tight end coming round, and decide at the mesh -- a pitch into traffic
+  can come out of the catcher's hands. The defense is drawn the same way: a front of X's, then a call whose
   coverage you draw defender by defender, each drop a path on the same grid. A
   book holds two to five formations a side, each with one to nine plays, and two
   to five fronts, each with one to nine calls. Y renames a book, a formation, a

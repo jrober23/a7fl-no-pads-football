@@ -917,14 +917,20 @@ fn design_play(
                             .ceil() as u8;
                         assignments.push((role, Assign::Route { points: rel, depth }));
                     }
-                } else {
+                } else if drawn.is_empty() {
                     assignments.push((
                         role,
                         Assign::RunBlock {
-                            aim: rel.first().copied().unwrap_or(Vec2::new(1.0, 0.0)),
+                            aim: Vec2::new(1.0, 0.0),
                             seal: false,
                         },
                     ));
+                } else {
+                    // On a run a path is a run path, not a place to go and block:
+                    // the men the player drew for are the ones coming round
+                    // behind the ball, and the pitch can go to any of them. A man
+                    // with no path is the one who sets his hands and blocks.
+                    assignments.push((role, Assign::Route { points: rel, depth: 0 }));
                 }
             }
         }
@@ -1614,12 +1620,13 @@ mod tests {
         let te = book.offense[0].slot_of(OffRole::Slot);
         let back = book.offense[0].slot_of(OffRole::Back);
         book.offense[0].spots[te] = Vec2::new(-4.0, 2.0);
-        let back_spot = book.offense[0].spots[back];
+        // The back has no path, so he blocks: a path on a run would make him a
+        // man the ball can be pitched to, and this test is about the handoff.
+        let _ = back;
         book.plays[0][0].family = PlayFamily::RunInside;
         book.plays[0][0].carrier = te;
         book.plays[0][0].routes = Default::default();
         book.plays[0][0].routes[te] = vec![Vec2::new(-2.0, 2.0), Vec2::new(7.0, 0.0)];
-        book.plays[0][0].routes[back] = vec![Vec2::new(back_spot.x + 2.0, back_spot.y)];
         assert!(book.problems().is_empty(), "{:?}", book.problems());
         assert_eq!(book.plays[0][0].carrier_role(&book.offense[0]), OffRole::Slot);
 
@@ -1646,6 +1653,52 @@ mod tests {
             plays[0].assignment(OffRole::Slot).and_then(assign_points),
             Some(vec![Vec2::new(2.0, 0.0), Vec2::new(11.0, -2.0)]),
             "the drawn path is the run"
+        );
+        clear();
+    }
+
+    #[test]
+    fn a_path_drawn_for_another_man_on_a_run_is_a_pitch_option() {
+        let _store = store_lock();
+        clear();
+        let mut book = DesignBook::blank();
+        draw_paths(&mut book);
+        let qb = book.offense[0].slot_of(OffRole::Qb);
+        let te = book.offense[0].slot_of(OffRole::Slot);
+        let back = book.offense[0].slot_of(OffRole::Back);
+        let tes = book.offense[0].spots[te];
+        let back_spot = book.offense[0].spots[back];
+        // The quarterback is the one who takes it, so he can keep it or pitch it;
+        // the tight end and the back both have paths, so both are on a button.
+        book.plays[0][0].family = PlayFamily::RunOutside;
+        book.plays[0][0].carrier = qb;
+        book.plays[0][0].routes = Default::default();
+        book.plays[0][0].routes[qb] = vec![Vec2::new(-1.0, 0.0), Vec2::new(3.0, 2.0)];
+        book.plays[0][0].routes[te] = vec![Vec2::new(tes.x, tes.y - 1.0), Vec2::new(4.0, -6.0)];
+        book.plays[0][0].routes[back] = vec![Vec2::new(back_spot.x, back_spot.y + 1.0)];
+        assert!(book.problems().is_empty(), "{:?}", book.problems());
+
+        let i = add(book);
+        let plays = offense_plays_at(i);
+        assert!(
+            matches!(plays[0].assignment(OffRole::Qb), Some(Assign::QbCarry { .. })),
+            "the quarterback has it: {:?}",
+            plays[0].assignment(OffRole::Qb)
+        );
+        assert!(
+            matches!(plays[0].assignment(OffRole::Slot), Some(Assign::Route { .. })),
+            "the tight end runs his path so the pitch can find him: {:?}",
+            plays[0].assignment(OffRole::Slot)
+        );
+        assert!(
+            matches!(plays[0].assignment(OffRole::Back), Some(Assign::Route { .. })),
+            "the back too: {:?}",
+            plays[0].assignment(OffRole::Back)
+        );
+        assert!(
+            matches!(plays[0].assignment(OffRole::WideR), Some(Assign::RunBlock { .. })),
+            "a man with no path blocks: {:?}",
+            plays[0].assignment(OffRole::WideR)
         );
         clear();
     }

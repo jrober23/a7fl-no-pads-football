@@ -725,6 +725,7 @@ impl Arcade {
                 running: false,
                 run_call: false,
                 targets: Vec::new(),
+                pitch_targets: Vec::new(),
             };
             let finished = snap_loop(
                 &mut SnapScreen {
@@ -1868,6 +1869,7 @@ impl Arcade {
                 running: false,
                 run_call: false,
                 targets: Vec::new(),
+                pitch_targets: Vec::new(),
             };
             let finished = snap_loop(
                 &mut SnapScreen {
@@ -3722,6 +3724,9 @@ struct OffenseSnap<'a> {
     running: bool,
     run_call: bool,
     targets: Vec<(OffRole, usize)>,
+    // On a run the same four buttons are the pitch: the men coming round behind
+    // the ball, in the order their buttons come up.
+    pitch_targets: Vec<(OffRole, usize)>,
 }
 
 impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
@@ -3798,6 +3803,15 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
         } else {
             sim.eligible_targets()
         };
+        // A run has no receivers to hold for, so the same four buttons are the
+        // pitch. They are only up while somebody has the ball: there is nothing
+        // to pitch while it is in the air, and a man running for his life has his
+        // moves on those buttons.
+        self.pitch_targets = if presnap || returning || self.running {
+            Vec::new()
+        } else {
+            sim.pitch_targets()
+        };
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
         let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
         if self.running {
@@ -3810,6 +3824,16 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                     sim.request_move_dir(kind, side);
                 }
             });
+        }
+        // A pitch leaves on the press: it is a toss, not a throw, so there is no
+        // arc to weigh and nothing to hold. Not pressing is keeping it.
+        if !self.pitch_targets.is_empty() {
+            if let Some(slot) =
+                (0..self.pitch_targets.len().min(PASS_LABELS.len())).find(|&s| down[s])
+            {
+                let target = self.pitch_targets[slot].1;
+                sim.pitch(target);
+            }
         }
 
         // Holding a receiver's button winds the pass up. The ball goes to the man
@@ -3921,6 +3945,25 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 aimed: self.charge.map(|(s, _)| s) == Some(slot),
             });
         }
+        // The same badges on a run, pointed at the men coming round behind the
+        // ball: the button over a man's head is the button that pitches to him.
+        for (slot, (_, index)) in self.pitch_targets.iter().enumerate().take(PASS_LABELS.len()) {
+            let separation = sim.separation(*index);
+            let tone = if separation > 3.0 {
+                Tone::Open
+            } else if separation > 1.6 {
+                Tone::Tight
+            } else {
+                Tone::Covered
+            };
+            let man = sim.players[*index].pos;
+            badges.push(Badge {
+                at: Vec3::new(man.x, man.y, 2.15),
+                label: PASS_LABELS[slot],
+                tone,
+                aimed: false,
+            });
+        }
 
         let mut guide = None;
         let mut short = false;
@@ -4001,6 +4044,21 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 row.push_str(&format!("      {}", kind.label()));
             }
             lines.push(row);
+        } else if !self.pitch_targets.is_empty() {
+            // Whose pitch is on which button, and that keeping it is the default.
+            let mut row = String::from("  PITCH");
+            for (slot, (_, index)) in self.pitch_targets.iter().enumerate().take(PASS_LABELS.len()) {
+                let name =
+                    screen.broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
+                row.push_str(&format!(
+                    "   {} {:<9} {:>4.1}",
+                    PASS_LABELS[slot],
+                    name,
+                    sim.separation(*index)
+                ));
+            }
+            row.push_str("   NO PRESS KEEPS IT");
+            lines.push(row);
         } else {
             // Who is open, on the buttons the badges are showing.
             let mut row = String::new();
@@ -4024,11 +4082,19 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 cam_name(mode)
             ));
         } else {
-            lines.push(format!(
-                "{} ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] {}   [START] PAUSE",
-                self.off_abbr,
-                cam_name(mode)
-            ));
+            lines.push(if self.pitch_targets.is_empty() {
+                format!(
+                    "{} ball   MOVE   HOLD A/B/X/Y TO PASS   TAP TO PUMP   [SELECT] {}   [START] PAUSE",
+                    self.off_abbr,
+                    cam_name(mode)
+                )
+            } else {
+                format!(
+                    "{} ball   MOVE   A/B/X/Y PITCHES BACK   KEEP IT BY NOT PRESSING   [SELECT] {}   [START] PAUSE",
+                    self.off_abbr,
+                    cam_name(mode)
+                )
+            });
         }
         (ui, lines)
     }

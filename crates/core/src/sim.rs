@@ -4331,6 +4331,92 @@ impl<'a> PlaySim<'a> {
             .collect()
     }
 
+    /// The men a pitch can go to on a run: everybody running a path who is not
+    /// the man with the ball. They come up on the face buttons in the order they
+    /// are numbered, so the button a man is standing over is the button that
+    /// pitches to him.
+    pub fn pitch_targets(&self) -> Vec<(OffRole, usize)> {
+        if !self.play.family.is_run() || self.ball.flight.is_some() || self.result.is_some() {
+            return Vec::new();
+        }
+        let Some(holder) = self.ball.holder else {
+            return Vec::new();
+        };
+        if self.players[holder].down {
+            return Vec::new();
+        }
+        (0..7)
+            .filter(|&i| i != holder && !self.players[i].down)
+            .filter(|&i| !self.players[i].route.is_empty())
+            .filter(|&i| {
+                let role = OffRole::ALL[self.players[i].role_index];
+                role != OffRole::Qb && !role.is_line()
+            })
+            .map(|i| (OffRole::ALL[self.players[i].role_index], i))
+            .collect()
+    }
+
+    /// Pitch it back to a runner.
+    ///
+    /// The face buttons on a run are not receivers. A pitch is a backward pass,
+    /// so a man ahead of the ball is not a target and asking for him does nothing
+    /// at all: the man carrying it keeps it. What makes pitching a decision
+    /// rather than a free upgrade is the man catching it -- with a defender on
+    /// his back the ball can come out of his hands, and then it is on the ground
+    /// for whoever wants it.
+    ///
+    /// Returns true when the pitch was made (even if it came out loose).
+    pub fn pitch(&mut self, target: usize) -> bool {
+        // Far enough for a sweep coming round the formation, short of a throw.
+        const REACH: f32 = 18.0;
+        // Inside this the defender on the catcher is on him, not near him.
+        const TRAFFIC: f32 = 2.4;
+        let Some(holder) = self.ball.holder else {
+            return false;
+        };
+        if holder == target
+            || self.result.is_some()
+            || self.ball.flight.is_some()
+            || self.players[target].down
+            || self.players[holder].down
+            || !self.play.family.is_run()
+            || matches!(self.phase, Phase::PreSnap | Phase::Loose | Phase::Return)
+        {
+            return false;
+        }
+        let dirf = self.dirf();
+        let hand = self.players[holder].pos;
+        let mouth = self.players[target].pos;
+        // A pitch that goes forward is a throw, and the button says pitch.
+        if (mouth.x - hand.x) * dirf > 0.35 {
+            return false;
+        }
+        if hand.dist(mouth) > REACH {
+            return false;
+        }
+        let pitcher = self.name_of(holder);
+        let catcher = self.name_of(target);
+        let pressure = self.nearest_defender_dist(target);
+        if pressure < TRAFFIC && self.rng.chance((1.0 - pressure / TRAFFIC) * 0.34) {
+            self.fumble_alert = 2.4;
+            self.fumble_note = format!("{pitcher} pitches it into traffic - the ball is loose!");
+            self.start_loose(
+                mouth,
+                format!("{pitcher}'s pitch is knocked away from {catcher}!"),
+            );
+            return true;
+        }
+        self.carrier = Some(target);
+        self.ball.holder = Some(target);
+        self.ball.pos = mouth;
+        self.ball.z = 1.0;
+        self.events.push(SimEvent {
+            t: self.t,
+            text: format!("{pitcher} pitches back to {catcher}"),
+        });
+        true
+    }
+
     /// Yards to the nearest defender: what a play-call screen calls "open".
     pub fn separation(&self, receiver: usize) -> f32 {
         self.nearest_defender_dist(receiver)
