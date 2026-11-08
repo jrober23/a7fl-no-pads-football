@@ -408,6 +408,21 @@ pub struct Ball {
     pub flight: Option<Flight>,
 }
 
+/// What the computer did with the option it was handed.
+///
+/// The read is one defender -- the end on the play side -- and the answer is one
+/// of three things, which is the whole of the triple option.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OptionChoice {
+    /// The end stayed wide, so the ball went back to the first man: the dive.
+    Handoff,
+    /// The end crashed down inside, so the quarterback kept it.
+    Keep,
+    /// He kept it, and then gave it on to the man trailing him when they came
+    /// for him.
+    Pitch,
+}
+
 /// A ball on the ground that nobody has yet.
 ///
 /// It rolls, it slows, and both sides go and get it. The play is not dead until a
@@ -569,6 +584,10 @@ pub struct PlaySim<'a> {
     pub carrier: Option<usize>,
     pub intended: Option<usize>,
     pub handoff: Option<(usize, f32)>,
+    /// The end the computer read on an option, and what it did about it. `None`
+    /// until the read is made, and on every play that is not an option.
+    pub option_key: Option<usize>,
+    pub option_choice: Option<OptionChoice>,
     pub result: Option<PlayResult>,
     /// `Some` when a human is driving the quarterback.
     pub control: Option<QbControl>,
@@ -772,6 +791,8 @@ impl<'a> PlaySim<'a> {
             carrier: None,
             intended: None,
             handoff: None,
+            option_key: None,
+            option_choice: None,
             result: None,
             events: Vec::new(),
             read_timer: 0.0,
@@ -1632,6 +1653,11 @@ impl<'a> PlaySim<'a> {
     // -----------------------------------------------------------------
 
     fn update_offense(&mut self, dt: f32) {
+        // The computer's own option, made before anyone moves: the read is of the
+        // men in front of it, so it belongs on the frame the mesh would happen.
+        if self.control.is_none() {
+            self.ai_option();
+        }
         // The mesh point. The handoff is scheduled after the snap, so it has to be
         // completed here rather than at the snap itself: a run play gives the ball
         // to the back on its own beat, while a play-action fake schedules one too
@@ -4024,6 +4050,8 @@ impl<'a> PlaySim<'a> {
         self.carrier = None;
         self.intended = None;
         self.handoff = None;
+        self.option_key = None;
+        self.option_choice = None;
         self.ball.holder = Some(self.qb);
         self.ball.flight = None;
         self.ball.pos = self.players[self.qb].pos;
@@ -4420,6 +4448,142 @@ impl<'a> PlaySim<'a> {
             text: format!("{pitcher} pitches back to {catcher}"),
         });
         true
+    }
+
+    /// The defender the option reads: the end on the side the ball is going.
+    ///
+    /// One read is the whole scheme. Everything else is blocked or accounted
+    /// for, so the man whose decision makes the play is the end the dive runs at.
+    pub fn option_read(&self) -> Option<usize> {
+        let side = self.play.run_side;
+        let lane = self.setup.ball_y + side as f32 * 4.0;
+        let mut best: Option<(usize, f32)> = None;
+        for i in 7..14 {
+            if self.players[i].down {
+                continue;
+            }
+            let role = DefRole::ALL[self.players[i].role_index];
+            if !matches!(role, DefRole::EdgeL | DefRole::EdgeR) {
+                continue;
+            }
+            let score = if side == 0 {
+                (self.players[i].pos.y - self.setup.ball_y).abs()
+            } else {
+                (self.players[i].pos.y - lane).abs()
+            };
+            if best.map(|(_, b)| score < b).unwrap_or(true) {
+                best = Some((i, score));
+            }
+        }
+        best.map(|(i, _)| i)
+    }
+
+    /// True when the man being read has come down inside: he is playing the
+    /// dive, so the quarterback pulls it and keeps.
+    pub fn key_crashed(&self, key: usize) -> bool {
+        let p = &self.players[key];
+        if (p.pos.x - self.los) * self.dirf() < -0.4 {
+            return true;
+        }
+        let across = p.pos.y - self.setup.ball_y;
+        if across.abs() < 2.5 {
+            return true;
+        }
+        p.vel.y != 0.0 && p.vel.y.signum() != across.signum() && p.vel.y.abs() > 1.2
+    }
+
+    /// True when `target` is at or behind `hand`: the only place a pitch goes.
+    fn behind(&self, hand: usize, target: usize) -> bool {
+        (self.players[target].pos.x - self.players[hand].pos.x) * self.dirf() <= 0.35
+    }
+
+    /// The first man back: the dive, the deepest man behind the ball.
+    fn option_dive(&self) -> Option<usize> {
+        let hand = self.players[self.qb].pos.x;
+        let dirf = self.dirf();
+        self.pitch_targets()
+            .into_iter()
+            .filter(|(_, i)| self.behind(self.qb, *i))
+            .max_by(|a, b| {
+                let da = (hand - self.players[a.1].pos.x) * dirf;
+                let db = (hand - self.players[b.1].pos.x) * dirf;
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .map(|(_, i)| i)
+    }
+
+    /// The computer's option: read the end at the mesh, then give it on or keep
+    /// it, and give it again if they come for the keeper.
+    ///
+    /// It is one read and it is made once. Only on a run, only with nobody on the
+    /// pad, and only while the quarterback actually has the ball.
+    fn ai_option(&mut self) {
+        if !self.play.family.is_run() || self.result.is_some() || self.carrier != Some(self.qb) {
+            return;
+        }
+        match self.option_choice {
+            None => {
+                // The mesh: the end has had his first two steps by now.
+                if self.t < SNAP_DELAY + 0.45 {
+                    return;
+                }
+                let Some(key) = self.option_read() else { return };
+                self.option_key = Some(key);
+                let dive = self.option_dive();
+                let crashed = self.key_crashed(key);
+                let give = !crashed && dive.is_some();
+                let text = if give {
+                    format!(
+                        "{} reads {} staying wide and gives it on",
+                        self.name_of(self.qb),
+                        self.name_of(key)
+                    )
+                } else if crashed {
+                    format!(
+                        "{} reads {} crashing down and keeps it",
+                        self.name_of(self.qb),
+                        self.name_of(key)
+                    )
+                } else {
+                    format!("{} keeps it", self.name_of(self.qb))
+                };
+                self.events.push(SimEvent { t: self.t, text });
+                self.option_choice = Some(OptionChoice::Keep);
+                if give {
+                    if let Some(dive) = dive {
+                        if self.pitch(dive) {
+                            self.option_choice = Some(OptionChoice::Handoff);
+                        }
+                    }
+                }
+            }
+            Some(OptionChoice::Keep) => {
+                // They have come for the keeper: give it on to the man trailing
+                // him, if there is one behind the ball with room to take it.
+                if self.t < SNAP_DELAY + 0.5 || self.nearest_defender_dist(self.qb) > 2.6 {
+                    return;
+                }
+                let qb_x = self.players[self.qb].pos.x;
+                let dirf = self.dirf();
+                let trailing = self
+                    .pitch_targets()
+                    .into_iter()
+                    .filter(|(_, i)| self.behind(self.qb, *i))
+                    .filter(|(_, i)| self.nearest_defender_dist(*i) > 2.6)
+                    .max_by(|a, b| {
+                        let da = (qb_x - self.players[a.1].pos.x) * dirf;
+                        let db = (qb_x - self.players[b.1].pos.x) * dirf;
+                        da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|(_, i)| i);
+                if let Some(trailing) = trailing {
+                    if self.pitch(trailing) {
+                        self.option_choice = Some(OptionChoice::Pitch);
+                    }
+                }
+            }
+            Some(_) => {}
+        }
     }
 
     /// True while the ball is still behind the line of scrimmage, which is the

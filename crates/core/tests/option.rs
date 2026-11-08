@@ -3,7 +3,7 @@
 
 use nopads_core::math::Vec2;
 use nopads_core::playbook::{defensive_playbook, Assign, Formation, OffRole, Play, PlayFamily};
-use nopads_core::sim::{PlaySim, QbControl, SnapSetup};
+use nopads_core::sim::{OptionChoice, PlaySim, QbControl, SnapSetup};
 use nopads_core::team::league_teams;
 
 fn setup(seed: u64) -> SnapSetup {
@@ -236,4 +236,148 @@ fn a_forward_pitch_is_refused_and_the_quarterback_keeps_it() {
     assert!(ahead > 0.35, "the man is ahead of the ball: {ahead}");
     assert!(!sim.pitch(slot), "a forward pitch is not a pitch");
     assert_eq!(sim.ball.holder, Some(qb), "so the quarterback still has it");
+}
+
+/// The same option with the quarterback sweeping behind the line, so a keeper can
+/// still give the ball on instead of running out of room to do it.
+fn keep_and_pitch_play() -> Play {
+    let mut p = triple_option_play();
+    p.name = "KEEP AND PITCH";
+    for (role, a) in p.assignments.iter_mut() {
+        if *role == OffRole::Qb {
+            *a = Assign::QbCarry {
+                points: vec![
+                    Vec2::new(-1.0, 0.0),
+                    Vec2::new(-1.0, 4.0),
+                    Vec2::new(0.0, 8.0),
+                ],
+            };
+        }
+    }
+    p
+}
+
+/// A snapped play with nobody on the pad, so the computer is the one running it.
+fn to_the_ball_ai(play: Play, seed: u64) -> PlaySim<'static> {
+    let teams = Box::leak(Box::new(league_teams()));
+    let defs = Box::leak(Box::new(defensive_playbook()));
+    let play = Box::leak(Box::new(play));
+    let mut sim = PlaySim::new(&teams[0], &teams[1], play, &defs[0], &setup(seed));
+    let mut guard = 0;
+    while !sim.is_snapped() && guard < 240 {
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    sim
+}
+
+/// Stand every man the computer has looked at out on the edge, where an end who
+/// is playing the dive does not go.
+fn hold_wide(sim: &mut PlaySim, held: &mut Vec<usize>) {
+    if let Some(r) = sim.option_read() {
+        if !held.contains(&r) {
+            held.push(r);
+        }
+    }
+    for &d in held.iter() {
+        let side = if sim.players[d].pos.y < sim.setup.ball_y { -1.0 } else { 1.0 };
+        sim.players[d].pos.y = sim.setup.ball_y + side * 9.0;
+        sim.players[d].vel = Vec2::ZERO;
+    }
+}
+
+/// The opposite: every man it has looked at has come down into the dive lane.
+fn hold_inside(sim: &mut PlaySim, held: &mut Vec<usize>) {
+    if let Some(r) = sim.option_read() {
+        if !held.contains(&r) {
+            held.push(r);
+        }
+    }
+    let base = sim.setup.ball_y;
+    for &d in held.iter() {
+        sim.players[d].pos.y = base;
+        sim.players[d].vel = Vec2::ZERO;
+    }
+}
+
+#[test]
+fn the_computer_gives_it_on_when_the_end_stays_wide() {
+    let mut sim = to_the_ball_ai(option_play(), 41);
+    let mut held = Vec::new();
+    let mut guard = 0;
+    while sim.option_choice.is_none() && guard < 240 {
+        hold_wide(&mut sim, &mut held);
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert!(!held.is_empty(), "it had an end to read");
+    assert!(sim.option_key.is_some(), "and it read him");
+    assert_eq!(
+        sim.option_choice,
+        Some(OptionChoice::Handoff),
+        "the end stayed wide, so the ball goes back to the dive"
+    );
+    assert_ne!(sim.ball.holder, Some(sim.qb), "it is out of his hands");
+}
+
+#[test]
+fn the_computer_keeps_it_when_the_end_crashes_down() {
+    let mut sim = to_the_ball_ai(option_play(), 42);
+    let mut held = Vec::new();
+    let mut guard = 0;
+    while sim.option_choice.is_none() && guard < 240 {
+        hold_inside(&mut sim, &mut held);
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert_eq!(
+        sim.option_choice,
+        Some(OptionChoice::Keep),
+        "the end came down for the dive, so the quarterback pulls it"
+    );
+    assert_eq!(sim.ball.holder, Some(sim.qb), "and he still has it");
+}
+
+#[test]
+fn the_computer_gives_it_on_again_when_they_come_for_the_keeper() {
+    let mut sim = to_the_ball_ai(keep_and_pitch_play(), 43);
+    let back = man(&sim, OffRole::Back);
+    let slot = man(&sim, OffRole::Slot);
+    let mut held = Vec::new();
+    // Stage what the second read is about: a man on the keeper, the ends crashing
+    // down, and the two men behind the ball with room to take it.
+    fn stage(sim: &mut PlaySim, held: &[usize], back: usize, slot: usize) {
+        let hunter = held[0];
+        sim.players[hunter].pos = sim.players[sim.qb].pos + Vec2::new(1.0, 0.0);
+        sim.players[hunter].vel = Vec2::ZERO;
+        sim.players[back].pos = Vec2::new(sim.los - 7.0, sim.setup.ball_y + 7.0);
+        sim.players[slot].pos = Vec2::new(sim.los - 9.0, sim.setup.ball_y - 7.0);
+        sim.players[back].vel = Vec2::ZERO;
+        sim.players[slot].vel = Vec2::ZERO;
+    }
+    let mut guard = 0;
+    while sim.option_choice.is_none() && guard < 240 {
+        hold_inside(&mut sim, &mut held);
+        if !held.is_empty() {
+            stage(&mut sim, &held, back, slot);
+        }
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert_eq!(sim.option_choice, Some(OptionChoice::Keep), "he kept it at the mesh");
+    let mut guard = 0;
+    while sim.option_choice == Some(OptionChoice::Keep) && guard < 120 {
+        hold_inside(&mut sim, &mut held);
+        if !held.is_empty() {
+            stage(&mut sim, &held, back, slot);
+        }
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert_eq!(
+        sim.option_choice,
+        Some(OptionChoice::Pitch),
+        "he gave it on rather than take the hit"
+    );
+    assert_ne!(sim.ball.holder, Some(sim.qb));
 }

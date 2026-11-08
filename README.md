@@ -247,7 +247,10 @@ going for the pick.
   the ball while he is still behind the line, so a back who takes the first pitch
   can give it on again to the man trailing him: that second pitch is the triple
   option. Past the line the option is gone and the buttons are the runner's moves
-  again. The defense is drawn the same way: a front of X's, then a call whose
+  again. The computer runs the same play the same way: it reads the end on the
+  play side once, hands off if he stays wide, keeps it if he crashes down, and
+  gives it on to the trailer when they come for the keeper. The defense is drawn
+  the same way: a front of X's, then a call whose
   coverage you draw defender by defender, each drop a path on the same grid. A
   book holds two to five formations a side, each with one to nine plays, and two
   to five fronts, each with one to nine calls. Y renames a book, a formation, a
