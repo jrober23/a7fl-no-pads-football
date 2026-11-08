@@ -257,7 +257,10 @@ pub enum Assign {
     /// A pass route; `depth` is the expected target depth in yards, used by the
     /// quarterback's progression and by the AI's play calling.
     Route { points: Vec<Vec2>, depth: u8 },
-    /// The ball carrier's run path.
+    /// The ball carrier's run path. Downfield is measured in yards from the line
+    /// of scrimmage and across from the man's own spot, because that is how a
+    /// run is drawn: where he goes is the point on the card, not that point
+    /// moved forward by however deep he lines up.
     Carry { points: Vec<Vec2> },
     /// The QB keeps it.
     QbCarry { points: Vec<Vec2> },

@@ -332,3 +332,189 @@ fn a_pass_can_be_drawn_as_a_play_action() {
     );
     design::clear();
 }
+
+/// A designed run goes where the player drew it. A back lines up behind the line
+/// and runs to a point drawn from the line, so an outside run drawn to the left
+/// starts going left instead of forward-left.
+#[test]
+fn a_designed_run_starts_the_way_it_was_drawn() {
+    let _g = lock();
+    design::clear();
+    let mut book = DesignBook::blank();
+    let form = book.offense[0].clone();
+    let back = form
+        .roles
+        .iter()
+        .position(|r| *r == OffRole::Back)
+        .expect("a back");
+    let spot = form.spots[back];
+    book.plays[0][0].family = PlayFamily::RunOutside;
+    book.plays[0][0].carrier = back;
+    let drawn = [spot + Vec2::new(-1.0, -6.0), spot + Vec2::new(2.0, -9.0)];
+    book.plays[0][0].routes[back] = drawn.to_vec();
+    let slot = design::add(book);
+    let plays = design::offense_plays_at(slot);
+
+    let teams = Box::leak(Box::new(nopads_core::team::league_teams()));
+    let defs = Box::leak(Box::new(nopads_core::playbook::defensive_playbook()));
+    let play = Box::leak(Box::new(plays[0].clone()));
+    let los = 40.0;
+    let setup = nopads_core::sim::SnapSetup {
+        los,
+        ball_y: 0.0,
+        direction: 1,
+        down: 1,
+        to_go: 10.0,
+        seed: 5,
+        offense_team: 0,
+        defense_team: 1,
+        is_try: false,
+    };
+    let mut sim = nopads_core::sim::PlaySim::new(&teams[0], &teams[1], play, &defs[0], &setup);
+    let runner = (0..7)
+        .find(|&i| OffRole::ALL[sim.players[i].role_index] == OffRole::Back)
+        .expect("the back is on the field");
+
+    // The point on the field is the point on the card: the run is laid from the
+    // line, not from however deep the runner happens to line up.
+    let first = sim.players[runner].route[0];
+    assert!(
+        (first.x - los - drawn[0].x).abs() < 0.05 && (first.y - drawn[0].y).abs() < 0.05,
+        "the drawn point moved: {first:?} against {:?}",
+        drawn[0]
+    );
+    assert!(
+        (sim.players[runner].pos.x - los - spot.x).abs() < 0.05,
+        "the back is not standing where the formation puts him"
+    );
+
+    sim.request_snap();
+    let start = {
+        while sim.ball.holder.is_none() && !sim.result.is_some() {
+            sim.step(1.0 / 60.0);
+        }
+        for _ in 0..4 {
+            sim.step(1.0 / 60.0);
+        }
+        sim.players[runner].pos
+    };
+    let mut seen = 0;
+    for _ in 0..20 {
+        if sim.result.is_some() {
+            break;
+        }
+        let before = sim.players[runner].pos;
+        sim.step(1.0 / 60.0);
+        seen += 1;
+        let _ = before;
+    }
+    assert!(seen > 0, "the play ended before he moved");
+    let now = sim.players[runner].pos;
+    assert!(
+        start.y - now.y > 0.6,
+        "he did not start to the side he was drawn: {:.2} yards across",
+        start.y - now.y
+    );
+    assert!(
+        now.x - start.x < 0.6,
+        "he started forward instead of to the side: {:.2} yards downfield",
+        now.x - start.x
+    );
+    design::clear();
+}
+
+/// The runner the play was drawn for does not stop at the mesh: with the stick
+/// at rest he keeps running his own path, and the stick still owns him the
+/// moment it moves.
+#[test]
+fn the_runner_keeps_running_the_play_with_the_stick_at_rest() {
+    let _g = lock();
+    design::clear();
+    let mut book = DesignBook::blank();
+    let form = book.offense[0].clone();
+    let back = form
+        .roles
+        .iter()
+        .position(|r| *r == OffRole::Back)
+        .expect("a back");
+    let spot = form.spots[back];
+    book.plays[0][0].family = PlayFamily::RunOutside;
+    book.plays[0][0].carrier = back;
+    let drawn = [spot + Vec2::new(-1.0, -3.0), spot + Vec2::new(3.0, -8.0)];
+    book.plays[0][0].routes[back] = drawn.to_vec();
+    let slot = design::add(book);
+    let plays = design::offense_plays_at(slot);
+
+    let teams = Box::leak(Box::new(nopads_core::team::league_teams()));
+    let defs = Box::leak(Box::new(nopads_core::playbook::defensive_playbook()));
+    let play = Box::leak(Box::new(plays[0].clone()));
+    let los = 40.0;
+    let setup = nopads_core::sim::SnapSetup {
+        los,
+        ball_y: 0.0,
+        direction: 1,
+        down: 1,
+        to_go: 10.0,
+        seed: 7,
+        offense_team: 0,
+        defense_team: 1,
+        is_try: false,
+    };
+    let mut sim = nopads_core::sim::PlaySim::new(&teams[0], &teams[1], play, &defs[0], &setup);
+    let runner = (0..7)
+        .find(|&i| OffRole::ALL[sim.players[i].role_index] == OffRole::Back)
+        .expect("the back is on the field");
+    sim.request_snap();
+    while sim.ball.holder.is_none() && !sim.result.is_some() {
+        sim.step(1.0 / 60.0);
+    }
+    // Put him on his own path with nobody near him, so what he does next is the
+    // only thing moving him: the handoff is behind him and the ball is his.
+    let first = sim.players[runner].route[0];
+    sim.players[runner].pos = first;
+    sim.players[runner].vel = Vec2::ZERO;
+    sim.players[runner].waypoint = 0;
+    sim.carrier = Some(runner);
+    sim.ball.holder = Some(runner);
+    sim.handoff = None;
+    for d in 7..14 {
+        sim.players[d].pos = Vec2::new(los - 14.0, 20.0);
+        sim.players[d].vel = Vec2::ZERO;
+    }
+    sim.set_control(Some(nopads_core::sim::QbControl {
+        move_dir: Vec2::ZERO,
+        ..Default::default()
+    }));
+    let start = sim.players[runner].pos;
+    for _ in 0..50 {
+        if sim.result.is_some() {
+            break;
+        }
+        sim.step(1.0 / 60.0);
+    }
+    let coast = sim.players[runner].pos;
+    assert!(
+        start.y - coast.y > 1.5,
+        "he stopped at the mesh instead of running the play: {:.2} yards across",
+        start.y - coast.y
+    );
+
+    // And the stick takes him straight back.
+    sim.set_control(Some(nopads_core::sim::QbControl {
+        move_dir: Vec2::new(1.0, 0.0),
+        ..Default::default()
+    }));
+    let x0 = sim.players[runner].pos.x;
+    for _ in 0..25 {
+        if sim.result.is_some() {
+            break;
+        }
+        sim.step(1.0 / 60.0);
+    }
+    assert!(
+        sim.players[runner].pos.x - x0 > 0.8,
+        "the stick did not take him: {:.2} yards downfield",
+        sim.players[runner].pos.x - x0
+    );
+    design::clear();
+}

@@ -1776,7 +1776,12 @@ impl<'a> PlaySim<'a> {
                 // travelling the runner's way before it is his.
                 self.players[self.qb].give =
                     ((reach - man.dist(hand)) / (reach * 0.7)).clamp(0.0, 1.0);
-                if self.t >= at && !self.players[idx].down && legal && there {
+                // The ball is shown before it is taken: the exchange waits for
+                // it to be out, so a handoff is made at arm's length instead of
+                // being a pass made at three yards. A toss is the exception --
+                // it is out in the air, so the runner can be level with it.
+                let offered = kind == Handoff::Lateral || self.players[self.qb].give >= 0.55;
+                if self.t >= at && !self.players[idx].down && legal && there && offered {
                     self.carrier = Some(idx);
                     self.ball.holder = Some(idx);
                     self.handoff = None;
@@ -2199,7 +2204,39 @@ impl<'a> PlaySim<'a> {
 
     /// Carrier with the stick at rest: no AI lanes and no surprise cuts, just a
     /// runner running out of steam on his current line.
+    ///
+    /// A man the drawing pointed at is the exception, because his run is the
+    /// play: he goes on to the next point of his own path, and once the path is
+    /// behind him he carries on the way he was going. A sweep then comes round
+    /// the corner without the player holding the stick, instead of stalling at
+    /// the mesh until he is steered. The stick still owns him the moment it
+    /// moves: this is only what he does with nobody's hand on him.
     fn update_carrier_idle(&mut self, i: usize, dt: f32) {
+        if self.is_drawn_carrier(i) && !self.players[i].route.is_empty() {
+            let mut wp = self.players[i].waypoint;
+            while wp < self.players[i].route.len() {
+                // A point he is standing on is behind him, whatever the drawing
+                // said: the last leg of a path is followed by its direction.
+                if self.players[i].pos.dist(self.players[i].route[wp]) > 1.0 {
+                    break;
+                }
+                wp += 1;
+            }
+            self.players[i].waypoint = wp;
+            let target = if wp < self.players[i].route.len() {
+                self.players[i].route[wp]
+            } else {
+                let ahead = if self.players[i].vel.length() > 0.4 {
+                    self.players[i].vel.normalize_or_zero()
+                } else {
+                    Vec2::new(self.dirf(), 0.0)
+                };
+                self.players[i].pos + ahead * 2.0
+            };
+            let speed = self.speed_cap(i) * 0.9;
+            self.carry_step(i, dt, target, speed);
+            return;
+        }
         let p = &self.players[i];
         let ahead = if p.vel.length() > 0.4 {
             p.vel.normalize_or_zero()

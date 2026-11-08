@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.109-windows-x86_64.zip` from the
+Grab `7on7-v0.25.110-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -258,7 +258,12 @@ going for the pick.
   from his right and the ball travels left with him — he steps round rather than
   hand it back across the runner, against the run. He turns to the man
   as they meet and holds the ball out to him with both hands, so the give is
-  offered before it is taken. Draw the quarterback a path that
+  offered before it is taken -- and the exchange waits for the ball to be out,
+  so a handoff is made at arm's length rather than thrown at him from three
+  yards. The man the play was drawn for keeps running it: a run path is the
+  ground the card draws, so an outside run drawn left starts going left instead
+  of forward-left, and with the stick at rest a sweep goes on round the corner
+  by itself. The stick takes him back the moment it moves. Draw the quarterback a path that
   crosses the runner's and that crossing is where the handoff happens; leave him
   no path and he stands and waits for the runner to come to him. Whoever has it
   can give it on while he is still behind the line, so a back who takes the first

@@ -924,11 +924,20 @@ fn design_play(
             .iter()
             .map(|q| Vec2::new(q.x - spot.x, q.y - spot.y))
             .collect();
+        // A run path is laid on the field from the line of scrimmage, which is
+        // also where the drawing measures it from: downfield is the point the
+        // player drew, not that point moved by however deep the runner lines up.
+        // Writing it from his feet sent every designed run a backfield upfield --
+        // an outside run drawn left started forward-left.
+        let run: Vec<Vec2> = drawn
+            .iter()
+            .map(|q| Vec2::new(q.x, q.y - spot.y))
+            .collect();
         match role {
             // On an option the quarterback is the runner whatever the drawing
             // says: his path is the keep, and the man pointed at is the pitch.
             OffRole::Qb if option_run => {
-                assignments.push((role, Assign::QbCarry { points: rel }));
+                assignments.push((role, Assign::QbCarry { points: run }));
             }
             // Whoever the player pointed at takes the ball: the handoff goes to
             // the man, not to the job he is wearing, so the tight end standing in
@@ -936,9 +945,9 @@ fn design_play(
             // quarterback keeps it.
             _ if !pass && !option_run && slot == p.carrier && !drawn.is_empty() => {
                 if role == OffRole::Qb {
-                    assignments.push((role, Assign::QbCarry { points: rel }));
+                    assignments.push((role, Assign::QbCarry { points: run }));
                 } else {
-                    assignments.push((role, Assign::Carry { points: rel }));
+                    assignments.push((role, Assign::Carry { points: run }));
                 }
             }
             OffRole::Qb => {
@@ -1736,7 +1745,11 @@ mod tests {
             Some(Assign::Route { points, .. }) => {
                 assert_eq!(points[0], Vec2::new(4.0, 2.0))
             }
-            Some(Assign::Carry { points }) => assert_eq!(points[0], Vec2::new(4.0, 2.0)),
+            // A run is laid from the line, so the drawn point keeps the downfield
+            // yardage the player put it at and only the across one is his own.
+            Some(Assign::Carry { points }) => {
+                assert_eq!(points[0], Vec2::new(spot_now.x + 4.0, 2.0))
+            }
             other => panic!("the drawn route did not become a path: {other:?}"),
         }
         let _ = spot;
@@ -1782,11 +1795,12 @@ mod tests {
             "the back blocks on a run that is not his: {:?}",
             plays[0].assignment(OffRole::Back)
         );
-        // The path is written relative to his own feet: (-2, 2) and (7, 0) drawn
-        // from a man standing on (-4, 2).
+        // The run is laid from the line and across from his feet: (-2, 2) and
+        // (7, 0) drawn from a man standing on (-4, 2) go where they were drawn,
+        // instead of two yards downfield of it.
         assert_eq!(
             plays[0].assignment(OffRole::Slot).and_then(assign_points),
-            Some(vec![Vec2::new(2.0, 0.0), Vec2::new(11.0, -2.0)]),
+            Some(vec![Vec2::new(-2.0, 0.0), Vec2::new(7.0, -2.0)]),
             "the drawn path is the run"
         );
 

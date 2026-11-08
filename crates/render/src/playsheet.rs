@@ -158,8 +158,12 @@ fn draw_card(frame: &mut Frame, play: &Play, x: i32, y: i32, w: i32, h: i32, sel
         match assign {
             Assign::Route { points, .. } => trail(frame, &board, base, points, INK, 1),
             Assign::Fake { points, .. } => trail(frame, &board, base, points, BLOCK, 1),
+            // A run path is laid from the line of scrimmage, so the card draws
+            // the ground the field runs rather than that path moved by the depth
+            // he lines up at.
             Assign::Carry { points } | Assign::QbCarry { points } => {
-                trail(frame, &board, base, points, CARRY, 2)
+                let run: Vec<Vec2> = points.iter().map(|p| Vec2::new(p.x - base.x, p.y)).collect();
+                trail(frame, &board, base, &run, CARRY, 2)
             }
             Assign::RunBlock { aim, .. } | Assign::ScreenBlock { aim } => {
                 let (sx, sy) = board.at(base);
@@ -219,10 +223,12 @@ fn diagram_points(play: &Play) -> Vec<Vec2> {
         let base = play.alignment(*role);
         out.push(base);
         match assign {
-            Assign::Route { points, .. }
-            | Assign::Fake { points, .. }
-            | Assign::Carry { points }
-            | Assign::QbCarry { points } => out.extend(points.iter().map(|p| base + *p)),
+            Assign::Route { points, .. } | Assign::Fake { points, .. } => {
+                out.extend(points.iter().map(|p| base + *p))
+            }
+            Assign::Carry { points } | Assign::QbCarry { points } => {
+                out.extend(points.iter().map(|p| Vec2::new(p.x, base.y + p.y)))
+            }
             Assign::RunBlock { aim, .. } | Assign::ScreenBlock { aim } => out.push(base + *aim),
             Assign::PassBlock { .. } => {}
         }
