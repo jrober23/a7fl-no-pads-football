@@ -3807,23 +3807,29 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
         // pitch. They are only up while somebody has the ball: there is nothing
         // to pitch while it is in the air, and a man running for his life has his
         // moves on those buttons.
-        self.pitch_targets = if presnap || returning || self.running {
+        self.pitch_targets = if presnap || returning {
             Vec::new()
         } else {
             sim.pitch_targets()
         };
         let held = [input.held.a, input.held.b, input.held.x, input.held.y];
         let down = [input.pressed.a, input.pressed.b, input.pressed.x, input.pressed.y];
+        // The option is live while somebody is behind the ball: on those buttons
+        // the pitch comes first, and a runner's moves wait until there is nobody
+        // left to pitch to.
+        let pitching = !self.pitch_targets.is_empty();
         if self.running {
             // A pass wound up before he crossed the line is not a throw any more.
             self.charge = None;
-            runner_moves(input, |kind, side| {
-                if side == 0.0 {
-                    sim.request_move(kind);
-                } else {
-                    sim.request_move_dir(kind, side);
-                }
-            });
+            if !pitching {
+                runner_moves(input, |kind, side| {
+                    if side == 0.0 {
+                        sim.request_move(kind);
+                    } else {
+                        sim.request_move_dir(kind, side);
+                    }
+                });
+            }
         }
         // A pitch leaves on the press: it is a toss, not a throw, so there is no
         // arc to weigh and nothing to hold. Not pressing is keeping it.
@@ -4037,15 +4043,9 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                     "  INTERCEPTION - THEY HAVE IT AND THE PICTURE HAS TURNED ROUND".to_string(),
                 );
             }
-        } else if self.running {
-            // The moves, and which one is in flight right now.
-            let mut row = RUNNER_ROW.trim_start().to_string();
-            if let Some(kind) = sim.carrier_move().kind() {
-                row.push_str(&format!("      {}", kind.label()));
-            }
-            lines.push(row);
         } else if !self.pitch_targets.is_empty() {
-            // Whose pitch is on which button, and that keeping it is the default.
+            // Whose pitch is on which button. The option is still alive on a
+            // runner, so the row says what not pressing does for whoever has it.
             let mut row = String::from("  PITCH");
             for (slot, (_, index)) in self.pitch_targets.iter().enumerate().take(PASS_LABELS.len()) {
                 let name =
@@ -4058,6 +4058,20 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 ));
             }
             row.push_str("   NO PRESS KEEPS IT");
+            if sim.face_buttons_are_moves() {
+                let mut moves = RUNNER_ROW.trim_start().to_string();
+                if let Some(kind) = sim.carrier_move().kind() {
+                    moves.push_str(&format!("      {}", kind.label()));
+                }
+                lines.push(moves);
+            }
+            lines.push(row);
+        } else if self.running {
+            // The moves, and which one is in flight right now.
+            let mut row = RUNNER_ROW.trim_start().to_string();
+            if let Some(kind) = sim.carrier_move().kind() {
+                row.push_str(&format!("      {}", kind.label()));
+            }
             lines.push(row);
         } else {
             // Who is open, on the buttons the badges are showing.

@@ -4345,6 +4345,11 @@ impl<'a> PlaySim<'a> {
         if self.players[holder].down {
             return Vec::new();
         }
+        // The option is live behind the line of scrimmage. Once a runner is past
+        // it he is a runner, and the buttons are his moves again.
+        if !self.behind_the_line() {
+            return Vec::new();
+        }
         (0..7)
             .filter(|&i| i != holder && !self.players[i].down)
             .filter(|&i| !self.players[i].route.is_empty())
@@ -4415,6 +4420,13 @@ impl<'a> PlaySim<'a> {
             text: format!("{pitcher} pitches back to {catcher}"),
         });
         true
+    }
+
+    /// True while the ball is still behind the line of scrimmage, which is the
+    /// ground a pitch is live on and the ground a runner still has the option to
+    /// get rid of it.
+    pub fn behind_the_line(&self) -> bool {
+        (self.ball.pos.x - self.los) * self.dirf() <= 0.0
     }
 
     /// Yards to the nearest defender: what a play-call screen calls "open".

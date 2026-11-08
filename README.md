@@ -243,7 +243,11 @@ going for the pick.
   any of them leaves the ball with the man who has it. A man with no path blocks.
   That is the whole read option: point the ball at the quarterback, draw the back
   and the tight end coming round, and decide at the mesh -- a pitch into traffic
-  can come out of the catcher's hands. The defense is drawn the same way: a front of X's, then a call whose
+  can come out of the catcher's hands. The buttons stay the pitch for whoever has
+  the ball while he is still behind the line, so a back who takes the first pitch
+  can give it on again to the man trailing him: that second pitch is the triple
+  option. Past the line the option is gone and the buttons are the runner's moves
+  again. The defense is drawn the same way: a front of X's, then a call whose
   coverage you draw defender by defender, each drop a path on the same grid. A
   book holds two to five formations a side, each with one to nine plays, and two
   to five fronts, each with one to nine calls. Y renames a book, a formation, a
