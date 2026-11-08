@@ -28,7 +28,9 @@ fn stick(dir: Vec2) -> Option<QbControl> {
     Some(QbControl { move_dir: dir, ..Default::default() })
 }
 
-/// A run play, stepped up to the moment the back has the ball.
+/// A run play, stepped up to the moment the back has the ball. The handoff is a
+/// button, so the helper presses the one the play put the ball on -- as the
+/// player would -- once the man is at the quarterback.
 fn to_the_handoff<'t>(off: &'t Team, def: &'t Team, seed: u64) -> Option<PlaySim<'t>> {
     let book = playbook();
     let defs = defensive_playbook();
@@ -37,6 +39,12 @@ fn to_the_handoff<'t>(off: &'t Team, def: &'t Team, seed: u64) -> Option<PlaySim
     let mut guard = 0;
     while sim.carrier.is_none() && sim.result.is_none() && guard < 400 {
         sim.set_control(stick(Vec2::new(1.0, 0.0)));
+        if let Some((_, hand)) = sim.pitch_targets().first().copied() {
+            // A pitch will not go forward, so being at the quarterback is enough.
+            if sim.players[hand].pos.dist(sim.players[sim.qb].pos) <= 2.5 {
+                sim.pitch(hand);
+            }
+        }
         sim.step(1.0 / 60.0);
         guard += 1;
     }

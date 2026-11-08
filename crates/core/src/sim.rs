@@ -1669,7 +1669,12 @@ impl<'a> PlaySim<'a> {
             PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun
         );
         if self.carrier.is_none() && a_run {
-            if let Some((idx, at)) = self.handoff {
+            if self.control.is_some() {
+                // The handoff is a button now. With a player on the pad the ball
+                // stays with the quarterback until he gives it, and the face
+                // buttons name the men he can give it to.
+                self.handoff = None;
+            } else if let Some((idx, at)) = self.handoff {
                 let hand = self.players[self.qb].pos;
                 let man = self.players[idx].pos;
                 // A handoff is two men meeting, not the ball moving on a timer.
@@ -4429,15 +4434,35 @@ impl<'a> PlaySim<'a> {
         if !self.behind_the_line() {
             return Vec::new();
         }
-        (0..7)
-            .filter(|&i| i != holder && !self.players[i].down)
-            .filter(|&i| !self.players[i].route.is_empty())
-            .filter(|&i| {
-                let role = OffRole::ALL[self.players[i].role_index];
-                role != OffRole::Qb && !role.is_line()
-            })
-            .map(|i| (OffRole::ALL[self.players[i].role_index], i))
-            .collect()
+        let carrier = self.play.carrier_role().map(|r| r.index());
+        let mut out: Vec<(OffRole, usize)> = Vec::new();
+        // The man the play was drawn to hand the ball to comes up first: his
+        // button gives him the ball, and the men behind him are the pitch.
+        if let Some(c) = carrier {
+            let role = OffRole::ALL[self.players[c].role_index];
+            if c != holder && !self.players[c].down && role != OffRole::Qb && !role.is_line() {
+                out.push((role, c));
+            }
+        }
+        for i in 0..7 {
+            if i == holder || Some(i) == carrier || self.players[i].down {
+                continue;
+            }
+            if self.players[i].route.is_empty() {
+                continue;
+            }
+            let role = OffRole::ALL[self.players[i].role_index];
+            if role == OffRole::Qb || role.is_line() {
+                continue;
+            }
+            out.push((role, i));
+        }
+        out
+    }
+
+    /// True when this man is the one the play was drawn to hand the ball to.
+    pub fn is_drawn_carrier(&self, index: usize) -> bool {
+        self.play.carrier_role().map(|r| r.index()) == Some(index)
     }
 
     /// Pitch it back to a runner.
@@ -4480,8 +4505,12 @@ impl<'a> PlaySim<'a> {
         }
         let pitcher = self.name_of(holder);
         let catcher = self.name_of(target);
+        // A man the play was drawn to give the ball to is handed it, not tossed
+        // it: at the quarterback that is a clean exchange nobody can knock away.
+        // Anybody else is a pitch, and a pitch into traffic can come out.
+        let handoff = self.is_drawn_carrier(target) && hand.dist(mouth) <= 3.5;
         let pressure = self.nearest_defender_dist(target);
-        if pressure < TRAFFIC && self.rng.chance((1.0 - pressure / TRAFFIC) * 0.34) {
+        if !handoff && pressure < TRAFFIC && self.rng.chance((1.0 - pressure / TRAFFIC) * 0.34) {
             self.fumble_alert = 2.4;
             self.fumble_note = format!("{pitcher} pitches it into traffic - the ball is loose!");
             self.start_loose(
@@ -4496,7 +4525,11 @@ impl<'a> PlaySim<'a> {
         self.ball.z = 1.0;
         self.events.push(SimEvent {
             t: self.t,
-            text: format!("{pitcher} pitches back to {catcher}"),
+            text: if handoff {
+                format!("{pitcher} hands it to {catcher}")
+            } else {
+                format!("{pitcher} pitches back to {catcher}")
+            },
         });
         true
     }
@@ -4641,6 +4674,13 @@ impl<'a> PlaySim<'a> {
     /// ground a pitch is live on and the ground a runner still has the option to
     /// get rid of it.
     pub fn behind_the_line(&self) -> bool {
+        // A quarterback still holding the ball is not a runner yet: he meshes on
+        // the line with the ball out in front of him, and the men behind him are
+        // still his to give it to. Once the ball is in a runner's hands the line
+        // is the line.
+        if self.carrier.is_none() && self.ball.holder == Some(self.qb) {
+            return true;
+        }
         (self.ball.pos.x - self.los) * self.dirf() <= 0.0
     }
 

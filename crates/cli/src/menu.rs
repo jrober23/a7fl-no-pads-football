@@ -2635,7 +2635,7 @@ fn play_editor(
                 320,
                 FIELD_B + 10,
                 &format!(
-                    "{} CARRIES IT: A PATH IS A PITCH, NO PATH MEANS HE BLOCKS",
+                    "{} CARRIES IT: HIS BUTTON GIVES HIM THE BALL, A PATH IS A PITCH",
                     play.carrier_role(form).label()
                 ),
                 1,

@@ -455,3 +455,61 @@ fn a_jet_sweep_takes_the_ball_only_when_he_gets_behind_the_ball() {
         "the quarterback held his ground instead of chasing him across the field"
     );
 }
+
+/// The ball is given, not taken. The man the play was drawn for is the first
+/// face button, and pressing nothing leaves it with the quarterback.
+#[test]
+fn the_handoff_is_on_a_button_and_then_so_is_the_pitch() {
+    let mut play = triple_option_play();
+    play.name = "TE HANDOFF";
+    play.family = PlayFamily::RunInside;
+    for (role, a) in play.assignments.iter_mut() {
+        match role {
+            // The quarterback is not the carrier on this one: the ball is drawn
+            // for the tight end, so the quarterback has a pocket to stand in.
+            OffRole::Qb => {
+                *a = Assign::PassBlock {
+                    slide: 0.0,
+                    max_depth: 1.0,
+                }
+            }
+            OffRole::Slot => {
+                *a = Assign::Carry {
+                    points: vec![Vec2::new(0.5, -2.0), Vec2::new(0.5, -1.5)],
+                }
+            }
+            OffRole::WideL => {
+                *a = Assign::Route {
+                    points: vec![Vec2::new(-7.0, 11.0), Vec2::new(-6.5, 12.0)],
+                    depth: 0,
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut sim = to_the_ball_with(play, 61);
+    let qb = man(&sim, OffRole::Qb);
+    let te = man(&sim, OffRole::Slot);
+    let back = man(&sim, OffRole::WideL);
+    let mut guard = 0;
+    while sim.t < SNAP_DELAY + 1.2 && sim.result.is_none() && guard < 220 {
+        sim.step(1.0 / 60.0);
+        guard += 1;
+    }
+    assert_eq!(sim.ball.holder, Some(qb), "the handoff happened on its own");
+    let targets = sim.pitch_targets();
+    assert_eq!(
+        targets.first().map(|(_, i)| *i),
+        Some(te),
+        "the man drawn to carry is the first button: {targets:?}"
+    );
+    assert!(sim.pitch(te), "pressing his button gives him the ball");
+    assert_eq!(sim.ball.holder, Some(te), "{:?}", sim.events.last());
+    let after = sim.pitch_targets();
+    assert!(
+        after.iter().any(|(_, i)| *i == back),
+        "the man behind him is the next button: {after:?}"
+    );
+    assert!(sim.pitch(back), "and it goes to him");
+    assert_eq!(sim.ball.holder, Some(back), "{:?}", sim.events.last());
+}

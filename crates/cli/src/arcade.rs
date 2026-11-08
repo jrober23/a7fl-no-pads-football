@@ -4046,13 +4046,18 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
         } else if !self.pitch_targets.is_empty() {
             // Whose pitch is on which button. The option is still alive on a
             // runner, so the row says what not pressing does for whoever has it.
-            let mut row = String::from("  PITCH");
+            let mut row = String::from("  ");
             for (slot, (_, index)) in self.pitch_targets.iter().enumerate().take(PASS_LABELS.len()) {
                 let name =
                     screen.broadcast.teams[sim.setup.offense_team].roster[*index].last_name();
                 row.push_str(&format!(
-                    "   {} {:<9} {:>4.1}",
+                    " {} {} {:<9} {:>4.1}",
                     PASS_LABELS[slot],
+                    if sim.is_drawn_carrier(*index) {
+                        "HANDOFF"
+                    } else {
+                        "PITCH  "
+                    },
                     name,
                     sim.separation(*index)
                 ));
@@ -4104,7 +4109,7 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 )
             } else {
                 format!(
-                    "{} ball   MOVE   A/B/X/Y PITCHES BACK   KEEP IT BY NOT PRESSING   [SELECT] {}   [START] PAUSE",
+                    "{} ball   MOVE   A/B/X/Y GIVES IT TO HIM   KEEP IT BY NOT PRESSING   [SELECT] {}   [START] PAUSE",
                     self.off_abbr,
                     cam_name(mode)
                 )

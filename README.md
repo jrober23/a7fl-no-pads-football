@@ -243,10 +243,11 @@ going for the pick.
   any of them leaves the ball with the man who has it. A man with no path blocks.
   That is the whole read option: point the ball at the quarterback, draw the back
   and the tight end coming round, and decide at the mesh -- a pitch into traffic
-  can come out of the catcher's hands. The buttons stay the pitch for whoever has
-  the ball while he is still behind the line, so a back who takes the first pitch
-  can give it on again to the man trailing him: that second pitch is the triple
-  option. Past the line the option is gone and the buttons are the runner's moves
+  can come out of the catcher's hands. The man the play was drawn to carry comes up
+  first, on his own face button: pressing it hands him the ball, and pressing
+  nothing keeps it with the quarterback. Whoever has it can give it on while he is
+  still behind the line, so a back who takes the first one can pitch again to the
+  man trailing him: that second pitch is the triple option. Past the line the option is gone and the buttons are the runner's moves
   again. The computer runs the same play the same way: it reads the end on the
   play side once, hands off if he stays wide, keeps it if he crashes down, and
   gives it on to the trailer when they come for the keeper. The defense is drawn
