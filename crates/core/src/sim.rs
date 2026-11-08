@@ -15,6 +15,7 @@
 use crate::difficulty::Difficulty;
 use crate::field::{self, FIELD_HALF_WIDTH, FIELD_LENGTH};
 use crate::math::{approach_angle, clamp, lerp, Rng, Vec2};
+use crate::playbook::Handoff;
 use crate::playbook::{
     defensive_alignment, Assign, Coverage, DefCall, DefRole, OffRole, Play, PlayFamily,
 };
@@ -1150,21 +1151,22 @@ impl<'a> PlaySim<'a> {
             PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun => {
                 if let Some(role) = carrier_role {
                     let idx = role.index();
-                    // No kicking and no pitches: the ball changes hands at the mesh
-                    // point, then the runner owns it.
-                    if role == OffRole::Qb {
-                        self.carrier = Some(idx);
-                        self.ball.holder = Some(idx);
+                    // A fake is sold, not made: the man runs his path as a decoy
+                    // and the quarterback keeps it. A real handoff is left
+                    // pending, with no time on it, until the two men meet --
+                    // where they meet is what the quarterback's own path
+                    // decides.
+                    if role == OffRole::Qb || !self.play.handoff.gives_it() {
+                        self.carrier = Some(self.qb);
+                        self.ball.holder = Some(self.qb);
                     } else {
-                        self.handoff = Some((idx, SNAP_DELAY + 0.55));
+                        self.handoff = Some((idx, SNAP_DELAY + 0.25));
                     }
                 }
             }
             PlayFamily::PlayAction => {
-                // Sell the run, then the QB keeps it to throw.
-                if let Some(role) = carrier_role {
-                    self.handoff = Some((role.index(), SNAP_DELAY + 0.5));
-                }
+                // The fake is sold with the ball in the quarterback's hands: he
+                // is still dropping back, so there is nothing to schedule.
             }
             _ => {}
         }
@@ -1669,29 +1671,38 @@ impl<'a> PlaySim<'a> {
             PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun
         );
         if self.carrier.is_none() && a_run {
-            if self.control.is_some() {
-                // The handoff is a button now. With a player on the pad the ball
-                // stays with the quarterback until he gives it, and the face
-                // buttons name the men he can give it to.
-                self.handoff = None;
-            } else if let Some((idx, at)) = self.handoff {
+            if let Some((idx, at)) = self.handoff {
+                let kind = self.play.handoff;
                 let hand = self.players[self.qb].pos;
                 let man = self.players[idx].pos;
-                // A handoff is two men meeting, not the ball moving on a timer.
-                // The man it is going to has to be behind the line and has to
-                // have actually got to the quarterback: a wide receiver sweeping
-                // across takes it as he crosses his face, and never while he is
-                // still standing out on the line of scrimmage.
-                let there = (man.x - self.los) * self.dirf() <= 0.0 && man.dist(hand) <= 3.5;
-                if self.t >= at && !self.players[idx].down && there {
+                // A handoff is two men meeting, not the ball moving on a timer:
+                // the quarterback's path brings him to the runner, and how
+                // close they have to get is what kind of give it is. A lateral
+                // is a toss, so it can be caught from further away and with the
+                // runner already level with the ball; a handoff is an exchange
+                // behind the line.
+                // A handoff is made at arm's length, where two men meet at the
+                // mesh; a toss is out in the air long enough to be caught from
+                // a little further away.
+                let reach = if kind == Handoff::Lateral { 3.5 } else { 3.0 };
+                let legal = kind == Handoff::Lateral
+                    || (man.x - self.los) * self.dirf() <= 0.0;
+                let there = man.dist(hand) <= reach;
+                if self.t >= at && !self.players[idx].down && legal && there {
                     self.carrier = Some(idx);
                     self.ball.holder = Some(idx);
+                    self.handoff = None;
                     let name = self.name_of(idx);
                     self.events.push(SimEvent {
                         t: self.t,
-                        text: format!("{name} takes the handoff"),
+                        text: match kind {
+                            Handoff::Lateral => format!("{name} takes the toss"),
+                            Handoff::Inside => format!("{name} takes the inside handoff"),
+                            Handoff::Forward => format!("{name} takes the handoff"),
+                            _ => format!("{name} takes the handoff"),
+                        },
                     });
-                } else if self.t >= at + 2.0 {
+                } else if self.t >= at + 3.0 {
                     // He never came for it: the quarterback keeps the ball rather
                     // than standing there holding a handoff nobody took.
                     self.handoff = None;
@@ -1712,18 +1723,23 @@ impl<'a> PlaySim<'a> {
             let role = OffRole::ALL[self.players[i].role_index];
             let is_qb = role == OffRole::Qb;
             if is_qb && self.handoff.is_some() {
-                // Sell the fake and mesh with the man the ball is going to. A man
-                // coming round from wide is met where he crosses, not chased
-                // across the field: the quarterback stands his ground for him.
+                // He runs the start-and-run pattern the play was drawn with, and
+                // the handoff is made where it brings him to the runner: the
+                // drawing decides where they meet, not a clock. With no path
+                // drawn he stands his ground and meets the runner at the mesh,
+                // stepping toward him only once he is close enough to get there.
                 let (car, _) = self.handoff.unwrap();
-                let me = self.players[i].pos;
-                let target = if me.dist(self.players[car].pos) < 8.0 {
-                    self.players[car].pos + Vec2::new(-self.dirf() * 0.9, 0.0)
-                } else {
-                    me
-                };
-                let spd = self.speed_cap(i) * 0.9;
-                self.steer(i, target, spd, dt);
+                let path = self.players[i].route.clone();
+                if self.players[i].waypoint < path.len() {
+                    let target = path[self.players[i].waypoint];
+                    self.steer(i, target, self.speed_cap(i) * 0.95, dt);
+                    if self.players[i].pos.dist(target) < 0.6 {
+                        self.players[i].waypoint += 1;
+                    }
+                } else if self.players[i].pos.dist(self.players[car].pos) < 8.0 {
+                    let target = self.players[car].pos + Vec2::new(-self.dirf() * 0.9, 0.0);
+                    self.steer(i, target, self.speed_cap(i) * 0.9, dt);
+                }
                 continue;
             }
             if Some(i) == self.carrier {
@@ -4436,14 +4452,9 @@ impl<'a> PlaySim<'a> {
         }
         let carrier = self.play.carrier_role().map(|r| r.index());
         let mut out: Vec<(OffRole, usize)> = Vec::new();
-        // The man the play was drawn to hand the ball to comes up first: his
-        // button gives him the ball, and the men behind him are the pitch.
-        if let Some(c) = carrier {
-            let role = OffRole::ALL[self.players[c].role_index];
-            if c != holder && !self.players[c].down && role != OffRole::Qb && !role.is_line() {
-                out.push((role, c));
-            }
-        }
+        // The man the play was drawn for is not on a button any more: the ball
+        // is given to him by the two men meeting, not by the player pressing for
+        // it. The buttons are the men behind the ball, which is the pitch.
         for i in 0..7 {
             if i == holder || Some(i) == carrier || self.players[i].down {
                 continue;

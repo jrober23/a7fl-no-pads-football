@@ -1396,11 +1396,27 @@ mod tests {
     #[test]
     fn points_are_only_awarded_in_rulebook_units() {
         let mut g = new_game(7);
-        g.simulate_game();
-        // 6, 3? No kicking: every score is 6, 2 (safety) or 1/2 (conversion).
-        let total = g.score[0] + g.score[1];
-        assert!(total > 0);
-        assert!(total < 400, "absurd score {total}");
+        let mut snaps = 0;
+        // A winning score in this game is a touchdown, a safety or a conversion,
+        // and one snap can only score for one side: the check is the units, snap
+        // by snap, rather than the size of the total, which is a question of how
+        // the two sides play rather than of whether the rules are kept.
+        while !g.over && snaps < 4000 {
+            let before = g.score;
+            if g.simulate_next().is_none() {
+                break;
+            }
+            snaps += 1;
+            let gain = (g.score[0] - before[0]) + (g.score[1] - before[1]);
+            assert!(
+                matches!(gain, 0 | 1 | 2 | 3 | 6 | 8),
+                "a snap scored {gain}: {:?} became {:?}",
+                before,
+                g.score
+            );
+        }
+        assert!(g.over, "the game did not finish in {snaps} snaps");
+        assert!(g.score[0] + g.score[1] > 0, "nobody scored");
     }
 
     #[test]

@@ -2310,11 +2310,11 @@ fn kit_editor(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Optio
 // ---------------------------------------------------------------------------
 
 use nopads_core::design::{
-    self, DesignBook, DesignCall, DesignFormation, DesignFront, DesignPlay, MAX_BOOKS,
+    self, DesignBook, DesignCall, DesignFormation, DesignFront, DesignPlay, Drop, MAX_BOOKS,
     MAX_FORMATIONS, MAX_PLAYS,
 };
 use nopads_core::math::Vec2;
-use nopads_core::playbook::{Coverage, DefRole, Formation, OffRole, PlayFamily};
+use nopads_core::playbook::{Coverage, DefRole, Formation, Handoff, OffRole, PlayFamily};
 
 /// The box the yard grid is drawn in.
 const FIELD_L: i32 = 46;
@@ -2705,6 +2705,14 @@ fn play_editor(
                 PlayFamily::QuickPass
             };
         }
+        // The quarterback's own setup: a run's handoff, a pass's drop. They are
+        // the two things about a play that are not a man's path.
+        if input.pressed.preview && !play.family.is_pass() {
+            play.handoff = play.handoff.next();
+        }
+        if input.pressed.dummy && play.family.is_pass() {
+            play.drop = play.drop.next();
+        }
         if input.pressed.shoulder {
             // Who takes the ball: the five skill spots in the order they line
             // up, the quarterback included, so the man in the backfield the
@@ -2763,9 +2771,14 @@ fn play_editor(
             320,
             40,
             &format!(
-                "DRAWING {} - {} - {}",
+                "DRAWING {} - {} - {} - {}",
                 role.label(),
                 if play.family.is_pass() { "PASS" } else { "RUN" },
+                if play.family.is_pass() {
+                    format!("DROP {}", play.drop.label())
+                } else {
+                    format!("HANDOFF {}", play.handoff.label())
+                },
                 if pen { "PEN DOWN" } else { "PEN UP" }
             ),
             1,
@@ -2804,7 +2817,7 @@ fn play_editor(
                 320,
                 FIELD_B + 10,
                 &format!(
-                    "{} CARRIES IT: HIS BUTTON GIVES HIM THE BALL, A PATH IS A PITCH",
+                    "{} CARRIES IT: THE QB MEETS HIM ON THE PATHS, A PATH IS A PITCH",
                     play.carrier_role(form).label()
                 ),
                 1,
@@ -2813,7 +2826,7 @@ fn play_editor(
         }
         footer(
             &mut frame,
-            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [SELECT] WIPE  [B] DONE",
+            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [LB] DROP  [LT] HANDOFF",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -3199,13 +3212,14 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         rows.push((
             p.name.as_str(),
             if p.family.is_pass() {
-                format!("PASS - {} WAYPOINTS", ways)
+                format!("PASS - {} - {} WAYPOINTS", p.drop.label(), ways)
             } else {
                 // Whose ball it is, by the job he is wearing: a run to the tight
                 // end standing in the backfield says TE here, not RB.
                 format!(
-                    "{} RUNS - {} WAYPOINTS",
+                    "{} RUNS - {} - {} WAYPOINTS",
                     p.carrier_role(&book.offense[fi]).label(),
+                    p.handoff.label(),
                     ways
                 )
             },

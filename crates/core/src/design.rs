@@ -19,8 +19,51 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::math::Vec2;
 use crate::playbook::{
-    Assign, Book, Coverage, DefCall, DefFront, DefRole, Formation, OffRole, Play, PlayFamily, RunFit,
+    Assign, Book, Coverage, DefCall, DefFront, DefRole, Formation, Handoff, OffRole, Play,
+    PlayFamily, RunFit,
 };
+
+/// The quarterback's drop on a passing play: how many steps back he takes
+/// before his feet are set, which is how long the routes have to get open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Drop {
+    /// Whatever the family of the play normally asks for.
+    #[default]
+    None,
+    Three,
+    Five,
+    Seven,
+}
+
+impl Drop {
+    pub fn yards(self) -> Option<f32> {
+        match self {
+            Drop::None => None,
+            Drop::Three => Some(3.0),
+            Drop::Five => Some(5.0),
+            Drop::Seven => Some(7.0),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Drop::None => "BY THE BOOK",
+            Drop::Three => "3 STEP",
+            Drop::Five => "5 STEP",
+            Drop::Seven => "7 STEP",
+        }
+    }
+
+    /// The next drop across, for the editor's button.
+    pub fn next(self) -> Drop {
+        match self {
+            Drop::None => Drop::Three,
+            Drop::Three => Drop::Five,
+            Drop::Five => Drop::Seven,
+            Drop::Seven => Drop::None,
+        }
+    }
+}
 
 /// How many books the shelf holds. Each one gets a slot on the pad and a name.
 pub const MAX_BOOKS: usize = 6;
@@ -127,6 +170,11 @@ pub struct DesignPlay {
     /// job is called the back: a tight end standing in the backfield carries it
     /// the same way the back does. Ignored on a pass.
     pub carrier: usize,
+    /// What kind of give it is when the ball changes hands, or that the
+    /// quarterback keeps it and the run is only a fake.
+    pub handoff: Handoff,
+    /// How many steps the quarterback drops on a pass.
+    pub drop: Drop,
 }
 
 impl DesignPlay {
@@ -136,6 +184,8 @@ impl DesignPlay {
             family: PlayFamily::QuickPass,
             routes: Default::default(),
             carrier: OffRole::Back.index(),
+            handoff: Handoff::Plain,
+            drop: Drop::None,
         }
     }
 
@@ -166,6 +216,8 @@ impl DesignPlay {
             family: p.family,
             routes,
             carrier,
+            handoff: Handoff::Plain,
+            drop: Drop::None,
         }
     }
 
@@ -841,11 +893,12 @@ fn design_play(
     p: &DesignPlay,
 ) -> Play {
     let pass = p.family.is_pass();
-    let drop = match p.family {
+    // The player's drop if he set one, the family's own if he left it alone.
+    let drop = p.drop.yards().unwrap_or(match p.family {
         PlayFamily::QuickPass | PlayFamily::Screen => 3.0,
         PlayFamily::DropbackPass | PlayFamily::PlayAction => 5.0,
         _ => 0.0,
-    };
+    });
     let mut assignments: Vec<(OffRole, Assign)> = Vec::new();
     for slot in 0..7 {
         let role = form.roles[slot];
@@ -868,13 +921,20 @@ fn design_play(
                 }
             }
             OffRole::Qb => {
-                assignments.push((
-                    role,
-                    Assign::PassBlock {
-                        slide: 0.0,
-                        max_depth: if pass { drop } else { 1.0 },
-                    },
-                ));
+                if !pass && !rel.is_empty() {
+                    // On a run the quarterback's path is the start of the play
+                    // and the line he runs to make the handoff: the two men meet
+                    // where the drawing says they do, not on a timer.
+                    assignments.push((role, Assign::Route { points: rel, depth: 0 }));
+                } else {
+                    assignments.push((
+                        role,
+                        Assign::PassBlock {
+                            slide: 0.0,
+                            max_depth: if pass { drop } else { 1.0 },
+                        },
+                    ));
+                }
             }
             OffRole::Lg | OffRole::Rg => {
                 assignments.push((
@@ -941,6 +1001,7 @@ fn design_play(
         family: p.family,
         formation: Formation::Custom(id),
         drop,
+        handoff: p.handoff,
         run_side: 0,
         flip: false,
         assignments,
@@ -1045,6 +1106,46 @@ fn family_name(f: PlayFamily) -> &'static str {
         PlayFamily::PlayAction => "PlayAction",
         PlayFamily::Screen => "Screen",
     }
+}
+
+fn handoff_name(h: Handoff) -> &'static str {
+    match h {
+        Handoff::Plain => "plain",
+        Handoff::Forward => "forward",
+        Handoff::Inside => "inside",
+        Handoff::Lateral => "lateral",
+        Handoff::Fake => "fake",
+    }
+}
+
+fn parse_handoff(s: &str) -> Option<Handoff> {
+    Some(match s {
+        "plain" => Handoff::Plain,
+        "forward" => Handoff::Forward,
+        "inside" => Handoff::Inside,
+        "lateral" => Handoff::Lateral,
+        "fake" => Handoff::Fake,
+        _ => return None,
+    })
+}
+
+fn drop_name(d: Drop) -> &'static str {
+    match d {
+        Drop::None => "none",
+        Drop::Three => "3",
+        Drop::Five => "5",
+        Drop::Seven => "7",
+    }
+}
+
+fn parse_drop(s: &str) -> Option<Drop> {
+    Some(match s {
+        "none" => Drop::None,
+        "3" => Drop::Three,
+        "5" => Drop::Five,
+        "7" => Drop::Seven,
+        _ => return None,
+    })
 }
 
 fn parse_family(s: &str) -> Option<PlayFamily> {
@@ -1157,13 +1258,15 @@ pub fn text() -> String {
         for (fi, plays) in book.plays.iter().enumerate() {
             for p in plays {
                 out.push_str(&format!(
-                    "play2 {} {} {} {} {} {}\n",
+                    "play2 {} {} {} {} {} {} {} {}\n",
                     bi,
                     fi,
                     word(&p.name),
                     family_name(p.family),
                     routes_text(&p.routes),
-                    p.carrier
+                    p.carrier,
+                    handoff_name(p.handoff),
+                    drop_name(p.drop)
                 ));
             }
         }
@@ -1329,6 +1432,10 @@ pub fn parse(text: &str) {
                     .and_then(|s| s.parse::<usize>().ok())
                     .filter(|c| *c < 7)
                     .unwrap_or(OffRole::Back.index());
+                // Written last, so a play saved before the handoff was a choice
+                // reads back as the plain exchange it used to be.
+                let handoff = parts.next().and_then(parse_handoff).unwrap_or_default();
+                let drop = parts.next().and_then(parse_drop).unwrap_or_default();
                 let b = entry(&mut books, bi);
                 if let Some(list) = b.plays.get_mut(fi) {
                     if list.len() < MAX_PLAYS {
@@ -1337,6 +1444,8 @@ pub fn parse(text: &str) {
                             family,
                             routes: parse_routes(routes),
                             carrier,
+                            handoff,
+                            drop,
                         });
                     }
                 }
@@ -1446,6 +1555,8 @@ pub fn parse(text: &str) {
                             family,
                             routes: drawn,
                             carrier: OffRole::Back.index(),
+                            handoff: Handoff::Plain,
+                            drop: Drop::None,
                         });
                     }
                 }

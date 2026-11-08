@@ -4109,7 +4109,7 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 )
             } else {
                 format!(
-                    "{} ball   MOVE   A/B/X/Y GIVES IT TO HIM   KEEP IT BY NOT PRESSING   [SELECT] {}   [START] PAUSE",
+                    "{} ball   MOVE   A/B/X/Y PITCH IT BACK   [SELECT] {}   [START] PAUSE",
                     self.off_abbr,
                     cam_name(mode)
                 )

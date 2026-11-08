@@ -280,6 +280,59 @@ impl Assign {
     }
 }
 
+/// How the quarterback gives the ball to the man the play was drawn for.
+///
+/// The exchange is two men meeting, and where they meet is the drawing's
+/// business: the quarterback's own path is the start of the play and the line he
+/// runs to make the give. This says what kind of give it is when they get there,
+/// which is what turns a drawn play into a sweep, a draw, a bootleg or a play
+/// action.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Handoff {
+    /// The plain exchange, the one every drawn play had before there was a
+    /// choice: the ball changes hands at the mesh.
+    #[default]
+    Plain,
+    /// Handed forward, in front of the runner, behind the line.
+    Forward,
+    /// Handed back and inside, the runner coming across the quarterback's face.
+    Inside,
+    /// Tossed out behind the runner on a sweep. The only one that can be made
+    /// with the runner level with the ball.
+    Lateral,
+    /// Sold and kept: the runner runs his path as a decoy and the quarterback
+    /// never gives it up.
+    Fake,
+}
+
+impl Handoff {
+    /// True when the ball actually changes hands.
+    pub fn gives_it(self) -> bool {
+        !matches!(self, Handoff::Fake)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Handoff::Plain => "HANDOFF",
+            Handoff::Forward => "FORWARD",
+            Handoff::Inside => "INSIDE",
+            Handoff::Lateral => "OUTSIDE",
+            Handoff::Fake => "FAKE",
+        }
+    }
+
+    /// The next kind across, for the editor's button.
+    pub fn next(self) -> Handoff {
+        match self {
+            Handoff::Plain => Handoff::Forward,
+            Handoff::Forward => Handoff::Inside,
+            Handoff::Inside => Handoff::Lateral,
+            Handoff::Lateral => Handoff::Fake,
+            Handoff::Fake => Handoff::Plain,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Play {
     pub name: &'static str,
@@ -288,6 +341,8 @@ pub struct Play {
     pub formation: Formation,
     /// Depth of the quarterback's drop, in yards.
     pub drop: f32,
+    /// What kind of give the handoff is.
+    pub handoff: Handoff,
     pub run_side: i8,
     /// True when the design runs to the other side of the formation than it was
     /// drawn: what the audible's flip toggle sets.
@@ -419,6 +474,7 @@ fn play(
         family,
         formation,
         drop,
+        handoff: Handoff::Plain,
         run_side,
         flip: false,
         assignments: assignments.to_vec(),

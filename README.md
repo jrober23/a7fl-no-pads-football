@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.98-windows-x86_64.zip` from the
+Grab `7on7-v0.25.99-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -249,12 +249,27 @@ going for the pick.
   any of them leaves the ball with the man who has it. A man with no path blocks.
   That is the whole read option: point the ball at the quarterback, draw the back
   and the tight end coming round, and decide at the mesh -- a pitch into traffic
-  can come out of the catcher's hands. The man the play was drawn to carry comes up
-  first, on his own face button: pressing it hands him the ball, and pressing
-  nothing keeps it with the quarterback. Whoever has it can give it on while he is
-  still behind the line, so a back who takes the first one can pitch again to the
-  man trailing him: that second pitch is the triple option. Past the line the option is gone and the buttons are the runner's moves
-  again. The computer runs the same play the same way: it reads the end on the
+  can come out of the catcher's hands. The ball is handed over by the two men
+  meeting, not by a button: the quarterback runs his own drawn path — his start,
+  and the line he takes to the mesh — and gives it up as soon as he and the man
+  the play was drawn for get to each other. Draw the quarterback a path that
+  crosses the runner's and that crossing is where the handoff happens; leave him
+  no path and he stands and waits for the runner to come to him. Whoever has it
+  can give it on while he is still behind the line, so a back who takes the first
+  one can pitch again to the man trailing him: that second pitch is the triple
+  option. Past the line the option is gone and the buttons are the runner's moves
+  again. The buttons are never the handoff: a man already carrying it is not on
+  one, and the ones that are up are the pitch.
+
+  What kind of give it is, the designer sets, and it changes the play: **FORWARD**
+  hands it in front of the runner, **INSIDE** hands it back and across the
+  quarterback's face, **OUTSIDE** is a toss that can be made with the runner
+  already level with the ball, and **FAKE** is sold and kept — the runner runs his
+  path as a decoy and the quarterback keeps it, so a run becomes a bootleg and a
+  pass becomes a play action. On a pass the same screen sets the drop: **3 STEP**,
+  **5 STEP** or **7 STEP**, and the routes have that many steps' worth of time to
+  get open. Left trigger cycles the handoff, left bumper the drop, and the line
+  under the play's name says which one is set. The computer runs the same play the same way: it reads the end on the
   play side once, hands off if he stays wide, keeps it if he crashes down, and
   gives it on to the trailer when they come for the keeper. The defense is drawn
   the same way: a front of X's, then a call whose

@@ -2,7 +2,9 @@
 //! ahead of the ball is not a target at all -- the man carrying it keeps it.
 
 use nopads_core::math::Vec2;
-use nopads_core::playbook::{defensive_playbook, Assign, Formation, OffRole, Play, PlayFamily};
+use nopads_core::playbook::{
+    defensive_playbook, Assign, Formation, Handoff, OffRole, Play, PlayFamily,
+};
 use nopads_core::sim::{OptionChoice, PlaySim, QbControl, SnapSetup, SNAP_DELAY};
 use nopads_core::team::league_teams;
 
@@ -30,6 +32,7 @@ fn option_play() -> Play {
         family: PlayFamily::QbRun,
         formation: Formation::Pistol,
         drop: 0.0,
+        handoff: Handoff::Plain,
         run_side: 1,
         flip: false,
         assignments: vec![
@@ -456,26 +459,37 @@ fn a_jet_sweep_takes_the_ball_only_when_he_gets_behind_the_ball() {
     );
 }
 
-/// The ball is given, not taken. The man the play was drawn for is the first
-/// face button, and pressing nothing leaves it with the quarterback.
+/// The handoff is a meeting now, not a button: the quarterback runs the start
+/// of the play, the man the ball is drawn for comes to him, and the ball changes
+/// hands when they get there. Pressing nothing is not a way to keep it, and no
+/// face button gives it away -- the buttons are the pitch.
 #[test]
-fn the_handoff_is_on_a_button_and_then_so_is_the_pitch() {
+fn the_handoff_is_a_meeting_and_the_buttons_are_the_pitch() {
     let mut play = triple_option_play();
     play.name = "TE HANDOFF";
     play.family = PlayFamily::RunInside;
+    // Both men are sent to the same spot: the quarterback's path is his start,
+    // and where it crosses the runner's path is where the ball is given.
+    let qb_spot = play.alignment(OffRole::Qb);
+    let te_spot = play.alignment(OffRole::Slot);
+    let meet = Vec2::new(
+        (qb_spot.x + te_spot.x) * 0.5,
+        (qb_spot.y + te_spot.y) * 0.5,
+    );
     for (role, a) in play.assignments.iter_mut() {
         match role {
-            // The quarterback is not the carrier on this one: the ball is drawn
-            // for the tight end, so the quarterback has a pocket to stand in.
             OffRole::Qb => {
-                *a = Assign::PassBlock {
-                    slide: 0.0,
-                    max_depth: 1.0,
+                *a = Assign::Route {
+                    points: vec![Vec2::new(meet.x - qb_spot.x, meet.y - qb_spot.y)],
+                    depth: 0,
                 }
             }
             OffRole::Slot => {
                 *a = Assign::Carry {
-                    points: vec![Vec2::new(0.5, -2.0), Vec2::new(0.5, -1.5)],
+                    points: vec![
+                        Vec2::new((meet.x + te_spot.x) * 0.5, 0.0),
+                        Vec2::new(meet.x, meet.y - te_spot.y),
+                    ],
                 }
             }
             OffRole::WideL => {
@@ -487,29 +501,34 @@ fn the_handoff_is_on_a_button_and_then_so_is_the_pitch() {
             _ => {}
         }
     }
-    let mut sim = to_the_ball_with(play, 61);
+    let mut sim = to_the_ball_ai(play, 61);
     let qb = man(&sim, OffRole::Qb);
     let te = man(&sim, OffRole::Slot);
     let back = man(&sim, OffRole::WideL);
+    // Nobody presses anything: the two men meet and the ball is given.
     let mut guard = 0;
-    while sim.t < SNAP_DELAY + 1.2 && sim.result.is_none() && guard < 220 {
+    while sim.ball.holder == Some(qb) && sim.result.is_none() && guard < 600 {
         sim.step(1.0 / 60.0);
         guard += 1;
     }
-    assert_eq!(sim.ball.holder, Some(qb), "the handoff happened on its own");
-    let targets = sim.pitch_targets();
     assert_eq!(
-        targets.first().map(|(_, i)| *i),
+        sim.ball.holder,
         Some(te),
-        "the man drawn to carry is the first button: {targets:?}"
+        "the handoff is made on the meeting: t={:.2} te={:?} qb={:?} events={:?}",
+        sim.t,
+        sim.players[te].pos,
+        sim.players[qb].pos,
+        sim.events.iter().rev().take(3).map(|e| e.text.clone()).collect::<Vec<_>>()
     );
-    assert!(sim.pitch(te), "pressing his button gives him the ball");
-    assert_eq!(sim.ball.holder, Some(te), "{:?}", sim.events.last());
-    let after = sim.pitch_targets();
+    // And the man who already has it is not a button any more: the buttons are
+    // the men behind the ball.
+    let targets = sim.pitch_targets();
     assert!(
-        after.iter().any(|(_, i)| *i == back),
-        "the man behind him is the next button: {after:?}"
+        !targets.iter().any(|(_, i)| *i == te),
+        "the drawn carrier is not on a button: {targets:?}"
     );
-    assert!(sim.pitch(back), "and it goes to him");
-    assert_eq!(sim.ball.holder, Some(back), "{:?}", sim.events.last());
+    assert!(
+        targets.iter().any(|(_, i)| *i == back),
+        "the man behind him is on one: {targets:?}"
+    );
 }
