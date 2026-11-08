@@ -1014,7 +1014,7 @@ fn play_kickoff(
     (view, pad, finished, score)
 }
 
-/// One of the sessions under MORE MODES, on the practice field.
+/// One of the sessions under GAME MODES, on the practice field.
 ///
 /// A drill has no clubs to pick and no clock to set: it is one man and a pad
 /// against the drill itself. The two clubs are the league's first two so the

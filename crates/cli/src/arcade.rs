@@ -313,7 +313,7 @@ pub struct Arcade {
     /// is no rematch after it and no front end inside it, because the season
     /// screen is what comes next and it needs the result.
     series: bool,
-    /// A game, or one of the drills under MORE MODES.
+    /// A game, or one of the drills under GAME MODES.
     mode: Mode,
     /// The tutorial's step, and the gauntlet's wave and points. They are the
     /// drill's own scoreboard: a drill has no clock and no score on the bug.
@@ -444,7 +444,7 @@ impl Arcade {
         self
     }
 
-    /// One of the modes under MORE MODES rather than a game. A drill takes the
+    /// One of the modes under GAME MODES rather than a game. A drill takes the
     /// same pad, the same picture and the same snap loop, and plays no clock.
     pub fn with_mode(mut self, mode: Mode) -> Self {
         self.mode = mode;
@@ -617,7 +617,7 @@ impl Arcade {
     }
 
     // ------------------------------------------------------------------
-    // The modes under MORE MODES
+    // The modes under GAME MODES
     // ------------------------------------------------------------------
 
     fn drill(&mut self) {
@@ -3349,7 +3349,7 @@ impl SnapSim for ThrowOffSim<'_> {
 }
 
 /// What the arcade is doing. `Game` is the game; the rest are the sessions under
-/// MORE MODES, which take the same pad and picture without a clock on them.
+/// GAME MODES, which take the same pad and picture without a clock on them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
     Game,

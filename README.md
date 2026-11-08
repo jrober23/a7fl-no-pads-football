@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.94-windows-x86_64.zip` from the
+Grab `7on7-v0.25.95-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -185,17 +185,18 @@ On defense the same pad does different work:
 
 ### The start menu
 
-Bare `7on7` opens on the start menu: **EXHIBITION**, **SEASON**, **MORE MODES**,
+Bare `7on7` opens on the start menu: **GAME MODES**, **SEASON**, **ROSTER**,
 **CUSTOMIZATION**, **SETTINGS**, **QUIT**. The stick moves, A selects, START leaves. `7on7 arcade --home 3 --away 7`
 skips the front end and goes straight to kickoff with the clubs named, which is what
 the film and timing paths use.
 
-### More modes
+### Game modes
 
-**MORE MODES** is the three sessions that are drills rather than games: no clock, no
-season, nothing on the scoreboard, and you leave when you have had enough.
+**GAME MODES** is everything you can play: **EXHIBITION** is one game picked in a
+minute, and under it are the three sessions that are drills rather than games — no
+clock, no season, nothing on the scoreboard, and you leave when you have had enough.
 
-All three ask for the same two clubs and the same side of the ball the exhibition
+All four ask for the same two clubs and the same side of the ball the exhibition
 screen does — home team, away team, which end you take — so a drill is played with
 the club you meant to practise with. **PRACTICE** goes on to ask which book to run,
 the same picker the exhibition screen uses, so a book drawn on the shelf is what the
@@ -335,7 +336,7 @@ so nothing on a jersey belongs to a club somebody already owns.
 
 ### Season
 
-**SEASON** sits under EXHIBITION and plays a whole league year rather than one game.
+**SEASON** sits under GAME MODES and plays a whole league year rather than one game.
 Pick a club, then the book it runs — the league's or one off your own shelf — and
 then the length, anything from four weeks to the full thirty-one —
 and the season is scheduled round robin, so every club plays every week and no two

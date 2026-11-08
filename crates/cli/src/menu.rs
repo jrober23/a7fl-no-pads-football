@@ -88,7 +88,7 @@ pub enum Track {
     Both,
 }
 
-/// Which of the sessions under MORE MODES the player picked.
+/// Which of the sessions under GAME MODES the player picked.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DrillKind {
     Tutorial(Track),
@@ -102,14 +102,19 @@ pub enum Front {
     Friendly(Kickoff),
     /// A whole season, already scheduled.
     Season(Box<Season>),
-    /// One of the sessions under MORE MODES: no clock, no season, a drill, on
+    /// One of the sessions under GAME MODES: no clock, no season, a drill, on
     /// the same clubs and the same book the game would have been played with, and
     /// the difficulty it was told to play against.
     Drill(DrillKind, Kickoff, usize),
 }
 
-enum Start {
+/// What the player picked under GAME MODES: a game, or one of the drills.
+enum ModesPick {
     Exhibition,
+    Drill(DrillKind),
+}
+
+enum Start {
     Season,
     Modes,
     Roster,
@@ -123,25 +128,26 @@ pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> O
     let mut pad = pad;
     loop {
         match start_screen(view, &mut pad, settings)? {
-            Start::Exhibition => {
-                if let Some(kick) = exhibition(view, &mut pad, settings) {
-                    return Some(Front::Friendly(kick));
-                }
-            }
             Start::Season => {
                 if let Some(season) = season_setup(view, &mut pad, settings) {
                     return Some(Front::Season(Box::new(season)));
                 }
             }
-            Start::Modes => {
-                if let Some(kind) = modes_screen(view, &mut pad) {
+            Start::Modes => match modes_screen(view, &mut pad) {
+                Some(ModesPick::Exhibition) => {
+                    if let Some(kick) = exhibition(view, &mut pad, settings) {
+                        return Some(Front::Friendly(kick));
+                    }
+                }
+                Some(ModesPick::Drill(kind)) => {
                     if let Some((kick, difficulty)) =
                         drill_kickoff(view, &mut pad, kind, settings.difficulty)
                     {
                         return Some(Front::Drill(kind, kick, difficulty));
                     }
                 }
-            }
+                None => {}
+            },
             Start::Roster => {
                 roster_grid(view, &mut pad)?;
             }
@@ -309,19 +315,17 @@ fn beat() {
 /// first, and it is laid out corner to corner on the grid rather than in a list
 /// of numbers that only means anything on one canvas.
 fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
-    const LABELS: [&str; 7] = [
-        "EXHIBITION",
+    const LABELS: [&str; 6] = [
+        "GAME MODES",
         "SEASON",
-        "MORE MODES",
         "ROSTER",
         "CUSTOMIZATION",
         "SETTINGS",
         "QUIT",
     ];
-    const NOTES: [&str; 7] = [
-        "ONE GAME, PICKED IN A MINUTE",
+    const NOTES: [&str; 6] = [
+        "EXHIBITION, TUTORIAL, PRACTICE, THE GAUNTLET",
         "A CLUB, A LEAGUE, A SEASON",
-        "TUTORIAL, PRACTICE, THE GAUNTLET",
         "DEPTH CHART AND ROSTER FOR EVERY CLUB",
         "MAKE A CLUB, REPAINT A KIT",
         "CAMERA, LENS AND DISPLAY",
@@ -332,22 +336,8 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
     let h = frame.h as i32;
     let cx = w / 2;
 
-    // The masthead arrives first and settles: the title is the one thing on the
-    // screen that is not a choice.
-    let hero = ui::enter(t, 0, LABELS.len() + 3);
-    let title_y = (h as f32 * 0.075) as i32 - ((1.0 - hero) * 6.0) as i32;
-    ui::heading(frame, cx, title_y, "7-ON-7", ui::T_HERO, ui::ACCENT);
-    let sub = "NO PADS FOOTBALL";
-    ui::caption(
-        frame,
-        cx - ui::tracked_width(sub, ui::T_CAPTION, 2) / 2,
-        title_y + 58,
-        sub,
-        ui::MUTED,
-    );
-
-    // One card holding every choice: the rows are a list, so the card is the
-    // surface and the accent bar is the selection.
+    // The card sits where the title used to: GAME MODES is the first choice on
+    // the screen, and EXHIBITION is the first of the modes behind it.
     let card_w = (w - 160).clamp(220, 360);
     let row_h = 24;
     let gap = 5;
@@ -355,13 +345,13 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
     let n = LABELS.len() as i32;
     let card_h = pad * 2 + n * row_h + (n - 1) * gap;
     let card_x = cx - card_w / 2;
-    let card_y = (h as f32 * 0.30) as i32;
-    let lit = ui::enter(t, 1, LABELS.len() + 3);
+    let card_y = (h as f32 * 0.19) as i32;
+    let lit = ui::enter(t, 0, LABELS.len() + 2);
     ui::card(frame, card_x, card_y, card_w, card_h, ui::ACCENT, lit);
 
     for (i, label) in LABELS.iter().enumerate() {
         let y = card_y + pad + i as i32 * (row_h + gap);
-        let heat = slide.heat(i) * ui::enter(t, i + 2, LABELS.len() + 3);
+        let heat = slide.heat(i) * ui::enter(t, i + 1, LABELS.len() + 2);
         ui::row(
             frame,
             card_x + pad,
@@ -393,7 +383,7 @@ fn start_screen(
     pad: &mut Option<&mut Pad>,
     _settings: &mut Settings,
 ) -> Option<Start> {
-    const ITEMS: usize = 7;
+    const ITEMS: usize = 6;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -424,12 +414,11 @@ fn start_screen(
         }
         if input.pressed.a {
             return Some(match pick {
-                0 => Start::Exhibition,
+                0 => Start::Modes,
                 1 => Start::Season,
-                2 => Start::Modes,
-                3 => Start::Roster,
-                4 => Start::Customize,
-                5 => Start::Settings,
+                2 => Start::Roster,
+                3 => Start::Customize,
+                4 => Start::Settings,
                 _ => Start::Quit,
             });
         }
@@ -438,14 +427,19 @@ fn start_screen(
 }
 
 // ---------------------------------------------------------------------------
-// More modes
+// Game modes
 // ---------------------------------------------------------------------------
 
-/// The three sessions under MORE MODES, with the line the screen says about each.
-/// They are drills, not games: no clock, no season, one thing to do.
-const MODES: [(&str, &str); 3] = [
+/// What sits under GAME MODES, with the line the screen says about each. The
+/// exhibition is a game and the rest are drills; the only difference is the
+/// clock, so they are one list rather than two screens.
+const MODES: [(&str, &str); 4] = [
+    ("EXHIBITION", "ONE GAME, PICKED IN A MINUTE"),
     ("TUTORIAL", "THE OFFENSE ONE CONTROL AT A TIME, OFF THE TEN"),
-    ("PRACTICE", "YOUR CALL, YOUR PACE: NO CLOCK, NO DOWNS, SAME SPOT"),
+    (
+        "PRACTICE",
+        "YOUR CALL, YOUR PACE: NO CLOCK, NO DOWNS, SAME SPOT",
+    ),
     (
         "THREE-ON-ONE GAUNTLET",
         "FIVE THROW-OFF RETURNS, THREE GUNNERS, NOBODY ELSE",
@@ -462,8 +456,8 @@ fn draw_modes(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
         .unwrap_or("BACK TO THE MAIN MENU");
     draw_option_screen(
         frame,
-        "MORE MODES",
-        "DRILLS, NOT GAMES: NO CLOCK, NO SEASON",
+        "GAME MODES",
+        "A GAME OR A DRILL: THE CLOCK IS THE ONLY DIFFERENCE",
         &rows,
         slide,
         note,
@@ -667,7 +661,7 @@ fn practice_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<Track>
     )
 }
 
-fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<DrillKind> {
+fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<ModesPick> {
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -694,9 +688,10 @@ fn modes_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<DrillKind
         }
         if input.pressed.a {
             return match pick {
-                0 => tutorial_screen(view, pad).map(DrillKind::Tutorial),
-                1 => practice_screen(view, pad).map(DrillKind::Practice),
-                2 => Some(DrillKind::Gauntlet),
+                0 => Some(ModesPick::Exhibition),
+                1 => tutorial_screen(view, pad).map(|t| ModesPick::Drill(DrillKind::Tutorial(t))),
+                2 => practice_screen(view, pad).map(|t| ModesPick::Drill(DrillKind::Practice(t))),
+                3 => Some(ModesPick::Drill(DrillKind::Gauntlet)),
                 _ => None,
             };
         }
@@ -3788,7 +3783,7 @@ fn pick_book(view: &mut View, pad: &mut Option<&mut Pad>, club: usize) -> Option
     }
 }
 
-/// One of the drills under MORE MODES, set up on the same clubs, side and book
+/// One of the drills under GAME MODES, set up on the same clubs, side and book
 /// the exhibition screen asks for. A drill has no ground to pick and no clock to
 /// set: it is played on the practice field. The toss belongs to the gauntlet, where
 /// it decides who brings the first return back; a session that has already chosen
@@ -5708,7 +5703,7 @@ mod tests {
             nopads_render::write_png(format!("{dir}/{name}.png"), &canvas).expect("write png");
         };
         let mut start = Frame::new(UI_W, UI_H);
-        draw_start(&mut start, 1, &ui::Slide::new(1), 2.0);
+        draw_start(&mut start, 0, &ui::Slide::new(0), 2.0);
         save("start", &start);
 
         let rows = [
@@ -5743,7 +5738,7 @@ mod tests {
         save("season_length", &length);
 
         // The playbook screen, with the club's own book marked, and the tutorial
-        // submenu that opens off MORE MODES.
+        // submenu that opens off GAME MODES.
         let rows: Vec<(&str, String)> = Book::ALL
             .iter()
             .map(|b| {
