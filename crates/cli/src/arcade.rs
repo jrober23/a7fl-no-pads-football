@@ -560,7 +560,7 @@ impl Arcade {
         let Some(settings) = self.settings.as_mut() else {
             return false;
         };
-        let kick = match menu::run(&mut self.view, self.pad.as_mut(), settings) {
+        let kick = match menu::run(&mut self.view, self.pad.as_mut(), settings, false) {
             Some(menu::Front::Friendly(kick)) => kick,
             // A season is run from the top of the program, not from inside a
             // game: leaving one to the front end ends it here.

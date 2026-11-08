@@ -904,7 +904,7 @@ fn cmd_arcade(args: &[String]) {
         // What the player has made is part of the league: it is read before the
         // first menu, so a created club is on every picker from the start.
         menu::load_custom();
-        match menu::run(&mut view, pad.as_mut(), &mut settings) {
+        match menu::run(&mut view, pad.as_mut(), &mut settings, true) {
             Some(menu::Front::Friendly(kick)) => {
                 let (v, p, _, _) = play_kickoff(view, pad, &settings, &kick, seed, false);
                 view = v;

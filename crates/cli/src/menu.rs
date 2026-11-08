@@ -18,7 +18,7 @@ use nopads_core::team::{
 use nopads_render::raster::Frame;
 use nopads_render::ui;
 use nopads_render::venues::{self, Venue};
-use nopads_render::{Broadcast, CameraMode};
+use nopads_render::{font, Broadcast, CameraMode};
 
 use crate::arcade::CAMERA_LABELS;
 use crate::view::{View, UI_H, UI_W};
@@ -124,8 +124,19 @@ enum Start {
 }
 
 /// Run the front end. `None` means the player quit (or closed the window).
-pub fn run(view: &mut View, pad: Option<&mut Pad>, settings: &mut Settings) -> Option<Front> {
+///
+/// `splash` puts the game's mark up before the menu: the program opens on it,
+/// and coming back to the menu from a game does not show it again.
+pub fn run(
+    view: &mut View,
+    pad: Option<&mut Pad>,
+    settings: &mut Settings,
+    splash: bool,
+) -> Option<Front> {
     let mut pad = pad;
+    if splash {
+        splash_screen(view, &mut pad)?;
+    }
     loop {
         match start_screen(view, &mut pad, settings)? {
             Start::Season => {
@@ -302,6 +313,163 @@ fn wrap(i: usize, len: usize, d: i8) -> usize {
 
 fn beat() {
     std::thread::sleep(Duration::from_millis(16));
+}
+
+// ---------------------------------------------------------------------------
+// Splash
+// ---------------------------------------------------------------------------
+
+/// The game's mark: an `7ON7` wordmark over the name, with a football above it.
+///
+/// There is no art pipeline, so the logo is geometry the same way every club
+/// badge is: the ball is an ellipse drawn a row at a time with the seam and the
+/// laces over it, and the wordmark is the type kit's glyphs, tracked out and
+/// shadowed, at the size of a mark rather than of a heading.
+fn draw_splash(frame: &mut Frame, t: f32) {
+    ui::backdrop(frame);
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    let cx = w / 2;
+
+    // Three arrivals, the way the menu's rows arrive: the ball, the name, then
+    // the line that says what to press.
+    let arrive = |i: usize| ui::enter(t, i, 3);
+    let wake = |c: Rgb, e: f32| c.lerp(ui::INK, 1.0 - e);
+    let ball = arrive(0);
+    let name = arrive(1);
+    let tag = arrive(2);
+
+    // The ball drops into place rather than fading in on the spot.
+    let ry = 28i32;
+    let cy = (h as f32 * 0.235) as i32 - ((1.0 - ball) * 14.0) as i32;
+    football(frame, cx, cy, 58, ry, wake(ui::ACCENT, ball), ui::INK);
+
+    let scale = 10usize;
+    let top = (h as f32 * 0.405) as i32;
+    wordmark(frame, cx, top, "7ON7", scale, 2, wake(ui::PAPER, name));
+
+    // The name under the wordmark, between two hairlines: the same caption the
+    // menu's cards sit on, so the splash belongs to the front end.
+    let cap = "NO PADS FOOTBALL";
+    let cw = ui::tracked_width(cap, ui::T_CAPTION, 2);
+    let cap_y = top + 7 * scale as i32 + 12;
+    let rule = 44;
+    let gap = ui::S3;
+    let edge = wake(ui::EDGE, tag);
+    frame.fill_rect_alpha(cx - cw / 2 - gap - rule, cap_y + 3, rule, 1, edge, 1.0);
+    frame.fill_rect_alpha(cx + cw / 2 + gap, cap_y + 3, rule, 1, edge, 1.0);
+    ui::caption(frame, cx - cw / 2, cap_y, cap, wake(ui::MUTED, tag));
+
+    // And the way on, once the mark has landed, breathing so the screen does not
+    // look frozen while it waits for a press.
+    if t > 0.6 {
+        let e = ui::ease_out((t - 0.6) / 0.5);
+        let breath = 0.55 + 0.45 * (t * 3.0).sin();
+        let ink = ui::MUTED.lerp(ui::PAPER, (breath * e).clamp(0.0, 1.0));
+        centered(frame, (h as f32 * 0.80) as i32, "PRESS ANY BUTTON", 1, ink);
+    }
+}
+
+/// A football, end to end: an ellipse a row at a time, the two seams that run
+/// from tip to tip, and the laces across the middle of it.
+fn football(frame: &mut Frame, cx: i32, cy: i32, rx: i32, ry: i32, skin: Rgb, seam: Rgb) {
+    let ry = ry.max(1);
+    for dy in -ry..=ry {
+        let t = dy as f32 / ry as f32;
+        let half = (rx as f32 * (1.0 - t * t).max(0.0).sqrt()).round() as i32;
+        if half > 0 {
+            frame.fill_rect(cx - half, cy + dy, half * 2, 1, skin);
+        }
+    }
+    // The seam: one arc over the laces and one under them, meeting at the tips.
+    let span = (rx as f32 * 0.78) as i32;
+    let mut prev: Option<(i32, i32, i32)> = None;
+    for step in 0..=32 {
+        let f = step as f32 / 32.0;
+        let x = cx - span + (2 * span) * step / 32;
+        let u = (2.0 * f - 1.0).abs();
+        let lift = (ry as f32 * 0.52 * (1.0 - u * u)) as i32;
+        if let Some((px, up, down)) = prev {
+            frame.line(px, up, x, cy - lift, seam, 1);
+            frame.line(px, down, x, cy + lift, seam, 1);
+        }
+        prev = Some((x, cy - lift, cy + lift));
+    }
+    // The laces: a channel down the middle with the stitches across it.
+    let lw = (rx as f32 * 0.30) as i32;
+    frame.fill_rect(cx - lw, cy - 1, lw * 2, 2, seam);
+    for i in 0..5 {
+        let x = cx - lw + 4 + (2 * (lw - 4)) * i / 4;
+        frame.fill_rect(x, cy - 6, 2, 12, seam);
+    }
+}
+
+/// The wordmark: the glyphs of the type kit drawn one at a time so they can be
+/// tracked out, with a lip of its own colour behind it rather than the shaded
+/// text used at heading size. Returns the width it took.
+fn wordmark(
+    frame: &mut Frame,
+    cx: i32,
+    y: i32,
+    text: &str,
+    scale: usize,
+    track: i32,
+    color: Rgb,
+) -> i32 {
+    let n = text.chars().count() as i32;
+    if n == 0 {
+        return 0;
+    }
+    let advance = 6 * scale as i32;
+    let total = advance * n - scale as i32 + track * (n - 1);
+    // Two passes: the word in a darker shade of its own colour, a few pixels down
+    // and to the right, and then the word itself over it. Placing the letters one
+    // at a time is what lets the two passes track the same way -- the shaded text
+    // the headings use offsets by twice the type size, which at this size is a
+    // black copy standing a letter's width away.
+    let lip = color.lerp(ui::INK, 0.55);
+    for pass in 0..2 {
+        let (dx, dy, ink) = if pass == 0 { (4, 4, lip) } else { (0, 0, color) };
+        let mut pen = cx - total / 2 + dx;
+        for ch in text.chars() {
+            let mut buf = [0u8; 4];
+            let s = ch.encode_utf8(&mut buf);
+            font::draw_styled(frame, pen, y + dy, s, scale, ink, 1, false);
+            pen += advance + track;
+        }
+    }
+    total
+}
+
+/// The splash, held until the player presses something. A button that was down
+/// when the program started does not skip the mark before it has been seen.
+fn splash_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
+    let mut t = 0.0f32;
+    let mut last = Instant::now();
+    view.reset();
+    loop {
+        let now = Instant::now();
+        let dt = now.duration_since(last).as_secs_f32().min(0.1);
+        last = now;
+        t += dt;
+        let input = pad::mix(pad.as_deref_mut(), view.poll());
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_splash(&mut frame, t);
+        if !view.show_ui(&mut frame, &[]) {
+            return None;
+        }
+        let press = input.pressed.a
+            || input.pressed.b
+            || input.pressed.x
+            || input.pressed.y
+            || input.pressed.start
+            || input.pressed.select
+            || input.pressed.throw;
+        if t > 0.6 && press {
+            return Some(());
+        }
+        beat();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -5225,6 +5393,38 @@ fn coin_flip(
 
 #[cfg(test)]
 mod tests {
+    /// The splash, one picture, so the mark can be looked at rather than argued
+    /// about.
+    #[test]
+    fn the_splash_can_be_rendered_to_pictures() {
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_splash(&mut frame, 2.0);
+        if std::env::var("NOPADS_DUMP_UI").is_ok() {
+            for dir in ["../../out/ui"] {
+                std::fs::create_dir_all(dir).ok();
+                let _ = nopads_render::capture::write_png(&format!("{dir}/splash.png"), &frame);
+            }
+        }
+        // The mark is a ball and not a circle: the amber in the top third of the
+        // screen is wider than it is tall.
+        let (mut x0, mut x1, mut y0, mut y1) = (i32::MAX, i32::MIN, i32::MAX, i32::MIN);
+        for y in 0..(UI_H as i32 / 3) {
+            for x in 0..UI_W as i32 {
+                if frame.get(x, y) == ui::ACCENT {
+                    (x0, x1) = (x0.min(x), x1.max(x));
+                    (y0, y1) = (y0.min(y), y1.max(y));
+                }
+            }
+        }
+        assert!(x1 > x0 && y1 > y0, "the ball is not on the splash");
+        assert!(
+            x1 - x0 > (y1 - y0) * 3 / 2,
+            "the mark is round, not a ball: {} wide against {} tall",
+            x1 - x0,
+            y1 - y0
+        );
+    }
+
     /// The list of modes, one picture per entry, so the notes can be read rather
     /// than argued about.
     #[test]
