@@ -925,35 +925,14 @@ fn cmd_arcade(args: &[String]) {
                 // A drill hands the view back when the player leaves it, and the
                 // front end is where they land: the modes are a place to come
                 // back to, not a game to finish.
-                let (v, p) = play_drill(
-                    view, pad, &settings, kind, &kick, difficulty, seed, None, None,
-                );
+                let (v, p) = play_drill(view, pad, &settings, kind, &kick, difficulty, seed);
                 view = v;
                 pad = p;
             }
             Some(menu::Front::Test(kick, at)) => {
-                // One snap of what he has just drawn -- a play to run, or a call
-                // to defend with -- and then straight back to the desk.
-                let difficulty = settings.difficulty;
-                let (track, play, call) = match at.side {
-                    menu::TestSide::Offense => {
-                        (menu::Track::Offense, Some(at.play), None)
-                    }
-                    menu::TestSide::Defense => {
-                        (menu::Track::Defense, None, Some(at.play))
-                    }
-                };
-                let (v, p) = play_drill(
-                    view,
-                    pad,
-                    &settings,
-                    menu::DrillKind::Practice(track),
-                    &kick,
-                    difficulty,
-                    seed,
-                    play,
-                    call,
-                );
+                // A test is its own session, not a practice drill: one drawing,
+                // over and over, and then straight back to the desk it came from.
+                let (v, p) = play_test(view, pad, &settings, &kick, at.side, at.play, seed);
                 view = v;
                 pad = p;
                 resume = Some(at);
@@ -1066,8 +1045,6 @@ fn play_drill(
     kick: &menu::Kickoff,
     difficulty: usize,
     seed: u64,
-    start_play: Option<usize>,
-    start_def_call: Option<usize>,
 ) -> (view::View, Option<pad::Pad>) {
     let mode = match kind {
         menu::DrillKind::Tutorial(_) => arcade::Mode::Tutorial,
@@ -1099,15 +1076,43 @@ fn play_drill(
         .with_contain(difficulty != 0)
         // The toss is shared: whoever won it brings the first one back.
         .with_first_return(if kick.receive { 0 } else { 1 });
-    if let Some(play) = start_play {
-        // A designed play is called for him: the first thing he sees is the play
-        // he drew running, not the sheet he would call it from.
-        arcade = arcade.with_start_play(play);
-    }
-    if let Some(call) = start_def_call {
-        // And on defense the call is already made, against the machine.
-        arcade = arcade.with_start_def_call(call);
-    }
+    arcade.run();
+    arcade.into_parts()
+}
+
+/// A designed play or call, run as a session of its own: the same drawing every
+/// snap, on the practice field, with no call sheet, no clock and no downs. It is
+/// not a practice drill and does not go through one -- there is nothing else to
+/// call and nothing to teach, and the only thing being watched is the drawing.
+fn play_test(
+    view: view::View,
+    pad: Option<pad::Pad>,
+    settings: &settings::Settings,
+    kick: &menu::Kickoff,
+    side: menu::TestSide,
+    at: usize,
+    seed: u64,
+) -> (view::View, Option<pad::Pad>) {
+    let teams = league_teams();
+    let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
+    game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(settings.difficulty));
+    let track = match side {
+        menu::TestSide::Offense => arcade::Track::Offense,
+        menu::TestSide::Defense => arcade::Track::Defense,
+    };
+    let mut arcade = arcade::Arcade::new(game, pad, view)
+        .with_camera(settings.camera)
+        .with_lens(settings.lens_zoom, settings.lens_tilt)
+        .with_settings(settings.clone())
+        .with_venue(0)
+        .with_my_team(0)
+        .with_mode(arcade::Mode::Test)
+        .with_track(track)
+        .with_book(kick.book);
+    arcade = match side {
+        menu::TestSide::Offense => arcade.with_test_play(at),
+        menu::TestSide::Defense => arcade.with_test_call(at),
+    };
     arcade.run();
     arcade.into_parts()
 }

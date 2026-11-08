@@ -328,12 +328,13 @@ pub struct Arcade {
     contain: bool,
     /// Who gets the first return in the gauntlet, from the opening toss.
     first_return: usize,
-    /// A play the session opens on, called for the player: the one he has just
-    /// drawn, run before the call sheet is ever shown.
-    start_call: Option<usize>,
-    /// The same for the other side of the ball: a defensive call the designer
-    /// has just drawn, called against the machine's offense.
-    start_def_call: Option<usize>,
+    /// What a test session is watching: one play out of the book, or one call
+    /// out of the defensive book. A test has no sheet, so this is the whole of
+    /// what it runs.
+    test_play: Option<usize>,
+    test_call: Option<usize>,
+    /// The name of the drawing being tested, for every line over the field.
+    test_name: Option<&'static str>,
 }
 
 /// What the player asked for at the final whistle.
@@ -387,8 +388,9 @@ impl Arcade {
             teaching: Track::Offense,
             contain: true,
             first_return: 0,
-            start_call: None,
-            start_def_call: None,
+            test_play: None,
+            test_call: None,
+            test_name: None,
             game,
             pad,
             view,
@@ -486,17 +488,15 @@ impl Arcade {
         self
     }
 
-    /// Open the session on a play already called: a designed play is run the
-    /// moment it is asked for, rather than after a walk through the sheet.
-    pub fn with_start_play(mut self, play: usize) -> Self {
-        self.start_call = Some(play);
+    /// What the test is watching: the play the designer has just drawn.
+    pub fn with_test_play(mut self, play: usize) -> Self {
+        self.test_play = Some(play);
         self
     }
 
-    /// The same on defense: the call is made and the machine's offense runs a
-    /// play at it, so a drawn coverage can be watched before the next one.
-    pub fn with_start_def_call(mut self, call: usize) -> Self {
-        self.start_def_call = Some(call);
+    /// And on the other side of the ball: the call he has just drawn.
+    pub fn with_test_call(mut self, call: usize) -> Self {
+        self.test_call = Some(call);
         self
     }
 
@@ -645,6 +645,7 @@ impl Arcade {
     fn drill(&mut self) {
         match self.mode {
             Mode::Gauntlet => self.drill_returns(),
+            Mode::Test => self.playtest(),
             Mode::Practice => match self.track {
                 Track::Offense => self.drill_offense(false),
                 Track::Defense => self.drill_defense(false),
@@ -668,6 +669,193 @@ impl Arcade {
                 }
             },
             Mode::Game => {}
+        }
+    }
+
+    /// A designed play or call, run over and over: the same thing every snap,
+    /// with nothing to call and no sheet in the way. It is its own session
+    /// rather than a practice drill, because what is being watched is one
+    /// drawing -- the questions are whether it works and what to change, not
+    /// what to run next.
+    fn playtest(&mut self) {
+        match self.teaching {
+            Track::Defense => self.playtest_defense(),
+            _ => self.playtest_offense(),
+        }
+    }
+
+    fn playtest_offense(&mut self) {
+        const YARDS_TO_GOAL: f32 = 30.0;
+        let Some(index) = self.test_play else {
+            return;
+        };
+        let Some(play) = self.book.get(index).cloned() else {
+            return;
+        };
+        self.test_name = Some(play.name);
+        let mut seed = self.game.seed ^ 0x7E57_0FF;
+        self.view.reset();
+        while !self.quit {
+            let teams = [self.game.teams[0].clone(), self.game.teams[1].clone()];
+            let los = nopads_core::field::spot_from_yards_to_goal(YARDS_TO_GOAL, 1);
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let setup = nopads_core::sim::SnapSetup {
+                los,
+                ball_y: 0.0,
+                direction: 1,
+                down: 1,
+                to_go: 10.0,
+                seed,
+                offense_team: 0,
+                defense_team: 1,
+                is_try: false,
+            };
+            let def = self.cpu_defense();
+            let mut sim = PlaySim::new(&teams[0], &teams[1], &play, &def, &setup);
+            sim.difficulty = self.game.difficulty;
+            sim.await_snap(true);
+            let header = self.drill_header();
+            let board = drill_board(&teams, YARDS_TO_GOAL);
+            let book: &[Play] = &self.book;
+            let off_abbr = teams[0].abbr.clone();
+            let mut caller = OffenseSnap {
+                header: &header,
+                off_abbr: &off_abbr,
+                book,
+                my_team: 0,
+                charge: None,
+                claimed: false,
+                running: false,
+                run_call: false,
+                targets: Vec::new(),
+                pitch_targets: Vec::new(),
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim: &mut sim,
+                    broadcast: &mut self.broadcast,
+                    view: &mut self.view,
+                    pad: self.pad.as_mut(),
+                    cam: &mut self.cam,
+                    flip_y: self.flip_y,
+                },
+                &mut caller,
+                &header,
+                &board,
+            );
+            if !finished {
+                self.quit = true;
+                return;
+            }
+            let Some(result) = sim.result.clone() else {
+                continue;
+            };
+            let card = vec![
+                self.drill_header(),
+                String::new(),
+                format!("  {:.0} YARDS ON THE PLAY", result.yards),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                "  [A] RUN IT AGAIN   [B] BACK TO THE DESK".to_string(),
+            ];
+            if !self.test_card(&card) {
+                return;
+            }
+        }
+    }
+
+    fn playtest_defense(&mut self) {
+        const YARDS_TO_GOAL: f32 = 30.0;
+        let Some(index) = self.test_call else {
+            return;
+        };
+        let Some(def) = self.defbook.get(index).cloned() else {
+            return;
+        };
+        self.test_name = Some(def.name);
+        let mut seed = self.game.seed ^ 0x7E57_DEF;
+        self.view.reset();
+        while !self.quit {
+            let play = self.cpu_offense();
+            let teams = [self.game.teams[0].clone(), self.game.teams[1].clone()];
+            let los = nopads_core::field::spot_from_yards_to_goal(YARDS_TO_GOAL, 1);
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let setup = nopads_core::sim::SnapSetup {
+                los,
+                ball_y: 0.0,
+                direction: 1,
+                down: 1,
+                to_go: 10.0,
+                seed,
+                offense_team: 1,
+                defense_team: 0,
+                is_try: false,
+            };
+            let mut sim = PlaySim::new(&teams[1], &teams[0], &play, &def, &setup);
+            sim.difficulty = self.game.difficulty;
+            sim.await_snap(false);
+            sim.set_human_defender(sim.nearest_defender());
+            let header = self.drill_header();
+            let board = drill_board(&teams, YARDS_TO_GOAL);
+            let defbook: &[DefCall] = &self.defbook;
+            let mut caller = DefenseSnap {
+                header: &header,
+                defbook,
+                switched: Instant::now() - Duration::from_millis(400),
+            };
+            let finished = snap_loop(
+                &mut SnapScreen {
+                    sim: &mut sim,
+                    broadcast: &mut self.broadcast,
+                    view: &mut self.view,
+                    pad: self.pad.as_mut(),
+                    cam: &mut self.cam,
+                    flip_y: self.flip_y,
+                },
+                &mut caller,
+                &header,
+                &board,
+            );
+            if !finished {
+                self.quit = true;
+                return;
+            }
+            let Some(result) = sim.result.clone() else {
+                continue;
+            };
+            let card = vec![
+                self.drill_header(),
+                String::new(),
+                format!("  {:.0} YARDS ALLOWED", result.yards),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                "  [A] RUN IT AGAIN   [B] BACK TO THE DESK".to_string(),
+            ];
+            if !self.test_card(&card) {
+                return;
+            }
+        }
+    }
+
+    /// The card after a tested play or call. It waits for the player: a test is
+    /// being watched, so it does not step itself on the way a practice drill's
+    /// card does.
+    fn test_card(&mut self, lines: &[String]) -> bool {
+        if !self.view.page(lines) {
+            self.quit = true;
+            return false;
+        }
+        loop {
+            let input = self.wait(Duration::from_millis(24));
+            if input.pressed.b {
+                self.quit = true;
+                return false;
+            }
+            if input.pressed.a || input.pressed.start {
+                return true;
+            }
         }
     }
 
@@ -711,14 +899,7 @@ impl Arcade {
                     return;
                 }
             }
-            // A tested play is called for him; anything else comes off the sheet.
-            let auto = self.start_call.take();
-            let tested = auto.is_some();
-            let called = auto.and_then(|i| self.book.get(i).cloned());
-            let Some(play) = (match called {
-                Some(play) => Some(play),
-                None => self.call_sheet(),
-            }) else {
+            let Some(play) = self.call_sheet() else {
                 return;
             };
             let dir = 1i8;
@@ -776,14 +957,13 @@ impl Arcade {
             let Some(result) = sim.result.clone() else {
                 continue;
             };
-            let mut card = vec![self.drill_header()];
-            if tested {
-                card.push(format!("  TESTING {}", play.name.to_uppercase()));
-            }
-            card.push(String::new());
-            card.push(format!("  {}", result.description.to_uppercase()));
-            card.push(String::new());
-            card.push(format!("  {:.0} YARDS ON THE PLAY", result.yards));
+            let mut card = vec![
+                self.drill_header(),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                format!("  {:.0} YARDS ON THE PLAY", result.yards),
+            ];
             if tutorial && tutorial_met(self.drill_step, result.outcome, result.touchdown) {
                 self.drill_step += 1;
                 card.push(String::new());
@@ -972,14 +1152,7 @@ impl Arcade {
                     return;
                 }
             }
-            // A tested call is already made: the point of the snap is to watch
-            // the coverage, not to find the call on a sheet.
-            let auto = self.start_def_call.take();
-            let tested = auto.is_some();
-            let Some(def) = (match auto {
-                Some(i) => self.defbook.get(i).cloned(),
-                None => self.def_sheet(),
-            }) else {
+            let Some(def) = self.def_sheet() else {
                 return;
             };
             let play = self.cpu_offense();
@@ -1032,14 +1205,13 @@ impl Arcade {
             let Some(result) = sim.result.clone() else {
                 continue;
             };
-            let mut card = vec![self.drill_header()];
-            if tested {
-                card.push(format!("  TESTING {}", def.name.to_uppercase()));
-            }
-            card.push(String::new());
-            card.push(format!("  {}", result.description.to_uppercase()));
-            card.push(String::new());
-            card.push(format!("  {:.0} YARDS ALLOWED", result.yards));
+            let mut card = vec![
+                self.drill_header(),
+                String::new(),
+                format!("  {}", result.description.to_uppercase()),
+                String::new(),
+                format!("  {:.0} YARDS ALLOWED", result.yards),
+            ];
             if tutorial && defense_met(self.drill_step, &result) {
                 self.drill_step += 1;
                 card.push(String::new());
@@ -1115,6 +1287,15 @@ impl Arcade {
                 } else {
                     "OFFENSE"
                 }
+            ),
+            Mode::Test => format!(
+                "PLAY TEST   {}   {}   THE SAME EVERY SNAP",
+                if self.teaching == Track::Defense {
+                    "DEFENSE"
+                } else {
+                    "OFFENSE"
+                },
+                self.test_name.unwrap_or("NOTHING DRAWN")
             ),
             Mode::Gauntlet => {
                 let mine = self.my_team.unwrap_or(0);
@@ -3394,6 +3575,10 @@ pub enum Mode {
     Practice,
     Tutorial,
     Gauntlet,
+    /// One designed play or call, run over and over. Not a practice session:
+    /// there is nothing to call and nothing to teach, and the only thing on the
+    /// field is the drawing being judged.
+    Test,
 }
 
 impl Mode {

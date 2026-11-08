@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.102-windows-x86_64.zip` from the
+Grab `7on7-v0.25.103-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -278,18 +278,18 @@ going for the pick.
   under the play's name says which one is set.
 
   A play is a thing to watch as well as a thing to draw: press the right trigger
-  in the editor, or on a play in the list, and it is run on the practice field
-  with the book it was drawn for — no clock, no downs, the same spot — so a play
-  can be tried before the next one is drawn. The result card says how many yards
-  it made, and leaving practice puts him back in the list he came from, on the
-  play he was drawing.
+  in the editor, or on a play in the list, and it opens a session of its own — a
+  play test, not a practice drill. That one play is the play, every snap, with no
+  clock, no downs and no call sheet: what is being watched is the drawing, not a
+  session of football. The card after each snap says how many yards it made, [A]
+  runs it again and [B] goes back to the list it came from, on the play he was
+  drawing.
 
   The same trigger works on a defensive call, in the coverage editor or on the
-  call in the list: it is run on the same practice field against the machine's
-  offense, with the call already made, so a front and a coverage can be watched
-  doing what they were drawn to do rather than imagined. The card names the call
-  and how many yards it allowed, and leaving puts him back in the calls of the
-  front he drew it on. The computer runs the same play the same way: it reads the end on the
+  call in the list, and opens the same kind of session on the other side of the
+  ball: the call is the call every snap, the machine's offense snaps a play at
+  it, and the card says how many yards it allowed. [A] runs it again and [B] puts
+  him back in the calls of the front he drew it on. The computer runs the same play the same way: it reads the end on the
   play side once, hands off if he stays wide, keeps it if he crashes down, and
   gives it on to the trailer when they come for the keeper. The defense is drawn
   the same way: a front of X's, then a call whose
