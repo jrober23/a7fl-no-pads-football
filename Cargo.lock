@@ -2699,7 +2699,7 @@ checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 
 [[package]]
 name = "nopads_cli"
-version = "0.25.89"
+version = "0.25.90"
 dependencies = [
  "bevy",
  "minifb",
@@ -2710,11 +2710,11 @@ dependencies = [
 
 [[package]]
 name = "nopads_core"
-version = "0.25.89"
+version = "0.25.90"
 
 [[package]]
 name = "nopads_platform"
-version = "0.25.89"
+version = "0.25.90"
 dependencies = [
  "gilrs",
  "nopads_core",
@@ -2722,7 +2722,7 @@ dependencies = [
 
 [[package]]
 name = "nopads_render"
-version = "0.25.89"
+version = "0.25.90"
 dependencies = [
  "gif",
  "image",
