@@ -240,8 +240,8 @@ going for the pick.
   book holds two to five formations a side, each with one to nine plays, and two
   to five fronts, each with one to nine calls. Y renames a book, a formation, a
   play, a front or a call from the screen that lists it. Once a book is legal it
-  stands in the book picker beside the league's, so it can be run in exhibition, in
-  a season and in practice, and a created club can carry it. On
+  stands at the top of the book picker ahead of the league's, so it can be run in
+  exhibition, in a season and in practice, and a created club can carry it. On
   defense at the line, tap **LT** to press the corners or back them off.
 
 What you make — the clubs, the kits and the playbook — is kept in `custom.txt`

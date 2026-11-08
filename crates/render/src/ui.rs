@@ -113,6 +113,12 @@ impl Slide {
         self.at = approach(self.at, target as f32, self.rate, dt);
     }
 
+    /// The row the highlight sits on: what a list longer than its card uses to
+    /// decide which rows to draw.
+    pub fn row(&self) -> usize {
+        self.at.round().max(0.0) as usize
+    }
+
     /// Where the highlight sits in pixels, given the row height and the gap
     /// between rows.
     pub fn y(&self, row_h: i32, gap: i32) -> i32 {

@@ -750,8 +750,13 @@ fn draw_option_rows(
     );
     let x = 110;
     let cw = w - 220;
-    let n = rows.len() as i32;
-    let card_h = n * (row_h + gap) + ui::S3;
+    // How many rows the canvas holds under the heading with the note still clear
+    // of the footer. A longer list scrolls: a row drawn past the footer is a row
+    // nobody can see, which is where a book of the player's own went.
+    let room = (((frame.h as i32 - 26 - 84 - 18) / (row_h + gap)).max(1)) as usize;
+    let first = option_first(rows.len(), slide.row(), room);
+    let shown = rows.len().saturating_sub(first).min(room);
+    let card_h = shown as i32 * (row_h + gap) + ui::S3;
     ui::card(
         frame,
         x - ui::S3,
@@ -761,8 +766,8 @@ fn draw_option_rows(
         ui::ACCENT,
         1.0,
     );
-    for (i, (name, value)) in rows.iter().enumerate() {
-        let y = 84 + i as i32 * (row_h + gap);
+    for (i, (name, value)) in rows.iter().enumerate().skip(first).take(shown) {
+        let y = 84 + (i - first) as i32 * (row_h + gap);
         let value = (!value.is_empty()).then_some(value.as_str());
         ui::row(
             frame,
@@ -776,8 +781,30 @@ fn draw_option_rows(
             ui::ACCENT,
         );
     }
-    centered(frame, 74 + card_h + 20, note, 1, dim());
+    if rows.len() > shown {
+        // A thumb on the card's edge: where in the list the highlight is, and how
+        // much of the list is on the screen.
+        let tx = x + cw + ui::S3 - 7;
+        let track = card_h - 16;
+        frame.fill_rect_alpha(tx, 82, 3, track, ui::EDGE, 0.9);
+        let n = rows.len() as i32;
+        let thumb = (track * shown as i32 / n).max(10);
+        let last = (n - shown as i32).max(1);
+        let ty = 82 + (track - thumb) * first as i32 / last;
+        frame.fill_rect_alpha(tx, ty, 3, thumb, ui::ACCENT, 0.9);
+    }
+    centered(frame, 74 + card_h + 12, note, 1, dim());
     footer(frame, keys);
+}
+
+/// The first row a list shows when it has more rows than the card has room for,
+/// so the highlighted row is always one of the rows drawn.
+fn option_first(n: usize, pick: usize, room: usize) -> usize {
+    if room == 0 || n <= room {
+        return 0;
+    }
+    let pick = pick.min(n - 1);
+    pick.saturating_sub(room / 2).min(n - room)
 }
 
 // ---------------------------------------------------------------------------
@@ -3550,17 +3577,19 @@ fn choose_sides(
     })
 }
 
-/// Every book a side can take into a game: the league's, and the player's own
-/// once he has drawn a legal one.
+/// Every book a side can take into a game: the player's own shelf and then the
+/// league's.
 fn selectable_books() -> Vec<Book> {
-    // The league's books, then every book on the player's shelf that is legal
-    // enough to run: each one is its own entry in the picker.
-    let mut out: Vec<Book> = Book::ALL.to_vec();
+    // The player's own books first: the shelf is what he came to this screen to
+    // run, and a book listed under seven league ones is a book he has to go
+    // looking for. Each legal book is its own entry; the league's follow it.
+    let mut out: Vec<Book> = Vec::new();
     for (i, book) in nopads_core::design::shelf().iter().enumerate() {
         if book.is_legal() {
             out.push(Book::Custom(i as u8));
         }
     }
+    out.extend(Book::ALL);
     out
 }
 
@@ -3568,6 +3597,25 @@ fn step_book(current: Book, d: i8) -> Book {
     let all = selectable_books();
     let i = all.iter().position(|b| *b == current).unwrap_or(0);
     all[step_index(i, all.len(), d)]
+}
+
+/// The book picker's screen, drawn from the list so a picture of it can be made
+/// without a pad.
+fn draw_book_picker(frame: &mut Frame, club: &str, own: Book, books: &[Book], slide: &ui::Slide) {
+    let rows: Vec<(&str, String)> = books
+        .iter()
+        .map(|b| (b.label(), if *b == own { "YOUR CLUB".to_string() } else { String::new() }))
+        .collect();
+    let book = books.get(slide.row()).copied().unwrap_or(own);
+    draw_option_screen(
+        frame,
+        "PLAYBOOK",
+        &format!("{} RUNS {}", club, own.label()),
+        &rows,
+        slide,
+        book.blurb(),
+        "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
+    );
 }
 
 /// Which book the player runs. His own club's is the one it opens on, and the
@@ -3596,26 +3644,13 @@ fn pick_book(view: &mut View, pad: &mut Option<&mut Pad>, club: usize) -> Option
             }
         }
         slide.step(pick, dt);
-        let book = books[pick];
-        let rows: Vec<(&str, String)> = books
-            .iter()
-            .map(|b| (b.label(), if *b == own { "YOUR CLUB".to_string() } else { String::new() }))
-            .collect();
         let mut frame = Frame::new(UI_W, UI_H);
-        draw_option_screen(
-            &mut frame,
-            "PLAYBOOK",
-            &format!("{} RUNS {}", all[club].abbr, own.label()),
-            &rows,
-            &slide,
-            book.blurb(),
-            "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
-        );
+        draw_book_picker(&mut frame, all[club].abbr, own, &books, &slide);
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
         if input.pressed.a {
-            return Some(book);
+            return Some(books[pick]);
         }
         beat();
     }
@@ -5224,6 +5259,18 @@ mod tests {
     /// Every screen of the editor, so the whole flow can be read as pictures
     /// rather than walked with a pad.
     #[test]
+    fn a_long_list_of_books_scrolls_instead_of_running_off_the_screen() {
+        // Eight rows in a card that holds six: the pick is always one of them,
+        // and the list stops at its end rather than scrolling past it.
+        assert_eq!(option_first(8, 0, 6), 0);
+        assert_eq!(option_first(8, 3, 6), 0);
+        assert_eq!(option_first(8, 5, 6), 2);
+        assert_eq!(option_first(8, 7, 6), 2);
+        assert_eq!(option_first(6, 5, 6), 0, "a list that fits never scrolls");
+        assert_eq!(option_first(0, 0, 6), 0);
+    }
+
+    #[test]
     fn the_playbook_editor_can_be_rendered_screen_by_screen() {
         if std::env::var_os("NOPADS_DUMP_UI").is_none() {
             return;
@@ -5283,6 +5330,19 @@ mod tests {
             2,
         );
         save("design_name", &frame);
+
+        // The picker with a book of the player's own at the top of it, and the
+        // same list taken to its last row: the tail has to stay on the canvas.
+        nopads_core::design::set(Some(first.clone()));
+        let mut books = vec![Book::Custom(0)];
+        books.extend(Book::ALL);
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_book_picker(&mut frame, "BOS", Book::Spread, &books, &slide);
+        save("design_picker", &frame);
+        let mut frame = Frame::new(UI_W, UI_H);
+        draw_book_picker(&mut frame, "BOS", Book::Spread, &books, &ui::Slide::new(books.len() - 1));
+        save("design_picker_last", &frame);
+        nopads_core::design::clear();
     }
 
     /// drawn behind a call.
