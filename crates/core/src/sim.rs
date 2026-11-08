@@ -92,6 +92,11 @@ pub const BLOCK_REACH: f32 = 1.90;
 pub const CATCH_RADIUS: f32 = 1.25;
 pub const SNAP_DELAY: f32 = 0.85;
 pub const MAX_PLAY_TIME: f32 = 13.0;
+/// How long the quarterback sells a play action: the ball is shown to the man
+/// coming across his face and pulled back before he turns to throw.
+const FAKE_SELL: f32 = 0.45;
+/// How hard the men behind the front lean toward a fake while it is being sold.
+const PA_LEAN: f32 = 2.6;
 /// How long a runner may go without gaining a yard before the play is dead. A
 /// man who is still moving the ball is playing; a man who is not is stuck in a
 /// pile, and the clock is the wrong thing to measure him by.
@@ -585,6 +590,11 @@ pub struct PlaySim<'a> {
     pub carrier: Option<usize>,
     pub intended: Option<usize>,
     pub handoff: Option<(usize, f32)>,
+    /// The man a play action is sold to, and the seconds of sell still to go.
+    /// The clock on it starts when the ball goes, not when the play is set up:
+    /// the fake is the first thing the quarterback does with the snap. `None` on
+    /// every play that is not a play action.
+    pa_fake: Option<(usize, f32)>,
     /// The end the computer read on an option, and what it did about it. `None`
     /// until the read is made, and on every play that is not an option.
     pub option_key: Option<usize>,
@@ -792,6 +802,7 @@ impl<'a> PlaySim<'a> {
             carrier: None,
             intended: None,
             handoff: None,
+            pa_fake: None,
             option_key: None,
             option_choice: None,
             result: None,
@@ -1165,9 +1176,39 @@ impl<'a> PlaySim<'a> {
         }
     }
 
+    /// Who a play action is sold to: the man nearest the quarterback who has a
+    /// path to run, which is the back coming across his face.
+    fn fake_target(&self) -> Option<usize> {
+        (0..7)
+            .filter(|&i| i != self.qb && !self.players[i].route.is_empty())
+            .min_by(|&a, &b| {
+                let da = self.players[a].pos.dist(self.players[self.qb].pos);
+                let db = self.players[b].pos.dist(self.players[self.qb].pos);
+                da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+            })
+    }
+
+    /// True while the quarterback has a play action to sell.
+    fn selling_fake(&self) -> bool {
+        self.pa_fake.map(|(_, left)| left > 0.0).unwrap_or(false)
+    }
+
+    /// The step of the fake: he goes to the man he is selling it to, at a
+    /// runner's pace, so the two of them meet the way a give would.
+    fn fake_step(&mut self, i: usize, dt: f32) {
+        let Some((man, _)) = self.pa_fake else {
+            return;
+        };
+        // He goes to the man, not to a spot on the ground: the ball is put where
+        // the runner is, the way a give is, and the runner runs through it.
+        let him = self.players[man].pos;
+        self.steer(i, him, self.speed_cap(i) * 0.85, dt);
+    }
+
     fn setup_handoff(&mut self) {
         let carrier_role = self.play.carrier_role();
         self.possession_start = Some(0);
+        self.pa_fake = None;
         match self.play.family {
             PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun => {
                 if let Some(role) = carrier_role {
@@ -1187,7 +1228,10 @@ impl<'a> PlaySim<'a> {
             }
             PlayFamily::PlayAction => {
                 // The fake is sold with the ball in the quarterback's hands: he
-                // is still dropping back, so there is nothing to schedule.
+                // steps to the man coming across his face, shows him the ball
+                // and pulls it back before he drops. Nothing changes hands, so
+                // there is no handoff to schedule -- only a man to sell it to.
+                self.pa_fake = self.fake_target().map(|man| (man, FAKE_SELL));
             }
             _ => {}
         }
@@ -1331,8 +1375,13 @@ impl<'a> PlaySim<'a> {
             return self.result.as_ref();
         }
 
+        // The sell runs on the play's own clock, which starts here.
+        if let Some((_, left)) = self.pa_fake.as_mut() {
+            *left = (*left - dt).max(0.0);
+        }
         self.update_offense(dt);
         self.update_defense(dt);
+        self.play_action_bite(dt);
         self.integrate(dt);
         self.resolve_blocks(dt);
         self.resolve_tackles(dt);
@@ -1802,6 +1851,13 @@ impl<'a> PlaySim<'a> {
         let pressure = self.qb_pressure();
         match self.phase {
             Phase::Dropback => {
+                // The sell comes before the drop: the ball is shown to the man
+                // coming across and pulled back before he turns away, so a play
+                // action is a run sold with the quarterback's body.
+                if self.selling_fake() {
+                    self.fake_step(i, dt);
+                    return;
+                }
                 let drop = self.play.drop.max(1.0);
                 let target = Vec2::new(
                     self.los - self.dirf() * drop,
@@ -1829,8 +1885,13 @@ impl<'a> PlaySim<'a> {
     /// releases it to the locked-on receiver, and crossing the line of
     /// scrimmage turns the dropback into a scramble.
     fn update_qb_human(&mut self, i: usize, dt: f32, ctl: QbControl) {
+        // The fake is not the player's to skip: the ball has to be shown before
+        // it can be thrown, so the stick and the button wait for the sell.
+        let selling = self.selling_fake();
         let mag = ctl.move_dir.length().min(1.0);
-        if mag > 0.18 {
+        if selling {
+            self.fake_step(i, dt);
+        } else if mag > 0.18 {
             let target = self.players[i].pos + ctl.move_dir.normalize_or_zero() * 3.5;
             let spd = self.speed_cap(i) * (0.5 + 0.5 * mag);
             self.steer(i, target, spd, dt);
@@ -1844,7 +1905,7 @@ impl<'a> PlaySim<'a> {
         }
 
         let past_los = (self.players[i].pos.x - self.los) * self.dirf() > 0.0;
-        if past_los && self.phase == Phase::Dropback && self.t > SNAP_DELAY + 0.4 {
+        if !selling && past_los && self.phase == Phase::Dropback && self.t > SNAP_DELAY + 0.4 {
             self.start_scramble(i);
             return;
         }
@@ -1853,7 +1914,7 @@ impl<'a> PlaySim<'a> {
         // let it go downfield, which is half of what the scramble is for.
         let can_throw = self.phase == Phase::Dropback
             || (self.phase == Phase::Scramble && self.carrier == Some(i));
-        if ctl.throw && can_throw && self.t > SNAP_DELAY + 0.25 {
+        if ctl.throw && can_throw && !selling && self.t > SNAP_DELAY + 0.25 {
             if let Some(target) = ctl.target {
                 if !self.players[target].down {
                     // The pad's arc means nothing to an AI arm: it throws a
@@ -2488,6 +2549,38 @@ impl<'a> PlaySim<'a> {
                     self.players[b].pos += push;
                 }
             }
+        }
+    }
+
+    /// A play action is a lie told with the ball. While it is being sold the men
+    /// behind the front lean toward it, and the step they take is the daylight
+    /// the throw is made into.
+    fn play_action_bite(&mut self, dt: f32) {
+        if !self.selling_fake() {
+            return;
+        }
+        let Some(holder) = self.ball.holder else {
+            return;
+        };
+        let at = self.players[holder].pos;
+        let human = self.human_defender;
+        for i in 7..14 {
+            if Some(i) == human {
+                continue;
+            }
+            let p = &mut self.players[i];
+            if p.down || p.stun > 0.0 || p.wrap > 0.0 || matches!(p.job, CoverageJob::Rush) {
+                continue;
+            }
+            // Only the men close enough to see it: a corner on the far side of
+            // the field does not come off his man for a handoff.
+            let to = at - p.pos;
+            let d = to.length();
+            if d > 12.0 || d < 0.3 {
+                continue;
+            }
+            let step = (PA_LEAN * dt).min(d);
+            p.pos += to / d * step;
         }
     }
 

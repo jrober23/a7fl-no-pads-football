@@ -268,3 +268,30 @@ fn a_sweep_still_gets_the_ball_from_the_runners_inside() {
     assert!(took.contains("takes the inside handoff"), "{took}");
     design::clear();
 }
+
+/// A pass can be drawn as a play action: the family says so on the field, and
+/// nothing changes hands.
+#[test]
+fn a_pass_can_be_drawn_as_a_play_action() {
+    let _g = lock();
+    design::clear();
+    let mut book = DesignBook::from_built_in(Book::WestCoast);
+    let form = book.offense[0].clone();
+    let wr = form
+        .roles
+        .iter()
+        .position(|r| *r == OffRole::WideL)
+        .expect("a wide receiver");
+    book.plays[0][0].family = PlayFamily::PlayAction;
+    book.plays[0][0].routes[wr] = vec![Vec2::new(14.0, -2.0)];
+    let slot = design::add(book);
+    let plays = design::offense_plays_at(slot);
+    assert_eq!(plays[0].family, PlayFamily::PlayAction);
+    assert!(plays[0].family.is_pass(), "a play action is a pass");
+    assert_eq!(
+        plays[0].carrier_role(),
+        None,
+        "nothing changes hands on a play action"
+    );
+    design::clear();
+}

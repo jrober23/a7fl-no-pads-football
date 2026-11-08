@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.106-windows-x86_64.zip` from the
+Grab `7on7-v0.25.107-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -151,7 +151,7 @@ same page from every pause menu):
 | X / West | — | Open the audible over the field; once the ball is live, throw to X, or dive as a runner |
 | Y / North | Flip the call to the other side of the formation | Flip the call; once the ball is live, throw to Y, or stiff-arm as a runner (slide as a quarterback) |
 | Select / Minus | — | Change camera |
-| LT / ZL | — | Hold for the play preview: the shot lifts over the route tree until you let go; in the play editor it cycles the handoff |
+| LT / ZL | — | Hold for the play preview: the shot lifts over the route tree until you let go; in the play editor it cycles the handoff, and on a pass turns the play into a play action |
 | LB / L1 | — | Dummy count at the line: bark the snap count and try to draw a defender across; in the play editor it cycles a pass's drop |
 | RT / ZR | — | Throw the throw-off |
 | RB / R1 | — | On defense, check to another call: three at a time, over the field |
@@ -279,7 +279,10 @@ going for the pick.
   going, so the read is a man rather than a guess. On a pass the same screen sets the drop: **3 STEP**,
   **5 STEP** or **7 STEP**, and the routes have that many steps' worth of time to
   get open. Left trigger cycles the handoff, left bumper the drop, and the line
-  under the play's name says which one is set.
+  under the play's name says which one is set. On a pass the same trigger is the
+  play action: the quarterback turns and shows the ball to the man coming across
+  his face, then pulls it back and drops, and the men behind the front lean
+  toward the fake while it is being sold.
 
   A play is a thing to watch as well as a thing to draw: press the right trigger
   in the editor, or on a play in the list, and it opens a session of its own — a

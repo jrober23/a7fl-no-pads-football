@@ -258,20 +258,63 @@ pub fn row(
     }
     let ty = y + (h - font::text_height(T_LABEL) as i32) / 2;
     let ink = MUTED.lerp(PAPER, heat);
-    font::draw_styled(frame, x + S4, ty, label, T_LABEL, ink, 1, false);
-    if let Some(v) = value {
-        if !v.is_empty() {
-            // A long value keeps clear of its label: the row drops the value to
-            // the caption size rather than letting the two run together. Short
-            // values, which is most of them, are untouched.
-            let room = w - S4 * 3;
-            let wide = font::text_width(label, T_LABEL) as i32 + font::text_width(v, T_LABEL) as i32;
-            let scale = if wide > room { T_CAPTION } else { T_LABEL };
-            let vx = x + w - S4 - font::text_width(v, scale) as i32;
-            let vy = ty + (font::text_height(T_LABEL) as i32 - font::text_height(scale) as i32) / 2;
-            let vink = MUTED.lerp(accent, heat);
-            font::draw_styled(frame, vx, vy, v, scale, vink, 1, false);
+    // The description is fitted first, because it is the half of the row that
+    // says what the thing is; the name is cut to whatever is left of the row. A
+    // name is a thing the player typed and can be any length at all, and drawn
+    // whole it went straight through the description beside it.
+    const GAP: i32 = S3;
+    const NAME: i32 = 70;
+    let room = (w - S4 * 3).max(0);
+    let mut scale = T_LABEL;
+    let mut value = value.filter(|v| !v.is_empty()).map(str::to_string);
+    if let Some(v) = &value {
+        let wide = font::text_width(label, T_LABEL) as i32 + GAP + font::text_width(v, T_LABEL) as i32;
+        if wide > room {
+            // A long value keeps clear of its label by dropping to the caption
+            // size. Short values, which is most of them, are untouched.
+            scale = T_CAPTION;
         }
+        // Even at the smaller size a description can be too wide for the row, so
+        // it is cut rather than drawn off the end of the card.
+        let vroom = (room - NAME.min(room)).max(0);
+        if font::text_width(v, scale) as i32 > vroom {
+            value = Some(clip(v, scale, vroom));
+        }
+    }
+    let vw = value
+        .as_ref()
+        .map(|v| font::text_width(v, scale) as i32)
+        .unwrap_or(0);
+    let lroom = if vw > 0 { room - vw - GAP } else { room };
+    let label = clip(label, T_LABEL, lroom);
+    font::draw_styled(frame, x + S4, ty, &label, T_LABEL, ink, 1, false);
+    if let Some(v) = &value {
+        let vx = x + w - S4 - vw;
+        let vy = ty + (font::text_height(T_LABEL) as i32 - font::text_height(scale) as i32) / 2;
+        let vink = MUTED.lerp(accent, heat);
+        font::draw_styled(frame, vx, vy, v, scale, vink, 1, false);
+    }
+}
+
+/// `text` cut to `room` pixels, backing up to a whole word where it can.
+///
+/// A row carries a name and the description of the thing named, and the two are
+/// two different things: the name is cut to what the description leaves rather
+/// than drawn over it. Cutting at a space reads as a shorter name instead of as
+/// a word that has lost its end.
+pub fn clip(text: &str, scale: usize, room: i32) -> String {
+    if room <= 0 {
+        return String::new();
+    }
+    if font::text_width(text, scale) as i32 <= room {
+        return text.to_string();
+    }
+    let step = (font::GLYPH_W + 1) * scale.max(1);
+    let fits = ((room.max(0) as usize + scale) / step).max(1);
+    let cut: String = text.chars().take(fits).collect();
+    match cut.rfind(' ') {
+        Some(at) if at > 0 => cut[..at].to_string(),
+        _ => cut,
     }
 }
 

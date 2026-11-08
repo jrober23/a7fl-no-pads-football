@@ -2825,6 +2825,16 @@ fn play_editor(
         if input.pressed.preview && !play.family.is_pass() {
             play.handoff = play.handoff.next();
         }
+        // On a pass the same button is the play action: the quarterback sells a
+        // give before he drops. It is the family that carries it, so the field,
+        // the list and the book all read the one thing.
+        if input.pressed.preview && play.family.is_pass() {
+            play.family = if play.family == PlayFamily::PlayAction {
+                PlayFamily::DropbackPass
+            } else {
+                PlayFamily::PlayAction
+            };
+        }
         if input.pressed.dummy && play.family.is_pass() {
             play.drop = play.drop.next();
         }
@@ -2897,7 +2907,15 @@ fn play_editor(
                 role.label(),
                 if play.family.is_pass() { "PASS" } else { "RUN" },
                 if play.family.is_pass() {
-                    format!("DROP {}", play.drop.label())
+                    format!(
+                        "DROP {}{}",
+                        play.drop.label(),
+                        if play.family == PlayFamily::PlayAction {
+                            " - PLAY ACTION"
+                        } else {
+                            ""
+                        }
+                    )
                 } else if play.handoff == Handoff::Option {
                     "OPTION: QB KEEPS AND PITCHES".to_string()
                 } else {
@@ -3362,7 +3380,12 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         rows.push((
             p.name.as_str(),
             if p.family.is_pass() {
-                format!("PASS - {} - {} WAYPOINTS", p.drop.label(), ways)
+                format!(
+                    "{} - {} - {} WAYPOINTS",
+                    p.family.label(),
+                    p.drop.label(),
+                    ways
+                )
             } else if p.handoff == Handoff::Option {
                 format!(
                     "OPTION - QB KEEPS - PITCH TO {} - {} WAYPOINTS",
@@ -5980,6 +6003,49 @@ fn coin_flip(
 
 #[cfg(test)]
 mod tests {
+    /// The drawers of a designed book: the shelf, a book's own doors, a
+    /// formation's plays and calls, and the drop-down over a formation. They are
+    /// drawn with the longest name the name screen takes, so a name in a row and
+    /// the description beside it can be seen not to run into each other.
+    #[test]
+    fn the_design_screens_can_be_rendered_to_pictures() {
+        let mut book = DesignBook::from_built_in(Book::WestCoast);
+        book.name = "SATURDAY MORNING SPECIALS".to_string();
+        book.plays[0][0].name = "SPLIT RIGHT DEEP CROSS AND UP".to_string();
+        book.calls[0][0].name = "COVER TWO WITH A LATE ROTATION".to_string();
+        let slide = ui::Slide::new(0);
+        let save = |name: &str, screen: &Frame| {
+            if std::env::var_os("NOPADS_DUMP_UI").is_none() {
+                return;
+            }
+            let dir = format!("{}/../../out/ui", env!("CARGO_MANIFEST_DIR"));
+            std::fs::create_dir_all(&dir).ok();
+            nopads_render::capture::write_png(&format!("{dir}/{name}.png"), screen)
+                .expect("write png");
+        };
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_shelf(&mut f, &[book.clone()], 0, &slide);
+        save("design_shelf", &f);
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_start_book(&mut f, 0, &slide);
+        save("design_start_book", &f);
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_book_menu(&mut f, &book, &slide);
+        save("design_book", &f);
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_formations(&mut f, &book, false, 0, &slide);
+        save("design_offense", &f);
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_form_menu(&mut f, &book, false, 0, 1, &ui::Slide::new(1));
+        save("design_form_menu", &f);
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_play_list(&mut f, &book, 0, &slide);
+        save("design_plays", &f);
+        let mut f = Frame::new(UI_W, UI_H);
+        draw_call_list(&mut f, &book, 0, &slide);
+        save("design_calls", &f);
+    }
+
     /// The splash, one picture, so the mark can be looked at rather than argued
     /// about.
     #[test]
