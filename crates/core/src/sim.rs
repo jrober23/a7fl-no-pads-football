@@ -377,6 +377,10 @@ pub struct SimPlayer {
     /// Hands out in front, posed as a blocker. The line every play, the backs and
     /// receivers on a run, and never the man carrying the ball.
     pub blocking: bool,
+    /// 0..1, how far the ball is being offered to a runner. A give is made with
+    /// the ball away from the chest, held out to the man coming for it, and the
+    /// picture reaches the same distance with the arms.
+    pub give: f32,
     pub pressure: f32,
     pub beaten: f32,
     pub waypoint: usize,
@@ -730,7 +734,7 @@ impl<'a> PlaySim<'a> {
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
-                blocking: false,
+                blocking: false, give: 0.0,
                 pressure: 0.0,
                 beaten: 0.0,
                 waypoint: 0,
@@ -772,7 +776,7 @@ impl<'a> PlaySim<'a> {
                 engaged: None,
                 hands: 0.0,
                 drive: 0.0,
-                blocking: false,
+                blocking: false, give: 0.0,
                 pressure: 0.0,
                 beaten: 0.0,
                 waypoint: 0,
@@ -1740,6 +1744,9 @@ impl<'a> PlaySim<'a> {
             self.play.family,
             PlayFamily::RunInside | PlayFamily::RunOutside | PlayFamily::QbRun
         );
+        // Cleared every frame and set again by the mesh below: a give is only
+        // being offered while the exchange is still to be made.
+        self.players[self.qb].give = 0.0;
         if self.carrier.is_none() && a_run {
             if let Some((idx, at)) = self.handoff {
                 let kind = self.play.handoff;
@@ -1764,6 +1771,11 @@ impl<'a> PlaySim<'a> {
                 let side = self.runner_side(idx);
                 let across_him = side != 0.0 && (hand.y - man.y) * side > 0.8;
                 let there = man.dist(hand) <= reach && !across_him;
+                // How much of the ball he is showing: against his chest at arm's
+                // length, out in front of him at the mesh, so the ball is
+                // travelling the runner's way before it is his.
+                self.players[self.qb].give =
+                    ((reach - man.dist(hand)) / (reach * 0.7)).clamp(0.0, 1.0);
                 if self.t >= at && !self.players[idx].down && legal && there {
                     self.carrier = Some(idx);
                     self.ball.holder = Some(idx);
@@ -1820,6 +1832,18 @@ impl<'a> PlaySim<'a> {
                     let target = self.players[car].pos
                         + Vec2::new(-self.dirf() * 0.9, -side * 0.7);
                     self.steer(i, target, self.speed_cap(i) * 0.9, dt);
+                }
+                // His shoulders turn to the man he is giving it to, whatever way
+                // his feet are going. The give is made with the body: turned to
+                // the runner, the ball is already going his way when it leaves.
+                let to = self.players[car].pos - self.players[i].pos;
+                let near = to.length();
+                if near > 0.2 && near < 4.0 {
+                    self.players[i].heading = turn_towards(
+                        self.players[i].heading,
+                        to.y.atan2(to.x),
+                        9.0 * dt,
+                    );
                 }
                 continue;
             }
@@ -3616,7 +3640,18 @@ impl<'a> PlaySim<'a> {
             // Ball in somebody's hands.
             if let Some(h) = self.ball.holder {
                 if !self.players[h].down {
-                    self.ball.pos = self.players[h].pos;
+                    // A give is made with the ball out in front of the body: it
+                    // is offered to the runner, so it travels his way before it
+                    // changes hands.
+                    let mut at = self.players[h].pos;
+                    let give = self.players[h].give.clamp(0.0, 1.0);
+                    if give > 0.0 {
+                        if let Some((man, _)) = self.handoff {
+                            let to = self.players[man].pos - at;
+                            at += to.normalize_or_zero() * (0.55 * give);
+                        }
+                    }
+                    self.ball.pos = at;
                     self.ball.z = 1.0;
                 }
             }

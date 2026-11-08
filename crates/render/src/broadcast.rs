@@ -59,6 +59,7 @@ struct RenderPlayer {
     speed: f32,
     carrying: bool,
     blocking: bool,
+    give: f32,
     /// Where his hands are, across his body, for a blocker on a rusher.
     hands: f32,
     /// 0..1: hands up, walking the man in front of him back upfield.
@@ -446,7 +447,7 @@ impl Broadcast {
                     run_phase: p.run_phase,
                     speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
                     carrying: sim.ball.holder == Some(i),
-                    blocking: p.blocking,
+                    blocking: p.blocking, give: p.give,
                     hands: p.hands,
                     arms_up: p.drive,
                     reach: if sim.ball_hands.map(|(who, _)| who) == Some(i) {
@@ -630,6 +631,7 @@ impl Broadcast {
                     && ball.0.dist(p.pos) < 0.8
                     && ball.1 < 1.3,
                 blocking: false,
+            give: 0.0,
                 hands: 0.0,
                 arms_up: 0.0,
                 reach: 0.0,
@@ -868,7 +870,7 @@ impl Broadcast {
                 run_phase: p.run_phase,
                 speed: clamp(p.vel.length() / 8.5, 0.0, 1.0),
                 carrying: sim.ball.holder == Some(i),
-                blocking: p.blocking,
+                blocking: p.blocking, give: p.give,
                 hands: p.hands,
                 arms_up: p.drive,
                 reach: if sim.ball_hands.map(|(who, _)| who) == Some(i) {
@@ -1316,7 +1318,7 @@ impl Broadcast {
             run_phase: p.run_phase,
             speed: p.speed,
             carrying: p.carrying,
-            blocking: p.blocking,
+            blocking: p.blocking, give: p.give,
             hands: p.hands,
             arms_up: p.arms_up,
             reach: p.reach,
@@ -2756,6 +2758,7 @@ mod tests {
             speed,
             carrying,
             blocking: false,
+            give: 0.0,
             hands: 0.0,
             arms_up: 0.0,
             reach: 0.0,
@@ -2843,6 +2846,7 @@ mod tests {
             speed,
             carrying: false,
             blocking: false,
+            give: 0.0,
             hands: 0.0,
             arms_up: 0.0,
             reach: 0.0,

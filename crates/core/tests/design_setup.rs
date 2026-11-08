@@ -238,7 +238,36 @@ fn a_sweep_still_gets_the_ball_from_the_runners_inside() {
     // The sweep goes to +y, so the give is made from the runner's inside: his
     // side of the field, with the quarterback on the other side of him.
     let mut gap = None;
+    // And the give is a thing offered before it is a thing taken: how much of
+    // the ball is shown, and how far round he has turned to show it.
+    let mut offer = 0.0f32;
+    let mut facing: Option<f32> = None;
     for _ in 0..600 {
+        if sim.handoff.is_some() {
+            let men = |role: OffRole| {
+                (0..7).find(|&i| OffRole::ALL[sim.players[i].role_index] == role)
+            };
+            if let (Some(q), Some(b)) = (men(OffRole::Qb), men(OffRole::Back)) {
+                if sim.ball.holder == Some(q) {
+                    let give = sim.players[q].give;
+                    offer = offer.max(give);
+                    if give > 0.3 {
+                        assert!(
+                            sim.ball.pos.y > sim.players[q].pos.y,
+                            "the ball was not held out the runner's way: {:.2} against {:.2}",
+                            sim.ball.pos.y,
+                            sim.players[q].pos.y
+                        );
+                    }
+                    let to = sim.players[b].pos - sim.players[q].pos;
+                    let want = to.y.atan2(to.x);
+                    let off = (want - sim.players[q].heading + std::f32::consts::PI)
+                        .rem_euclid(std::f32::consts::TAU)
+                        - std::f32::consts::PI;
+                    facing = Some(facing.map_or(off.abs(), |f: f32| f.min(off.abs())));
+                }
+            }
+        }
         let (qb_y, back_y) = (find(&sim, OffRole::Qb), find(&sim, OffRole::Back));
         sim.step(1.0 / 60.0);
         if let Some(e) = sim
@@ -266,6 +295,14 @@ fn a_sweep_still_gets_the_ball_from_the_runners_inside() {
         )
     });
     assert!(took.contains("takes the inside handoff"), "{took}");
+    assert!(
+        offer > 0.4,
+        "he never held the ball out to the runner: {offer:.2}"
+    );
+    assert!(
+        facing.map(|f| f < 0.7).unwrap_or(false),
+        "his shoulders never turned to the runner: {facing:?} rad"
+    );
     design::clear();
 }
 

@@ -35,6 +35,7 @@ fn main() {
         blocking: false,
         hands: 0.0,
         arms_up: 0.0,
+        give: 0.0,
         down: false,
         celebrating: 0.0,
         strafe: 0.0,

@@ -163,6 +163,9 @@ pub struct Pose {
     pub hands: f32,
     /// 0..1: hands up, driving the man in front of him back upfield.
     pub arms_up: f32,
+    /// 0..1: the ball held out in front of the body to a runner waiting for it.
+    /// The one pose where both arms go the same way at once.
+    pub give: f32,
     pub down: bool,
     pub celebrating: f32,
     /// 0 = facing, 1 = lateral shuffle.
@@ -1493,6 +1496,14 @@ pub fn build_mesh_into(
             let up = pose.arms_up.clamp(0.0, 1.0);
             swing += (2.15 - swing) * up;
         }
+        // Offering the ball to a runner: both arms out in front and a little low,
+        // so the give is a ball being held out to a man and not a ball at the
+        // chest. Both hands go with it, the way two hands carry a ball out.
+        if pose.give > 0.0 {
+            let g = pose.give.clamp(0.0, 1.0);
+            swing += (1.05 - swing) * g;
+            flex += (0.35 - flex) * g;
+        }
         // A defender under a thrown ball shows which play he has chosen: both
         // hands up to take it away, the near hand alone to knock it down. It is
         // the one read a passer gets off a defensive back before the ball
@@ -1846,6 +1857,32 @@ mod tests {
         }
         // A whole stride should separate the two feet by a good part of a leg.
         assert!(apart > 0.1, "feet barely separate: {apart:.3}");
+    }
+
+    /// A give is a reach: the ball is held out to the runner, so the arms go
+    /// further in front of the body than they do with the ball tucked against
+    /// the chest. It is the number the sim raises as the two men close.
+    #[test]
+    fn the_give_reaches_the_ball_out() {
+        let teams = nopads_core::team::league_teams();
+        let figure = |give: f32| {
+            let pose = Pose {
+                run_phase: 0.3,
+                speed: 0.0,
+                carrying: true,
+                give,
+                ..Default::default()
+            };
+            build_mesh(&teams[0].roster[0], &teams[0].home, &pose, 0)
+        };
+        let tucked = bounds(&figure(0.0));
+        let offered = bounds(&figure(1.0));
+        assert!(
+            offered.1 > tucked.1 + 0.12,
+            "the arms did not reach the ball out: {:.3} against {:.3}",
+            offered.1,
+            tucked.1
+        );
     }
 
     /// A standing player is settled, not frozen in mid-stride.
