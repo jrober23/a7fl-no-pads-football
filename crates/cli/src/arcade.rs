@@ -331,6 +331,9 @@ pub struct Arcade {
     /// A play the session opens on, called for the player: the one he has just
     /// drawn, run before the call sheet is ever shown.
     start_call: Option<usize>,
+    /// The same for the other side of the ball: a defensive call the designer
+    /// has just drawn, called against the machine's offense.
+    start_def_call: Option<usize>,
 }
 
 /// What the player asked for at the final whistle.
@@ -385,6 +388,7 @@ impl Arcade {
             contain: true,
             first_return: 0,
             start_call: None,
+            start_def_call: None,
             game,
             pad,
             view,
@@ -486,6 +490,13 @@ impl Arcade {
     /// moment it is asked for, rather than after a walk through the sheet.
     pub fn with_start_play(mut self, play: usize) -> Self {
         self.start_call = Some(play);
+        self
+    }
+
+    /// The same on defense: the call is made and the machine's offense runs a
+    /// play at it, so a drawn coverage can be watched before the next one.
+    pub fn with_start_def_call(mut self, call: usize) -> Self {
+        self.start_def_call = Some(call);
         self
     }
 
@@ -961,7 +972,14 @@ impl Arcade {
                     return;
                 }
             }
-            let Some(def) = self.def_sheet() else {
+            // A tested call is already made: the point of the snap is to watch
+            // the coverage, not to find the call on a sheet.
+            let auto = self.start_def_call.take();
+            let tested = auto.is_some();
+            let Some(def) = (match auto {
+                Some(i) => self.defbook.get(i).cloned(),
+                None => self.def_sheet(),
+            }) else {
                 return;
             };
             let play = self.cpu_offense();
@@ -1014,13 +1032,14 @@ impl Arcade {
             let Some(result) = sim.result.clone() else {
                 continue;
             };
-            let mut card = vec![
-                self.drill_header(),
-                String::new(),
-                format!("  {}", result.description.to_uppercase()),
-                String::new(),
-                format!("  {:.0} YARDS ALLOWED", result.yards),
-            ];
+            let mut card = vec![self.drill_header()];
+            if tested {
+                card.push(format!("  TESTING {}", def.name.to_uppercase()));
+            }
+            card.push(String::new());
+            card.push(format!("  {}", result.description.to_uppercase()));
+            card.push(String::new());
+            card.push(format!("  {:.0} YARDS ALLOWED", result.yards));
             if tutorial && defense_met(self.drill_step, &result) {
                 self.drill_step += 1;
                 card.push(String::new());
@@ -4082,6 +4101,18 @@ impl<'p> SnapCaller<PlaySim<'p>> for OffenseSnap<'_> {
                 ));
             }
             row.push_str("   NO PRESS KEEPS IT");
+            // The end the option is reading: on a keep the whole decision is
+            // whether he stays wide or comes down, and a man cannot be read by a
+            // player who has not been told which one he is.
+            if sim.ball.holder == Some(sim.qb) {
+                if let Some(key) = sim.option_read() {
+                    row.push_str(&format!(
+                        "   READ THE END ON THE {}: {}",
+                        if sim.play.run_side >= 0 { "RIGHT" } else { "LEFT" },
+                        sim.name_of(key).to_uppercase()
+                    ));
+                }
+            }
             if sim.face_buttons_are_moves() {
                 let mut moves = RUNNER_ROW.trim_start().to_string();
                 if let Some(kind) = sim.carrier_move().kind() {

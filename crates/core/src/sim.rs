@@ -867,7 +867,8 @@ impl<'a> PlaySim<'a> {
         }
     }
 
-    fn name_of(&self, i: usize) -> String {
+    /// Who a man is, for the things that have to say his name out loud.
+    pub fn name_of(&self, i: usize) -> String {
         self.player_of(i).short_name()
     }
 

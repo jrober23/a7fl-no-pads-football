@@ -925,23 +925,34 @@ fn cmd_arcade(args: &[String]) {
                 // A drill hands the view back when the player leaves it, and the
                 // front end is where they land: the modes are a place to come
                 // back to, not a game to finish.
-                let (v, p) = play_drill(view, pad, &settings, kind, &kick, difficulty, seed, None);
+                let (v, p) = play_drill(
+                    view, pad, &settings, kind, &kick, difficulty, seed, None, None,
+                );
                 view = v;
                 pad = p;
             }
             Some(menu::Front::Test(kick, at)) => {
-                // One snap of the play he has just drawn, on the practice field,
-                // and then straight back to the desk he drew it at.
+                // One snap of what he has just drawn -- a play to run, or a call
+                // to defend with -- and then straight back to the desk.
                 let difficulty = settings.difficulty;
+                let (track, play, call) = match at.side {
+                    menu::TestSide::Offense => {
+                        (menu::Track::Offense, Some(at.play), None)
+                    }
+                    menu::TestSide::Defense => {
+                        (menu::Track::Defense, None, Some(at.play))
+                    }
+                };
                 let (v, p) = play_drill(
                     view,
                     pad,
                     &settings,
-                    menu::DrillKind::Practice(menu::Track::Offense),
+                    menu::DrillKind::Practice(track),
                     &kick,
                     difficulty,
                     seed,
-                    Some(at.play),
+                    play,
+                    call,
                 );
                 view = v;
                 pad = p;
@@ -1056,6 +1067,7 @@ fn play_drill(
     difficulty: usize,
     seed: u64,
     start_play: Option<usize>,
+    start_def_call: Option<usize>,
 ) -> (view::View, Option<pad::Pad>) {
     let mode = match kind {
         menu::DrillKind::Tutorial(_) => arcade::Mode::Tutorial,
@@ -1091,6 +1103,10 @@ fn play_drill(
         // A designed play is called for him: the first thing he sees is the play
         // he drew running, not the sheet he would call it from.
         arcade = arcade.with_start_play(play);
+    }
+    if let Some(call) = start_def_call {
+        // And on defense the call is already made, against the machine.
+        arcade = arcade.with_start_def_call(call);
     }
     arcade.run();
     arcade.into_parts()

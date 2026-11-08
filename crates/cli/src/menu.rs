@@ -105,6 +105,16 @@ pub struct PlayTest {
     pub slot: usize,
     pub formation: usize,
     pub play: usize,
+    pub side: TestSide,
+}
+
+/// Which half of the book a try-it request came from: a play to run, or a call
+/// to defend with. They are tested on the same field, from the same list they
+/// were drawn in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TestSide {
+    Offense,
+    Defense,
 }
 
 /// The play the designer has asked to see run.
@@ -206,10 +216,20 @@ pub fn run_from(
         // out the way he came in rather than dropping him on the title screen.
         let back = (|| {
             let mut book = design::book()?;
-            if at.formation < book.plays.len() {
-                play_list(view, &mut pad, &mut book, at.formation, at.play)?;
+            match at.side {
+                TestSide::Offense => {
+                    if at.formation < book.plays.len() {
+                        play_list(view, &mut pad, &mut book, at.formation, at.play)?;
+                    }
+                    offense_list(view, &mut pad)?;
+                }
+                TestSide::Defense => {
+                    if at.formation < book.calls.len() {
+                        call_list(view, &mut pad, &mut book, at.formation, at.play)?;
+                    }
+                    defense_list(view, &mut pad)?;
+                }
             }
-            offense_list(view, &mut pad)?;
             book_menu(view, &mut pad, at.slot)?;
             design_hub(view, &mut pad)?;
             Some(())
@@ -2967,7 +2987,7 @@ fn call_editor(
     pad: &mut Option<&mut Pad>,
     front: &DesignFront,
     call: &mut DesignCall,
-) -> Option<()> {
+) -> Option<bool> {
     let bits = def_bits(&front.roles);
     let mut sel = 0usize;
     let mut cursor = (front.spots[0].x as i8, front.spots[0].y as i8);
@@ -2982,7 +3002,12 @@ fn call_editor(
         last = now;
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.b {
-            return Some(());
+            return Some(false);
+        }
+        // Straight out to the field: the call is saved on the way, so the snap
+        // he is about to watch is the one under his pen.
+        if input.pressed.throw {
+            return Some(true);
         }
         let mut moved = false;
         if let d = nav_x.step(input.stick.x, dt) {
@@ -3066,7 +3091,7 @@ fn call_editor(
         );
         footer(
             &mut frame,
-            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PRESS/OFF   [SELECT] WIPE   [B] DONE",
+            "[STICK] DRAW  [A] PEN  [RT] RUN IT  [X] NEXT MAN  [Y] PRESS/OFF  [SELECT] WIPE  [B] DONE",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -3717,7 +3742,7 @@ fn draw_call_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         &rows,
         slide,
         "LEFT/RIGHT CHANGES THE COVERAGE; [A] DRAWS THE DROPS",
-        "[UP/DOWN] CALL   [LEFT/RIGHT] COVERAGE   [A] OPEN   [Y] RENAME   [X] DELETE",
+        "[UP/DOWN] CALL   [LEFT/RIGHT] COVERAGE   [A] OPEN   [RT] RUN IT   [Y] RENAME",
     );
 }
 
@@ -4002,6 +4027,16 @@ fn call_sheet_index(book: &DesignBook, fi: usize, sel: usize) -> Option<usize> {
     Some(before + sel)
 }
 
+/// The same for a front's calls: the fronts in book order, each one's calls
+/// behind it. It is the index the game counts defensive calls by.
+fn call_index(book: &DesignBook, fi: usize, sel: usize) -> Option<usize> {
+    if fi >= book.defense.len() || sel >= book.calls_of(fi).len() {
+        return None;
+    }
+    let before: usize = (0..fi).map(|i| book.calls_of(i).len()).sum();
+    Some(before + sel)
+}
+
 /// The plays of one formation, and the two ways out of the list: open one to
 /// draw it, or ask to see it run.
 fn play_list(
@@ -4051,7 +4086,12 @@ fn play_list(
         if input.pressed.throw && sel < plays {
             // A play in the list is a thing to watch as well as a thing to open.
             if let (Some(slot), Some(at)) = (design::current(), call_sheet_index(book, fi, sel)) {
-                request_test(PlayTest { slot, formation: fi, play: at });
+                request_test(PlayTest {
+                    slot,
+                    formation: fi,
+                    play: at,
+                    side: TestSide::Offense,
+                });
                 return None;
             }
         }
@@ -4077,7 +4117,12 @@ fn play_list(
                     if let (Some(slot), Some(at)) =
                         (design::current(), call_sheet_index(book, fi, sel))
                     {
-                        request_test(PlayTest { slot, formation: fi, play: at });
+                        request_test(PlayTest {
+                            slot,
+                            formation: fi,
+                            play: at,
+                            side: TestSide::Offense,
+                        });
                     }
                     return None;
                 }
@@ -4156,7 +4201,7 @@ fn defense_list(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
                         book.defense[sel].roles = def_roles(&roles);
                         keep_book(&book);
                     }
-                    FormDoor::Plays => call_list(view, pad, &mut book, sel)?,
+                    FormDoor::Plays => call_list(view, pad, &mut book, sel, 0)?,
                     FormDoor::Rename => {
                         let mut name = book.defense[sel].name.clone();
                         name_something(view, pad, "FRONT", &mut name)?;
@@ -4203,6 +4248,7 @@ fn call_list(
     pad: &mut Option<&mut Pad>,
     book: &mut DesignBook,
     fi: usize,
+    start: usize,
 ) -> Option<()> {
     const COVERAGES: [Coverage; 6] = [
         Coverage::ManFree,
@@ -4212,7 +4258,7 @@ fn call_list(
         Coverage::ManPress,
         Coverage::GoalLine,
     ];
-    let mut sel = 0usize;
+    let mut sel = start.min(book.calls_of(fi).len().saturating_sub(1));
     let mut nav = Repeat::default();
     let mut nav_x = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -4272,6 +4318,18 @@ fn call_list(
             last = Instant::now();
             continue;
         }
+        if input.pressed.throw && sel < calls {
+            // A call is a thing to watch as well as a thing to draw.
+            if let (Some(slot), Some(at)) = (design::current(), call_index(book, fi, sel)) {
+                request_test(PlayTest {
+                    slot,
+                    formation: fi,
+                    play: at,
+                    side: TestSide::Defense,
+                });
+                return None;
+            }
+        }
         if input.pressed.a {
             if sel >= calls {
                 if calls >= MAX_PLAYS {
@@ -4286,9 +4344,26 @@ fn call_list(
             }
             let front = book.defense[fi].clone();
             let mut call = book.calls[fi][sel].clone();
-            call_editor(view, pad, &front, &mut call)?;
+            let drawn = call_editor(view, pad, &front, &mut call);
             book.calls[fi][sel] = call;
+            // Saved first, whatever he does with it: the call about to be tried is
+            // the one he has just drawn.
             keep_book(book);
+            match drawn {
+                None => return None,
+                Some(true) => {
+                    if let (Some(slot), Some(at)) = (design::current(), call_index(book, fi, sel)) {
+                        request_test(PlayTest {
+                            slot,
+                            formation: fi,
+                            play: at,
+                            side: TestSide::Defense,
+                        });
+                    }
+                    return None;
+                }
+                Some(false) => {}
+            }
             view.reset();
             last = Instant::now();
             continue;
@@ -6136,6 +6211,24 @@ mod tests {
         LOCK.get_or_init(|| std::sync::Mutex::new(()))
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn a_designed_call_is_tried_where_the_sheet_has_it() {
+        let _held = shelf_lock();
+        design::clear();
+        // The same flattening as the offense, on the other side of the ball: the
+        // fronts in book order, each one's calls behind it.
+        let mut book = DesignBook::blank();
+        book.calls[1].push(DesignCall::blank("BLITZ".to_string(), Coverage::Cover2));
+        let last = book.defense.len() - 1;
+        let sel = book.calls_of(last).len() - 1;
+        let at = call_index(&book, last, sel).expect("the call just drawn");
+        assert_eq!(at, book.calls_of(0).len() + sel);
+        let slot = design::add(book);
+        let calls = design::defense_calls_at(slot);
+        assert_eq!(calls[at].name, "BLITZ", "the index names the call");
+        design::clear();
     }
 
     #[test]

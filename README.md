@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.101-windows-x86_64.zip` from the
+Grab `7on7-v0.25.102-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -270,7 +270,9 @@ going for the pick.
   keeps it at the mesh and the man the play was drawn for runs his path as the
   pitch, so whoever is behind the ball is on a face button until the line is
   crossed and the decision is the player's. An option needs both paths drawn,
-  the quarterback's keep and the pitch man's route. On a pass the same screen sets the drop: **3 STEP**,
+  the quarterback's keep and the pitch man's route, and while he has the ball the
+  line above the buttons names the end he is reading, on the side the ball is
+  going, so the read is a man rather than a guess. On a pass the same screen sets the drop: **3 STEP**,
   **5 STEP** or **7 STEP**, and the routes have that many steps' worth of time to
   get open. Left trigger cycles the handoff, left bumper the drop, and the line
   under the play's name says which one is set.
@@ -280,7 +282,14 @@ going for the pick.
   with the book it was drawn for — no clock, no downs, the same spot — so a play
   can be tried before the next one is drawn. The result card says how many yards
   it made, and leaving practice puts him back in the list he came from, on the
-  play he was drawing. The computer runs the same play the same way: it reads the end on the
+  play he was drawing.
+
+  The same trigger works on a defensive call, in the coverage editor or on the
+  call in the list: it is run on the same practice field against the machine's
+  offense, with the call already made, so a front and a coverage can be watched
+  doing what they were drawn to do rather than imagined. The card names the call
+  and how many yards it allowed, and leaving puts him back in the calls of the
+  front he drew it on. The computer runs the same play the same way: it reads the end on the
   play side once, hands off if he stays wide, keeps it if he crashes down, and
   gives it on to the trailer when they come for the keeper. The defense is drawn
   the same way: a front of X's, then a call whose
