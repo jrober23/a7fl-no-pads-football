@@ -1508,7 +1508,7 @@ impl Arcade {
                 Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui_none()),
                 None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
             };
-            let (title, left, right, prompt) = &pages[page];
+            let (title, left, right, _prompt) = &pages[page];
             // The banner goes up on its own for a beat, the cards arrive on it,
             // and then it leaves: a broadcast open, not a form.
             let reveal = opened.elapsed().as_secs_f32();
@@ -1521,7 +1521,7 @@ impl Arcade {
                 accents,
                 reveal,
             );
-            let lines = vec![self.header(), String::new(), prompt.to_string()];
+            let lines = vec![self.header()];
             if !self.view.show(&mut frame, &lines) {
                 return false;
             }
@@ -1542,7 +1542,7 @@ impl Arcade {
     fn halftime(&mut self) -> bool {
         let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
         nopads_render::hud::draw_stats_panel(&mut frame, &self.game, "HALFTIME");
-        let lines = vec![self.header(), String::new(), "  [A] HIGHLIGHTS".to_string()];
+        let lines = vec![self.header()];
         if !self.view.show(&mut frame, &lines) {
             return false;
         }
@@ -1587,8 +1587,7 @@ impl Arcade {
                 &[],
                 accent,
             );
-            let lines = vec![String::new(), "  [A] NEXT".to_string()];
-            if !self.view.show(&mut frame, &lines) {
+            if !self.view.show(&mut frame, &[]) {
                 return false;
             }
             let start = Instant::now();
@@ -2428,7 +2427,7 @@ impl Arcade {
         }
         lines.push(String::new());
         lines.push("  [A] CONTINUE".to_string());
-        if !self.view.page(&lines) {
+        if !self.view.page_big(&lines) {
             self.quit = true;
             return;
         }
@@ -2459,7 +2458,7 @@ impl Arcade {
         }
         lines.push(String::new());
         lines.push("  [A] CONTINUE".to_string());
-        if !self.view.page(&lines) {
+        if !self.view.page_big(&lines) {
             self.quit = true;
             return;
         }
@@ -2517,7 +2516,7 @@ impl Arcade {
         } else {
             lines.push("  [A] PLAY AGAIN    [B] MAIN MENU".to_string());
         }
-        if !self.view.page(&lines) {
+        if !self.view.page_big(&lines) {
             return None;
         }
         loop {
@@ -2665,7 +2664,6 @@ impl PausePanel<'_> {
                     ("TILT", format!("{:+.2}", self.tilt)),
                 ],
                 selected: None,
-                hint_line: "[STICK] ZOOM / TILT   [X] RESET   [A] DONE",
             }
         } else if let Some(choice) = self.leaving {
             PauseSheet {
@@ -2675,7 +2673,6 @@ impl PausePanel<'_> {
                     ("QUIT THE GAME", String::new()),
                 ],
                 selected: Some(choice.min(1)),
-                hint_line: "[STICK] CHOOSE   [A] SELECT   [B] STAY",
             }
         } else {
             let slots = self.slots;
@@ -2691,7 +2688,6 @@ impl PausePanel<'_> {
                 title: "PAUSED",
                 rows,
                 selected: Some(self.pick),
-                hint_line: "[STICK] CHOOSE   [A] SELECT   [START] RESUME",
             }
         }
     }
@@ -2713,8 +2709,6 @@ impl PausePanel<'_> {
                 lines.push(format!("    {mark} {label}    {value}"));
             }
         }
-        lines.push(String::new());
-        lines.push(format!("  {}", sheet.hint_line));
         lines
     }
 }
@@ -2727,8 +2721,6 @@ struct PauseSheet<'a> {
     rows: Vec<(&'a str, String)>,
     /// Which row the cursor is on, if the panel is a list at all.
     selected: Option<usize>,
-    /// The button strip, in the bracketed form the kit parses.
-    hint_line: &'a str,
 }
 
 /// The menu, set over the frozen picture rather than on a page of their own.
@@ -2786,8 +2778,6 @@ fn draw_pause(frame: &mut nopads_render::Frame, sheet: &PauseSheet<'_>) {
             ui::ACCENT,
         );
     }
-    let hints = ui::parse_hints(sheet.hint_line);
-    ui::hints(&mut page, x + w / 2, y + h - ui::S5, &hints);
     // Only the panel is lifted up: the rest of the picture is already drawn at
     // its own size, and resampling all of it would soften the field.
     for py in y..(y + h).min(UI_H as i32) {
@@ -2805,14 +2795,11 @@ fn draw_pause(frame: &mut nopads_render::Frame, sheet: &PauseSheet<'_>) {
 /// the card -- and the line of paging hints under it -- is lifted, so the field
 /// around it is not resampled.
 fn draw_controls_over(frame: &mut nopads_render::Frame, page: usize) {
-    use nopads_render::ui;
     let step = (frame.w / UI_W).max(1);
     let mut grid = frame.downsample(step);
     let (x, y, w, h) = crate::controls::draw(&mut grid, page);
-    let hints = ui::parse_hints("[LEFT/RIGHT] PAGE   [A] DONE");
-    ui::hints(&mut grid, UI_W as i32 / 2, y + h + 4, &hints);
     let s = step as i32;
-    for py in y..(y + h + ui::S5).min(UI_H as i32) {
+    for py in y..(y + h).min(UI_H as i32) {
         for px in x..(x + w).min(UI_W as i32) {
             frame.fill_rect(px * s, py * s, s, s, grid.get(px, py));
         }
@@ -3219,13 +3206,8 @@ fn run_tape<T>(
             };
             tape_plate(&mut frame, label);
             let lines = match mode {
-                Tape::Auto { .. } => vec!["REPLAY   [A] SKIP".to_string()],
-                Tape::Hand { .. } => vec![
-                    format!("  REPLAY   FRAME {}/{last}", index + 1),
-                    "  [A] PLAY / PAUSE   [RB] FAST FORWARD   [LB] REWIND   [Y] STEP FORWARD   [X] STEP BACK"
-                        .to_string(),
-                    "  [RS] ZOOM / ORBIT   [LS] PAN   [B] BACK TO THE GAME".to_string(),
-                ],
+                Tape::Auto { .. } => Vec::new(),
+                Tape::Hand { .. } => vec![format!("  REPLAY   FRAME {}/{last}", index + 1)],
             };
             if !view.show(&mut frame, &lines) {
                 break 'tape false;
@@ -3242,7 +3224,7 @@ fn run_tape<T>(
             };
             let mut frame = draw(broadcast, end);
             tape_plate(&mut frame, "END OF PLAY");
-            if !view.show(&mut frame, &["REPLAY DONE   [A] CONTINUE".to_string()]) {
+            if !view.show(&mut frame, &[]) {
                 break 'tape false;
             }
             let hold = Instant::now();

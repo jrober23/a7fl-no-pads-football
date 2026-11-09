@@ -38,6 +38,11 @@ pub const UI_H: usize = 360;
 /// How many canvas pixels one grid pixel becomes.
 pub const UI_SCALE: usize = CANVAS_W / UI_W;
 
+/// The size a page of text is set in: the call sheets, which are read closely.
+const PAGE_TEXT: usize = 2;
+/// One step larger, for a page that only reports: a flag, a score, the final.
+const PAGE_BIG: usize = 3;
+
 fn paper() -> Rgb {
     Rgb::new(232, 238, 246)
 }
@@ -152,16 +157,26 @@ impl View {
 
     /// A full screen of text: the call sheet, a prompt, the box score.
     pub fn page(&mut self, lines: &[String]) -> bool {
+        self.page_at(lines, PAGE_TEXT)
+    }
+
+    /// The same page a step larger: a card that only reports what happened is
+    /// read at a glance, from across the room, not studied like a call sheet.
+    pub fn page_big(&mut self, lines: &[String]) -> bool {
+        self.page_at(lines, PAGE_BIG)
+    }
+
+    fn page_at(&mut self, lines: &[String], scale: usize) -> bool {
         match self {
             View::Window(window) => {
                 let mut frame = Frame::new(CANVAS_W, CANVAS_H);
-                draw_page(&mut frame, lines);
+                draw_page(&mut frame, lines, scale);
                 window.blit(&frame)
             }
             #[cfg(feature = "bevy_view")]
             View::Bevy(view) => {
                 let mut frame = Frame::new(CANVAS_W, CANVAS_H);
-                draw_page(&mut frame, lines);
+                draw_page(&mut frame, lines, scale);
                 view.blit(&frame)
             }
             View::Term(screen) => {
@@ -345,7 +360,7 @@ fn draw_hud(frame: &mut Frame, lines: &[String]) {
 }
 
 /// A page of text: title rule, then wrapped lines in the same font.
-fn draw_page(frame: &mut Frame, lines: &[String]) {
+fn draw_page(frame: &mut Frame, lines: &[String], scale: usize) {
     use nopads_render::font;
 
     frame.clear(backdrop());
@@ -364,8 +379,8 @@ fn draw_page(frame: &mut Frame, lines: &[String]) {
                 paper()
             };
             let weight = if chunk.starts_with('>') || chunk.contains("FINAL") { 2 } else { 1 };
-            font::draw_styled(frame, 24, y, &chunk, 2, color, weight, false);
-            y += font::text_height(2) as i32 + 5;
+            font::draw_styled(frame, 24, y, &chunk, scale, color, weight, false);
+            y += font::text_height(scale) as i32 + 5;
         }
     }
 }
@@ -420,7 +435,7 @@ mod tests {
     fn the_text_page_stays_inside_the_canvas() {
         let lines: Vec<String> = (0..40).map(|i| format!("  line {i} of a very long page indeed")).collect();
         let mut frame = Frame::new(CANVAS_W, CANVAS_H);
-        draw_page(&mut frame, &lines);
+        draw_page(&mut frame, &lines, PAGE_TEXT);
         assert_eq!(frame.color.len(), CANVAS_W * CANVAS_H);
     }
 }

@@ -349,13 +349,6 @@ fn badge(frame: &mut Frame, cx: i32, cy: i32, size: i32, club: &Club, lit: bool)
     );
 }
 
-fn footer(frame: &mut Frame, text: &str) {
-    let h = UI_H as i32;
-    frame.fill_rect_alpha(0, h - 26, UI_W as i32, 26, ui::INK, 0.72);
-    ui::divider(frame, 0, h - 26, UI_W as i32);
-    let hints = ui::parse_hints(text);
-    ui::hints(frame, UI_W as i32 / 2, h - 18, &hints);
-}
 
 // ---------------------------------------------------------------------------
 // Input
@@ -653,7 +646,6 @@ fn draw_start(frame: &mut Frame, pick: usize, slide: &ui::Slide, t: f32) {
         dim(),
         1,
     );
-    footer(frame, "[STICK] CHOOSE   [A] SELECT   [START] QUIT");
 }
 
 fn start_screen(
@@ -994,9 +986,9 @@ fn draw_option_screen(
     rows: &[(&str, String)],
     slide: &ui::Slide,
     note: &str,
-    keys: &str,
+    _keys: &str,
 ) {
-    draw_option_rows(frame, title, caption, rows, slide, note, keys, 30, 6);
+    draw_option_rows(frame, title, caption, rows, slide, note, _keys, 30, 6);
 }
 
 /// The same screen with a chosen row height: the shelf's start screen has eight
@@ -1009,7 +1001,7 @@ fn draw_option_rows(
     rows: &[(&str, String)],
     slide: &ui::Slide,
     note: &str,
-    keys: &str,
+    _keys: &str,
     row_h: i32,
     gap: i32,
 ) {
@@ -1069,7 +1061,6 @@ fn draw_option_rows(
         frame.fill_rect_alpha(tx, ty, 3, thumb, ui::ACCENT, 0.9);
     }
     centered(frame, 74 + card_h + 12, note, 1, dim());
-    footer(frame, keys);
 }
 
 /// The first row a list shows when it has more rows than the card has room for,
@@ -1189,7 +1180,6 @@ fn settings_screen(
             "CHANGES ARE SAVED AS YOU MAKE THEM",
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
         );
-        footer(&mut frame, "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -1220,7 +1210,6 @@ fn controls_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
         let mut frame = Frame::new(UI_W, UI_H);
         night(&mut frame);
         crate::controls::draw(&mut frame, page);
-        footer(&mut frame, "[LEFT/RIGHT] PAGE   [A] DONE");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -1297,10 +1286,6 @@ fn game_setup(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settin
             &rows,
             &slide,
             "SAVED, AND USED BY THIS GAME",
-            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
-        );
-        footer(
-            &mut frame,
             "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
@@ -1395,7 +1380,6 @@ fn roster_grid(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             );
             frame.text_shadowed(cx - 12, cy + 14, all[i].city, 1, dim(), 1);
         }
-        footer(&mut frame, "[STICK] CLUB   [A] ROSTER   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -1588,10 +1572,6 @@ fn draw_roster(
         );
     }
 
-    footer(
-        frame,
-        "[UP/DOWN] MAN   [X] UP   [Y] DOWN   [A] CARD   [LEFT/RIGHT] ROSTER   [B] BACK",
-    );
 }
 
 /// One club's depth chart, best man first at every position, with the full roster
@@ -1769,7 +1749,6 @@ fn draw_player_card(frame: &mut Frame, player: &Player, t: f32) {
             1,
         );
     }
-    footer(frame, "[A/B] BACK");
 }
 
 /// One man's card, held until he lets it go.
@@ -2090,7 +2069,6 @@ fn team_slots(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
                 1,
             );
         }
-        footer(&mut frame, "[STICK] SLOT   [A] EDIT   [X] CLEAR   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2272,7 +2250,6 @@ fn uniform_pick(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             1,
             if painted { accent() } else { dim() },
         );
-        footer(&mut frame, "[LEFT/RIGHT] CLUB   [A] EDIT THE KIT   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2749,14 +2726,6 @@ fn spots_editor(
                 ui::GOOD,
             ),
         }
-        footer(
-            &mut frame,
-            if held {
-                "[STICK] CARRY HIM   [A] SET HIM DOWN   [Y] JOB   [B] DONE"
-            } else {
-                "[STICK] CURSOR   [A] PICK UP A MAN   [Y] JOB   [B] DONE"
-            },
-        );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -2980,10 +2949,6 @@ fn play_editor(
                 dim(),
             ),
         }
-        footer(
-            &mut frame,
-            "[STICK] DRAW  [A] PEN  [RT] RUN IT  [X] MAN  [Y] PASS/RUN  [RB] WHO RUNS  [LB] DROP  [LT] HANDOFF",
-        );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3100,10 +3065,6 @@ fn call_editor(
             1,
             if call.has_drop() { dim() } else { ui::DANGER },
         );
-        footer(
-            &mut frame,
-            "[STICK] DRAW  [A] PEN  [RT] RUN IT  [X] NEXT MAN  [Y] PRESS/OFF  [SELECT] WIPE  [B] DONE",
-        );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -3167,10 +3128,6 @@ fn draw_name_screen(frame: &mut Frame, title: &str, prompt: &str, text: &str, ro
             1,
         );
     }
-    footer(
-        frame,
-        "[STICK] LETTERS   [A] TYPE   [B] KEEP IT AS IT IS   [START] DONE",
-    );
 }
 
 fn text_editor(
@@ -3604,10 +3561,6 @@ fn draw_formations(
         ui::T_CAPTION,
         ui::PAPER,
     );
-    footer(
-        frame,
-        "[UP/DOWN] FORMATION   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
-    );
 }
 
 /// What opening a formation offers. The two drawings hang off one door each, so
@@ -3680,7 +3633,6 @@ fn draw_form_menu(
         );
     }
     frame.fill_rect(0, h - 26, w, 26, ui::INK);
-    footer(frame, "[UP/DOWN] CHOOSE   [A] GO   [B] CLOSE");
 }
 
 /// The drop-down, held open until the player picks a door or closes it.
@@ -4747,7 +4699,6 @@ fn pick_venue(view: &mut View, pad: &mut Option<&mut Pad>, home: usize) -> Optio
         ui::card(&mut frame, 150, 282, 340, 42, sky[1], 1.0);
         centered(&mut frame, 292, &venue.name(), 2, paper());
         centered(&mut frame, 311, &venue.sub(), 1, sky[1].lerp(paper(), 0.5));
-        footer(&mut frame, "[ARROWS] GROUND   [A] PLAY   [B] BACK");
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -5056,10 +5007,6 @@ fn pick_team(
             );
             ui::caption(&mut frame, 52, 312, "[X] CHANGE", dim());
         }
-        footer(
-            &mut frame,
-            "[LEFT/RIGHT] ROLL   [LB/RB] DIVISION   [A] PICK   [X] KIT   [B] BACK",
-        );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -5174,10 +5121,6 @@ fn draw_side_pick(
     if at.abs() < 0.3 {
         centered_in(frame, 320, 316, "SLIDE TO A SIDE", 1, dim());
     }
-    footer(
-        frame,
-        "[LEFT/RIGHT] SLIDE   [A] KICK OFF   [B] BACK",
-    );
 }
 
 /// A controller, at menu size: a body with two grips, a d-pad and two buttons.
@@ -5343,10 +5286,6 @@ fn draw_season_length(
         },
         ui::T_CAPTION,
         dim(),
-    );
-    footer(
-        frame,
-        "[LEFT/RIGHT] LENGTH   [A] START THE SEASON   [B] BACK",
     );
 }
 
@@ -5696,10 +5635,6 @@ pub fn season_hub(
         if note_t > 0.0 {
             centered(&mut frame, 276, &note, 1, accent());
         }
-        footer(
-            &mut frame,
-            "[UP/DOWN] ACTION   [LEFT/RIGHT] PAGE   [A] SELECT   [B] MENU",
-        );
         if !view.show_ui(&mut frame, &[]) {
             return None;
         }
@@ -5850,11 +5785,9 @@ fn draw_coin_toss(
                 ui::T_CAPTION,
                 dim(),
             );
-            footer(frame, "[LEFT/RIGHT] CALL   [A] FLIP   [B] BACK");
         }
         CoinStep::Flip => {
             centered(frame, 208, "IN THE AIR", ui::T_LABEL, paper());
-            footer(frame, "WAITING ON THE COIN");
         }
         CoinStep::Won => {
             centered(
@@ -5871,7 +5804,6 @@ fn draw_coin_toss(
                 ui::T_CAPTION,
                 paper(),
             );
-            footer(frame, "[A] CHOOSE");
         }
         CoinStep::Lost => {
             centered(
@@ -5889,12 +5821,10 @@ fn draw_coin_toss(
                 ui::T_CAPTION,
                 all[theirs].accent,
             );
-            footer(frame, "THE COMPUTER TAKES THE BALL");
         }
         CoinStep::Choose => {
             centered(frame, 200, "THROW OR RECEIVE", ui::T_CAPTION, dim());
             pair(frame, 218, ["THROW IT OFF", "RECEIVE IT"]);
-            footer(frame, "[LEFT/RIGHT] CHOOSE   [A] KICK OFF");
         }
     }
 }
@@ -6497,7 +6427,6 @@ mod tests {
         ui::heading(&mut frame, UI_W as i32 / 2, 16, &form.name, ui::T_BODY, ui::ACCENT);
         centered_in(&mut frame, 320, 40, "SET QB - [Y] CHANGES THE JOB", 1, accent());
         centered_in(&mut frame, 320, FIELD_B + 10, "THE LINE IS LEGAL", 1, ui::GOOD);
-        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [Y] JOB   [B] DONE");
         save("play_formation", &frame);
 
         let mut frame = Frame::new(UI_W, UI_H);
@@ -6514,10 +6443,6 @@ mod tests {
             "EVERY YARD YOU DRAW IS A WAYPOINT: THE ROUTE STARTS AT HIS FEET",
             1,
             dim(),
-        );
-        footer(
-            &mut frame,
-            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [SELECT] WIPE  [B] DONE",
         );
         save("play_routes", &frame);
 
@@ -6555,10 +6480,6 @@ mod tests {
             1,
             dim(),
         );
-        footer(
-            &mut frame,
-            "[STICK] DRAW  [A] PEN  [X] MAN  [Y] PASS/RUN  [SHOULDER] WHO RUNS  [SELECT] WIPE  [B] DONE",
-        );
         save("play_run", &frame);
 
         let front = book.defense[0].clone();
@@ -6570,7 +6491,6 @@ mod tests {
         ui::heading(&mut frame, UI_W as i32 / 2, 16, &front.name, ui::T_BODY, ui::ACCENT);
         centered_in(&mut frame, 320, 40, "SET CB - [Y] CHANGES THE JOB", 1, accent());
         centered_in(&mut frame, 320, FIELD_B + 10, "EVERY MAN IS SET", 1, ui::GOOD);
-        footer(&mut frame, "[STICK] CURSOR   [A] PICK UP A MAN   [Y] JOB   [B] DONE");
         save("play_front", &frame);
 
         let mut call = book.calls[0][0].clone();
@@ -6595,10 +6515,6 @@ mod tests {
             "DRAW WHERE HE DROPS: THE COVERAGE FOLLOWS THE PATH YOU DREW",
             1,
             dim(),
-        );
-        footer(
-            &mut frame,
-            "[STICK] DRAW   [A] PEN   [X] NEXT MAN   [Y] PRESS/OFF   [SELECT] WIPE   [B] DONE",
         );
         save("play_coverage", &frame);
     }
@@ -6640,7 +6556,6 @@ mod tests {
             let mut page = Frame::new(UI_W, UI_H);
             night(&mut page);
             crate::controls::draw(&mut page, i);
-            footer(&mut page, "[LEFT/RIGHT] PAGE   [A] DONE");
             save(&format!("controls_{}", i + 1), &page);
         }
         let all = clubs();
