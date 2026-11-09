@@ -73,7 +73,10 @@ impl View {
             if let Some(bevy) = BevyView::attach(settings) {
                 return View::Bevy(bevy);
             }
-            #[cfg(not(target_os = "android"))]
+            // Both platforms open the same `WindowView`: on a desktop it is a
+            // minifb window, on a phone it is the activity's surface. Gating this
+            // out on Android was why the phone showed nothing but black: the game
+            // was drawing ANSI into a stdout nobody could see.
             if let Some(window) = WindowView::open(settings) {
                 return View::Window(window);
             }

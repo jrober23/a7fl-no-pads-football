@@ -6,6 +6,8 @@
 //! there is no graphics API here at all: the frame is letterboxed onto the
 //! activity's surface byte by byte, the way it was letterboxed into a window.
 
+use std::ffi::CString;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -23,14 +25,21 @@ static APP: OnceLock<AndroidApp> = OnceLock::new();
 /// Run the game in the activity the OS just handed us.
 pub fn run(app: AndroidApp) {
     let _ = APP.set(app.clone());
+    log("android_main: started");
     // Settings live in the app's private directory, which is HOME as far as the
     // rest of the game is concerned; the desktop default (".") is not writable.
     if let Some(data) = app.internal_data_path() {
         std::fs::create_dir_all(&data).ok();
         std::env::set_var("HOME", &data);
+        log(&format!("android_main: home is {}", data.display()));
     }
     let settings = Settings::load();
+    log(&format!(
+        "android_main: settings {}x{} fullscreen={} difficulty={}",
+        settings.width, settings.height, settings.fullscreen, settings.difficulty
+    ));
     let view = crate::view::View::open(false, &settings);
+    log(&format!("android_main: view is {}", view.describe()));
     let teams = nopads_core::team::league_teams();
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -39,6 +48,7 @@ pub fn run(app: AndroidApp) {
     let mut game = nopads_core::game::GameState::new(teams[0].clone(), teams[1].clone(), seed);
     game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(settings.difficulty));
     game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
+    log("android_main: kicking off");
     crate::arcade::Arcade::new(game, None, view)
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
@@ -77,7 +87,10 @@ impl WindowView {
     pub fn open(settings: &Settings) -> Option<WindowView> {
         // Nothing can be drawn until the activity exists, which is why the entry
         // point fills `APP` before it opens the view.
-        APP.get()?;
+        if APP.get().is_none() {
+            log("view: opened before the activity existed");
+            return None;
+        }
         Some(WindowView {
             prev: Buttons::default(),
             held: Buttons::default(),
@@ -101,6 +114,7 @@ impl WindowView {
     /// Show a frame on the surface. Returns false once the activity is gone.
     pub fn blit(&mut self, frame: &Frame) -> bool {
         let Some(app) = APP.get() else { return false };
+        let mut waited = 0u32;
         loop {
             if destroyed(app) {
                 return false;
@@ -110,6 +124,10 @@ impl WindowView {
             }
             // The activity is in the background or still starting: hold the frame
             // rather than running the clock on a picture nobody can see.
+            if waited % 120 == 0 {
+                log("surface: waiting for the activity's window");
+            }
+            waited += 1;
             std::thread::sleep(Duration::from_millis(16));
         }
     }
@@ -165,6 +183,11 @@ fn destroyed(app: &AndroidApp) -> bool {
 }
 
 /// Letterbox the canvas into the surface, nearest neighbour, then post it.
+///
+/// The surface is not always four bytes a pixel: some devices hand back RGB_565,
+/// and writing three bytes into those would run past the end of the buffer. So
+/// the pixel width comes from the format, and a format this cannot write is left
+/// alone rather than guessed at.
 fn present(window: &ndk::native_window::NativeWindow, frame: &Frame) -> bool {
     let Ok(mut buffer) = window.lock(None) else {
         return true;
@@ -173,18 +196,31 @@ fn present(window: &ndk::native_window::NativeWindow, frame: &Frame) -> bool {
     if w < 32 || h < 32 || frame.w == 0 || frame.h == 0 {
         return true;
     }
-    let per_pixel = buffer.format().bytes_per_pixel().unwrap_or(4).max(3);
+    let Some(per_pixel) = buffer.format().bytes_per_pixel() else {
+        log("surface: this device's format has no pixel width");
+        return true;
+    };
+    if per_pixel != 4 && per_pixel != 2 {
+        log(&format!("surface: {} bytes per pixel is not one this draws", per_pixel));
+        return true;
+    }
     let bits = buffer.bits().cast::<u8>();
     if bits.is_null() {
         return true;
+    }
+    if !PRESENTED.swap(true, Ordering::Relaxed) {
+        log(&format!(
+            "surface: {}x{} stride {} {} bytes per pixel",
+            w, h, stride, per_pixel
+        ));
     }
     let scale = (w as f32 / frame.w as f32).min(h as f32 / frame.h as f32);
     let dw = ((frame.w as f32 * scale) as usize).clamp(1, w);
     let dh = ((frame.h as f32 * scale) as usize).clamp(1, h);
     let ox = (w - dw) / 2;
     let oy = (h - dh) / 2;
-    // SAFETY: the lock guard gives us `stride * height` pixels of at least
-    // `per_pixel` bytes each, and every write below is inside that range.
+    // SAFETY: the lock guard exposes `stride * height` pixels of `per_pixel` bytes
+    // each, and every write below stays inside that span.
     unsafe {
         std::ptr::write_bytes(bits, 0, stride * h * per_pixel);
         for y in 0..dh {
@@ -195,17 +231,53 @@ fn present(window: &ndk::native_window::NativeWindow, frame: &Frame) -> bool {
                 let sx = (x * frame.w / dw).min(frame.w - 1);
                 let c = frame.color[row + sx];
                 let p = bits.add((out + x) * per_pixel);
-                p.write(c.r);
-                p.add(1).write(c.g);
-                p.add(2).write(c.b);
-                if per_pixel >= 4 {
+                if per_pixel == 4 {
+                    p.write(c.r);
+                    p.add(1).write(c.g);
+                    p.add(2).write(c.b);
                     p.add(3).write(255);
+                } else {
+                    // RGB_565: five bits of red, six of green, five of blue.
+                    let r = ((c.r as u16) >> 3) << 11;
+                    let g = ((c.g as u16) >> 2) << 5;
+                    let b = (c.b as u16) >> 3;
+                    let pixel = (r | g | b).to_le_bytes();
+                    p.write(pixel[0]);
+                    p.add(1).write(pixel[1]);
                 }
             }
         }
     }
     // Dropping the guard unlocks and posts the buffer.
     true
+}
+
+/// True once a frame has actually reached the screen, so the surface geometry is
+/// reported once rather than every frame.
+static PRESENTED: AtomicBool = AtomicBool::new(false);
+
+/// Write a line to logcat.
+///
+/// Android sends a `NativeActivity`'s stdout nowhere, so a device we cannot debug
+/// directly can still say what it did: `adb logcat -s nopads`.
+pub fn log(message: &str) {
+    #[link(name = "log")]
+    extern "C" {
+        fn __android_log_print(
+            priority: i32,
+            tag: *const std::os::raw::c_char,
+            format: *const std::os::raw::c_char,
+            ...
+        ) -> i32;
+    }
+    const INFO: i32 = 4;
+    let text = message.replace('\0', " ");
+    let (Ok(tag), Ok(text)) = (CString::new("nopads"), CString::new(text)) else {
+        return;
+    };
+    unsafe {
+        __android_log_print(INFO, tag.as_ptr(), b"%s\0".as_ptr().cast(), text.as_ptr());
+    }
 }
 
 /// Drain the activity's input queue into the pad state.
