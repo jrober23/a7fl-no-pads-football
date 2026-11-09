@@ -751,6 +751,7 @@ impl Arcade {
                     pad: self.pad.as_mut(),
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
+                    audio: &self.audio,
                 },
                 &mut caller,
                 &header,
@@ -825,6 +826,7 @@ impl Arcade {
                     pad: self.pad.as_mut(),
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
+                    audio: &self.audio,
                 },
                 &mut caller,
                 &header,
@@ -959,6 +961,7 @@ impl Arcade {
                     pad: self.pad.as_mut(),
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
+                    audio: &self.audio,
                 },
                 &mut caller,
                 &header,
@@ -1060,6 +1063,7 @@ impl Arcade {
                     pad: self.pad.as_mut(),
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
+                    audio: &self.audio,
                 },
                 &mut caller,
                 &header,
@@ -1207,6 +1211,7 @@ impl Arcade {
                     pad: self.pad.as_mut(),
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
+                    audio: &self.audio,
                 },
                 &mut caller,
                 &header,
@@ -2030,6 +2035,7 @@ impl Arcade {
                 pad: self.pad.as_mut(),
                 cam: &mut self.cam,
                 flip_y: self.flip_y,
+                audio: &self.audio,
             },
             &mut caller,
             &header,
@@ -2086,6 +2092,7 @@ impl Arcade {
         let quit = &mut self.quit;
         let cam = &mut self.cam;
         let flip_y = self.flip_y;
+        let audio = &self.audio;
 
         let mut ask_timeout = false;
         let record = game.snap_with(play, def, |sim| {
@@ -2112,6 +2119,7 @@ impl Arcade {
                     pad: pad.as_mut(),
                     cam,
                     flip_y,
+                    audio,
                 },
                 &mut caller,
                 &header,
@@ -2144,6 +2152,7 @@ impl Arcade {
         let quit = &mut self.quit;
         let cam = &mut self.cam;
         let flip_y = self.flip_y;
+        let audio = &self.audio;
 
         let mut ask_timeout = false;
         let record = game.snap_with(play, def, |sim| {
@@ -2161,6 +2170,7 @@ impl Arcade {
                     pad: pad.as_mut(),
                     cam,
                     flip_y,
+                    audio,
                 },
                 &mut caller,
                 &header,
@@ -3683,6 +3693,8 @@ struct SnapScreen<'a, S> {
     pad: Option<&'a mut Pad>,
     cam: &'a mut usize,
     flip_y: bool,
+    /// The game's sound: the crowd bed drops while the ball is live.
+    audio: &'a Audio,
 }
 
 impl<S> SnapScreen<'_, S> {
@@ -3743,6 +3755,11 @@ fn snap_loop<S: SnapSim>(
     header: &str,
     board: &hud::Scoreboard,
 ) -> bool {
+    // The ball is live from here to the whistle. The guard holds the room down
+    // for the whole loop and puts it back up on every way out of it, including
+    // the early ones.
+    let audio: &Audio = screen.audio;
+    let _bed = audio.ducked();
     let mut acc = 0.0f64;
     let mut last = Instant::now();
     let mut drew = Instant::now() - FRAME;
@@ -3764,6 +3781,8 @@ fn snap_loop<S: SnapSim>(
             caller.ask_timeout(screen);
         }
         if input.pressed.start {
+            // The room comes back up while the game is paused: nothing is live.
+            screen.audio.bed_up();
             match pause_menu(
                 screen.view,
                 screen.pad.as_deref_mut(),
@@ -3793,6 +3812,7 @@ fn snap_loop<S: SnapSim>(
                 }
                 PauseAction::Resume => {}
             }
+            screen.audio.bed_down();
             // The whole pause was spent inside the wall clock: do not run the play
             // forward by it.
             last = Instant::now();
