@@ -2047,8 +2047,10 @@ impl Arcade {
         }
         if let Some(result) = sim.result.clone() {
             let rec = self.game.finish_throw_off(setup, result);
-            let text = rec.description().to_string();
-            self.show_result(&text, None);
+            // Through the same call a snap gets: a return that reached the end
+            // zone moved the board, and the room answers points wherever they
+            // came from. Booked straight to the card, a return scored in silence.
+            self.report(rec);
         }
         true
     }
