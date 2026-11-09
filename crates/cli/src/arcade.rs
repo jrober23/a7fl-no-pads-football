@@ -21,7 +21,7 @@ use nopads_core::playbook::{
     DefFront, DefRole, Formation, OffRole, Play,
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
-use nopads_core::sim::{Hit, DefControl, Phase, PlaySim, QbControl};
+use nopads_core::sim::{Hit, DefControl, Phase, PlayResult, PlaySim, QbControl};
 use nopads_core::team::{league_teams, Team};
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use nopads_render::broadcast::{HandCamera, Broadcast, CameraMode};
@@ -752,6 +752,7 @@ impl Arcade {
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
                     audio: &self.audio,
+                    room: false,
                 },
                 &mut caller,
                 &header,
@@ -827,6 +828,7 @@ impl Arcade {
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
                     audio: &self.audio,
+                    room: false,
                 },
                 &mut caller,
                 &header,
@@ -962,6 +964,7 @@ impl Arcade {
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
                     audio: &self.audio,
+                    room: false,
                 },
                 &mut caller,
                 &header,
@@ -1064,6 +1067,7 @@ impl Arcade {
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
                     audio: &self.audio,
+                    room: false,
                 },
                 &mut caller,
                 &header,
@@ -1212,6 +1216,7 @@ impl Arcade {
                     cam: &mut self.cam,
                     flip_y: self.flip_y,
                     audio: &self.audio,
+                    room: false,
                 },
                 &mut caller,
                 &header,
@@ -2036,6 +2041,7 @@ impl Arcade {
                 cam: &mut self.cam,
                 flip_y: self.flip_y,
                 audio: &self.audio,
+                room: true,
             },
             &mut caller,
             &header,
@@ -2047,9 +2053,8 @@ impl Arcade {
         }
         if let Some(result) = sim.result.clone() {
             let rec = self.game.finish_throw_off(setup, result);
-            // Through the same call a snap gets: a return that reached the end
-            // zone moved the board, and the room answers points wherever they
-            // came from. Booked straight to the card, a return scored in silence.
+            // Through the same call a snap gets, for the card. The room already
+            // answered the return at the whistle, in the loop.
             self.report(rec);
         }
         true
@@ -2122,6 +2127,7 @@ impl Arcade {
                     cam,
                     flip_y,
                     audio,
+                    room: true,
                 },
                 &mut caller,
                 &header,
@@ -2173,6 +2179,7 @@ impl Arcade {
                     cam,
                     flip_y,
                     audio,
+                    room: true,
                 },
                 &mut caller,
                 &header,
@@ -2194,14 +2201,11 @@ impl Arcade {
 
     /// The card after a snap: a flag gets its own read-out, everything else the
     /// score.
+    ///
+    /// The room has already answered by the time this is called: it answers the
+    /// play at the whistle, in the live loop, so the crowd is not left waiting
+    /// through a replay for the card to be shown the score.
     fn report(&mut self, record: PlayRecord) {
-        // The room answers points, not a flag or a touchback: the only score
-        // worth cheering is the one that moved the board.
-        if record.score_after() != record.score_before() {
-            self.audio.crowd_sting();
-        } else if big_play(&record) {
-            self.audio.crowd_rise();
-        }
         match &record {
             PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
                 self.penalty_card(r);
@@ -3315,6 +3319,23 @@ fn replay_theatre<T>(
     )
 }
 
+/// Yards from scrimmage that turn a crowd's head.
+const BIG_GAIN: f32 = 20.0;
+
+/// What the room does when the ball dies.
+///
+/// The answer belongs to the play, not to the card. A score that waits out a
+/// replay and a dead-ball hold before the crowd comes up is a crowd answering
+/// the scoreboard a few seconds after the man crossed the line, which is what it
+/// sounded like.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Crowd {
+    /// Points on the board: the whole crowd.
+    Score,
+    /// A big play that moved no points: a smaller rise.
+    Rise,
+}
+
 /// What a dead play is worth running back, if anything.
 ///
 /// The label says what the tape is being run for. Whether it is run at all is
@@ -3342,6 +3363,15 @@ trait SnapSim: Clone {
 
     /// The ball is dead and the play has a result.
     fn is_done(&self) -> bool;
+
+    /// What the room answers, asked on the frame the ball dies.
+    ///
+    /// A replay that follows a score is the room looking at it again, not
+    /// hearing it for the first time: the noise is the play's, and it is owed
+    /// while the play is still on the screen.
+    fn crowd(&self) -> Option<Crowd> {
+        None
+    }
 
     /// The ball is still the player's to put in play.
     fn at_the_line(&self) -> bool;
@@ -3414,6 +3444,11 @@ impl SnapSim for PlaySim<'_> {
 
     fn is_done(&self) -> bool {
         self.result.is_some()
+    }
+
+    fn crowd(&self) -> Option<Crowd> {
+        let result = self.result.as_ref()?;
+        crowd_for(result, self.setup.down, self.setup.to_go, self.setup.is_try)
     }
 
     fn at_the_line(&self) -> bool {
@@ -3517,6 +3552,15 @@ impl SnapSim for ThrowOffSim<'_> {
 
     fn is_done(&self) -> bool {
         self.result.is_some()
+    }
+
+    fn crowd(&self) -> Option<Crowd> {
+        let result = self.result.as_ref()?;
+        if result.touchdown || result.safety {
+            return Some(Crowd::Score);
+        }
+        // A return that did not score is still the biggest thing on a throw-off.
+        (result.return_yards >= BIG_GAIN).then_some(Crowd::Rise)
     }
 
     fn at_the_line(&self) -> bool {
@@ -3699,6 +3743,9 @@ struct SnapScreen<'a, S> {
     flip_y: bool,
     /// The game's sound: the crowd bed drops while the ball is live.
     audio: &'a Audio,
+    /// Whether the room answers this snap at all. A drill is practice on an
+    /// empty field: there is nobody in the seats to answer it.
+    room: bool,
 }
 
 impl<S> SnapScreen<'_, S> {
@@ -3773,6 +3820,9 @@ fn snap_loop<S: SnapSim>(
     let mut turn: Option<Instant> = None;
     // The live play frame by frame, for the replay.
     let mut tape: Vec<S> = Vec::new();
+    // The ball stays dead for as long as the shot is held and the tape runs, so
+    // the room is only told about the play once.
+    let mut answered = false;
 
     loop {
         let now = Instant::now();
@@ -3909,6 +3959,19 @@ fn snap_loop<S: SnapSim>(
         }
 
         if screen.sim.is_done() {
+            // The room answers the play, not the card: this is the frame the
+            // ball died, before the hold and before the tape, so a score is heard
+            // over the play rather than after a replay of it.
+            if !answered {
+                answered = true;
+                if screen.room {
+                    match screen.sim.crowd() {
+                        Some(Crowd::Score) => audio.crowd_sting(),
+                        Some(Crowd::Rise) => audio.crowd_rise(),
+                        None => {}
+                    }
+                }
+            }
             // The ball is dead; the picture is not. Hold the shot while the hit
             // finishes and the players get up, then let the card come up.
             let since = *dead_at.get_or_insert(now);
@@ -5137,24 +5200,31 @@ fn throw_off_controls(
 /// Points have their own, louder answer, so anything that moved the board is
 /// not here -- [`Arcade::report`] asks this only when the score did not change.
 /// A penalty is a flag, not a play, and a try has no downs to be short of.
-fn big_play(record: &PlayRecord) -> bool {
-    /// Yards from scrimmage that turn a crowd's head.
-    const BIG_GAIN: f32 = 20.0;
-    match record {
-        PlayRecord::Scrimmage(r) => {
-            let result = &r.result;
-            if r.is_try || result.touchdown || result.safety || result.penalty.is_some() {
-                return false;
-            }
-            result.turnover
-                || result.yards >= BIG_GAIN
-                // Fourth down and short of the marker: the defense got off the
-                // field, whether the ball was thrown or run.
-                || (r.down >= 4 && result.yards < r.to_go)
-        }
-        // A return that did not score is still the biggest thing on a throw-off.
-        PlayRecord::ThrowOff(r) => !r.result.touchdown && r.result.return_yards >= BIG_GAIN,
+/// The room's answer to a snap, decided from the play rather than from the card
+/// that comes up after the replay.
+fn crowd_for(result: &PlayResult, down: u8, to_go: f32, is_try: bool) -> Option<Crowd> {
+    // Points first: a touchdown and a big play are not the same noise, and the
+    // flag that comes with a score does not make it a lesser score.
+    if result.touchdown || result.safety {
+        return Some(Crowd::Score);
     }
+    // There is no big play on a try: the try is the point itself.
+    if !is_try && big_play(result, down, to_go) {
+        return Some(Crowd::Rise);
+    }
+    None
+}
+
+/// A big play rather than points: the room's smaller answer.
+fn big_play(result: &PlayResult, down: u8, to_go: f32) -> bool {
+    if result.touchdown || result.safety || result.penalty.is_some() {
+        return false;
+    }
+    result.turnover
+        || result.yards >= BIG_GAIN
+        // Fourth down and short of the marker: the defense got off the field,
+        // whether the ball was thrown or run.
+        || (down >= 4 && result.yards < to_go)
 }
 
 #[cfg(test)]
@@ -5188,40 +5258,53 @@ mod tests {
     }
 
     /// What the room answers short of points: a long gain and a stop on fourth
-    /// down, and not an ordinary first down.
+    /// down, and not an ordinary first down. The same pass decides points, so the
+    /// game is asked whether a score gets the whole crowd too.
     #[test]
     fn a_long_gain_and_a_stop_on_fourth_down_are_what_the_room_notices() {
         let teams = nopads_core::team::league_teams();
         let mut game =
             nopads_core::game::GameState::new(teams[0].clone(), teams[1].clone(), 0xA7F1_5EED);
-        let (mut long, mut stop, mut quiet) = (false, false, false);
+        let (mut scored, mut long, mut stop, mut quiet) = (false, false, false, false);
         for _ in 0..800 {
             let Some(record) = game.simulate_next() else { break };
             let PlayRecord::Scrimmage(r) = &record else {
                 continue;
             };
             let result = &r.result;
-            if r.is_try || result.touchdown || result.safety || result.penalty.is_some() {
+            let answer = crowd_for(result, r.down, r.to_go, r.is_try);
+            if result.touchdown || result.safety {
+                scored = true;
+                assert_eq!(answer, Some(Crowd::Score), "a score did not get the crowd");
                 continue;
             }
-            if result.yards >= 20.0 {
+            if r.is_try || result.penalty.is_some() {
+                continue;
+            }
+            if result.yards >= BIG_GAIN {
                 long = true;
-                assert!(big_play(&record), "a {}-yard gain was missed", result.yards);
+                assert_eq!(
+                    answer,
+                    Some(Crowd::Rise),
+                    "a {}-yard gain was missed",
+                    result.yards
+                );
             } else if r.down >= 4 && result.yards < r.to_go {
                 stop = true;
-                assert!(big_play(&record), "a fourth-down stop was missed");
+                assert_eq!(answer, Some(Crowd::Rise), "a fourth-down stop was missed");
             } else if r.down == 1 && !result.turnover && result.yards.abs() < 8.0 {
                 quiet = true;
-                assert!(
-                    !big_play(&record),
+                assert_eq!(
+                    answer,
+                    None,
                     "a {}-yard first down got the crowd up",
                     result.yards
                 );
             }
         }
         assert!(
-            long && stop && quiet,
-            "the game did not turn up all three: long {long}, stop {stop}, quiet {quiet}"
+            scored && long && stop && quiet,
+            "the game did not turn up all four: scored {scored}, long {long}, stop {stop}, quiet {quiet}"
         );
     }
 
