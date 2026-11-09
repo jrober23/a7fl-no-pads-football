@@ -1,9 +1,9 @@
 [workspace]
-members = ["crates/core", "crates/render", "crates/platform", "crates/cli"]
+members = ["crates/core", "crates/render", "crates/platform", "crates/audio", "crates/cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.25.127"
+version = "0.25.128"
 edition = "2021"
 license = "MIT"
 

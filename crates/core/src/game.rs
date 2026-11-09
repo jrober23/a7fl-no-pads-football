@@ -96,6 +96,16 @@ impl PlayRecord {
         }
     }
 
+    /// The board before the play. With `score_after`, this is how a client
+    /// tells points from a flag or a touchback without knowing every result a
+    /// play can have.
+    pub fn score_before(&self) -> [u32; 2] {
+        match self {
+            PlayRecord::Scrimmage(r) => r.score_before,
+            PlayRecord::ThrowOff(r) => r.score_before,
+        }
+    }
+
     pub fn score_after(&self) -> [u32; 2] {
         match self {
             PlayRecord::Scrimmage(r) => r.score_after,

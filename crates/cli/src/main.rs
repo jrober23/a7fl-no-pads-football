@@ -969,7 +969,7 @@ fn cmd_arcade(args: &[String]) {
     }
 
     let flip_y = has(args, "--flip-y");
-    let mut arcade = arcade::Arcade::new(game, pad, view)
+    let mut arcade = arcade::Arcade::new(game, pad, view).with_audio(nopads_audio::Audio::open())
         .with_flip_y(flip_y)
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
@@ -1014,7 +1014,7 @@ fn play_kickoff(
     ));
     // The clock chosen on the setup card is the clock this game runs.
     game.set_quarter_seconds(settings.quarter_minutes as f32 * 60.0);
-    let mut arcade = arcade::Arcade::new(game, pad, view)
+    let mut arcade = arcade::Arcade::new(game, pad, view).with_audio(nopads_audio::Audio::open())
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
         .with_settings(settings.clone())
@@ -1064,7 +1064,7 @@ fn play_drill(
     // ball. The shirts are the ones picked on the way in.
     let mut game = GameState::new(teams[kick.yours].clone(), teams[kick.theirs].clone(), seed);
     game.set_difficulty(nopads_core::difficulty::Difficulty::from_index(difficulty));
-    let mut arcade = arcade::Arcade::new(game, pad, view)
+    let mut arcade = arcade::Arcade::new(game, pad, view).with_audio(nopads_audio::Audio::open())
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
         .with_settings(settings.clone())
@@ -1100,7 +1100,7 @@ fn play_test(
         menu::TestSide::Offense => arcade::Track::Offense,
         menu::TestSide::Defense => arcade::Track::Defense,
     };
-    let mut arcade = arcade::Arcade::new(game, pad, view)
+    let mut arcade = arcade::Arcade::new(game, pad, view).with_audio(nopads_audio::Audio::open())
         .with_camera(settings.camera)
         .with_lens(settings.lens_zoom, settings.lens_tilt)
         .with_settings(settings.clone())

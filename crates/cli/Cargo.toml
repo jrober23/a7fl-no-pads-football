@@ -13,6 +13,7 @@ path = "src/main.rs"
 nopads_core = { path = "../core" }
 nopads_render = { path = "../render" }
 nopads_platform = { path = "../platform" }
+nopads_audio = { path = "../audio" }
 minifb = "0.29.0"
 # Optional second window backend. Off by default: the minifb window has no GPU
 # requirement, so most builds should not pay for this.

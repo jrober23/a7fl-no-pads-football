@@ -11,6 +11,7 @@ use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use nopads_audio::Audio;
 use nopads_core::ai;
 use nopads_core::game::{Action, GamePhase, GameState, PlayRecord, ScrimmageRecord};
 use nopads_core::math::{Rng, Vec2, Vec3};
@@ -335,6 +336,9 @@ pub struct Arcade {
     test_call: Option<usize>,
     /// The name of the drawing being tested, for every line over the field.
     test_name: Option<&'static str>,
+    /// The game's sound. Silent when the machine has no output device, so
+    /// nothing downstream has to ask whether there is one.
+    audio: Audio,
 }
 
 /// What the player asked for at the final whistle.
@@ -408,7 +412,15 @@ impl Arcade {
             flip_y: false,
             settings: None,
             venue: 0,
+            audio: Audio::silent(),
         }
+    }
+
+    /// Play this game with sound, when the caller has a device to play it
+    /// through. A game built without this is silent rather than broken.
+    pub fn with_audio(mut self, audio: Audio) -> Self {
+        self.audio = audio;
+        self
     }
 
     /// Reverse the stick's vertical axis, for pads that report it inverted.
@@ -2171,6 +2183,11 @@ impl Arcade {
     /// The card after a snap: a flag gets its own read-out, everything else the
     /// score.
     fn report(&mut self, record: PlayRecord) {
+        // The room answers points, not a flag or a touchback: the only score
+        // worth cheering is the one that moved the board.
+        if record.score_after() != record.score_before() {
+            self.audio.crowd_sting();
+        }
         match &record {
             PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
                 self.penalty_card(r);

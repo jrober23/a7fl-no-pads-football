@@ -1,0 +1,14 @@
+[package]
+name = "nopads_audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Sound for 7 on 7 No Pads Football: a device that may not be there, and the stings the game asks it for"
+
+[dependencies]
+# Pinned exactly. rodio 0.22 renamed its terms -- `Sink` became `Player` and
+# `OutputStream` became `Sink` -- so a 0.20 example off a blog says the opposite
+# of what this version means, and a loose requirement would keep moving.
+# No decoders: everything this crate plays is generated in memory, so the
+# Symphonia features stay off and the binary does not grow a file parser.
+rodio = { version = "=0.22.2", default-features = false, features = ["playback"] }
