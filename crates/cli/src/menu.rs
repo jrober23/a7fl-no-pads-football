@@ -732,7 +732,6 @@ fn draw_modes(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
         &rows,
         slide,
         note,
-        "[UP/DOWN] MODE   [A] START   [B] BACK",
     );
 }
 
@@ -776,7 +775,6 @@ fn draw_track_screen(
         &rows,
         slide,
         note,
-        "[UP/DOWN] SESSION   [A] START   [B] BACK",
     );
 }
 
@@ -868,7 +866,6 @@ fn draw_difficulty(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
         &rows,
         slide,
         note,
-        "[UP/DOWN] DIFFICULTY   [A] TAKE IT   [B] BACK",
     );
 }
 
@@ -986,9 +983,8 @@ fn draw_option_screen(
     rows: &[(&str, String)],
     slide: &ui::Slide,
     note: &str,
-    _keys: &str,
 ) {
-    draw_option_rows(frame, title, caption, rows, slide, note, _keys, 30, 6);
+    draw_option_rows(frame, title, caption, rows, slide, note, 30, 6);
 }
 
 /// The same screen with a chosen row height: the shelf's start screen has eight
@@ -1001,7 +997,6 @@ fn draw_option_rows(
     rows: &[(&str, String)],
     slide: &ui::Slide,
     note: &str,
-    _keys: &str,
     row_h: i32,
     gap: i32,
 ) {
@@ -1178,7 +1173,6 @@ fn settings_screen(
             &rows,
             &slide,
             "CHANGES ARE SAVED AS YOU MAKE THEM",
-            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -1286,7 +1280,6 @@ fn game_setup(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settin
             &rows,
             &slide,
             "SAVED, AND USED BY THIS GAME",
-            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] KICK OFF   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -1981,7 +1974,6 @@ fn customize_screen(view: &mut View, pad: &mut Option<&mut Pad>) -> Option<()> {
             &rows,
             &slide,
             ITEMS[pick].1,
-            "[UP/DOWN] CHOOSE   [A] SELECT   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2193,7 +2185,6 @@ fn team_editor(
             &rows,
             &slide,
             "FRESH PLAYERS EVERY TIME. [LEFT/RIGHT] CHANGE THE ROW.",
-            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [A] SAVE   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -2382,7 +2373,6 @@ fn kit_editor(view: &mut View, pad: &mut Option<&mut Pad>, club: &Club) -> Optio
             &rows,
             &slide,
             "A KIT CHANGE IS SAVED AS SOON AS IT IS MADE.",
-            "[UP/DOWN] ROW   [LEFT/RIGHT] COLOUR   [A] SAVE   [B] BACK",
         );
         if !view.show_ui(&mut frame, &[]) {
             return None;
@@ -3255,7 +3245,6 @@ fn draw_shelf(frame: &mut Frame, books: &[DesignBook], pick: usize, slide: &ui::
         &rows,
         slide,
         &note,
-        "[UP/DOWN] PICK   [A] OPEN   [Y] RENAME   [X] DELETE   [B] BACK",
     );
 }
 
@@ -3278,7 +3267,6 @@ fn draw_start_book(frame: &mut Frame, pick: usize, slide: &ui::Slide) {
         &rows,
         slide,
         note,
-        "[UP/DOWN] PICK   [A] START   [B] BACK",
         24,
         3,
     );
@@ -3313,7 +3301,6 @@ fn draw_book_menu(frame: &mut Frame, book: &DesignBook, slide: &ui::Slide) {
         &rows,
         slide,
         &status,
-        "[UP/DOWN] PICK   [A] OPEN   [B] BACK",
     );
 }
 
@@ -3358,7 +3345,6 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         &rows,
         slide,
         "ON A RUN THE MAN NAMED TAKES THE BALL; A PASS'S PATHS ARE THE ROUTES",
-        "[UP/DOWN] PLAY   [A] OPEN   [RT] RUN IT   [Y] RENAME   [X] DELETE   [B] BACK",
     );
 }
 
@@ -3704,7 +3690,6 @@ fn draw_call_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         &rows,
         slide,
         "LEFT/RIGHT CHANGES THE COVERAGE; [A] DRAWS THE DROPS",
-        "[UP/DOWN] CALL   [LEFT/RIGHT] COVERAGE   [A] OPEN   [RT] RUN IT   [Y] RENAME",
     );
 }
 
@@ -4452,7 +4437,6 @@ fn draw_book_picker(frame: &mut Frame, club: &str, own: Book, books: &[Book], sl
         &rows,
         slide,
         &book_note(book),
-        "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
     );
 }
 
@@ -6549,7 +6533,6 @@ mod tests {
             &rows,
             &ui::Slide::new(2),
             "CHANGES ARE SAVED AS YOU MAKE THEM",
-            "[UP/DOWN] ROW   [LEFT/RIGHT] CHANGE   [B] BACK",
         );
         save("settings", &settings);
         for (i, _) in crate::controls::PAGES.iter().enumerate() {
@@ -6586,7 +6569,6 @@ mod tests {
             &rows,
             &ui::Slide::new(1),
             Book::ALL[1].blurb(),
-            "[UP/DOWN] BOOK   [A] TAKE IT   [B] BACK",
         );
         save("playbook", &books);
 
