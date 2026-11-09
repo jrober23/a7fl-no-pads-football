@@ -4,6 +4,12 @@
 //! and plays what is in front of him. Normal leans on moving the ball downfield
 //! and finishing drives. Hard is Normal with a defence that hunts the ball: it
 //! presses, it jumps routes, and it goes for the strip on the tackle.
+//!
+//! On top of the calls, the level buffs the ratings of the side the CPU is
+//! running: untouched on Easy, lifted 45% on Normal, and every rating at the top
+//! of the scale on Hard.
+
+use crate::team::Attributes;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Difficulty {
@@ -69,6 +75,17 @@ impl Difficulty {
             Difficulty::Hard => 1.0,
         }
     }
+
+    /// The CPU side's ratings under this level. Easy is the game as it shipped,
+    /// Normal lifts every rating 45%, and Hard puts every one of them at the top
+    /// of the scale.
+    pub fn buff(self, attrs: Attributes) -> Attributes {
+        match self {
+            Difficulty::Easy => attrs,
+            Difficulty::Normal => attrs.scaled(1.45),
+            Difficulty::Hard => attrs.maxed(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -86,5 +103,40 @@ mod tests {
         assert!(Difficulty::Hard.fumble_bonus() > Difficulty::Easy.fumble_bonus());
         assert_eq!(Difficulty::Easy.pick_bonus(), 0.0);
         assert_eq!(Difficulty::default(), Difficulty::Easy);
+    }
+
+    #[test]
+    fn the_levels_buff_the_cpu_ratings_and_hold_the_scale() {
+        let base = Attributes {
+            speed: 60,
+            accel: 60,
+            agility: 60,
+            strength: 60,
+            catching: 60,
+            accuracy: 60,
+            power: 60,
+            awareness: 60,
+            pass_rush: 60,
+            pass_block: 60,
+            run_block: 60,
+            tackling: 60,
+            elusiveness: 60,
+            break_tackle: 60,
+            coverage: 60,
+            discipline: 60,
+            stamina: 60,
+        };
+        assert_eq!(Difficulty::Easy.buff(base), base);
+        let normal = Difficulty::Normal.buff(base);
+        assert_eq!(normal.speed, 87, "60 lifted 45% is 87");
+        assert!(Difficulty::Normal.buff(normal) != normal, "Normal is not a no-op");
+        let hard = Difficulty::Hard.buff(base);
+        for (name, value) in hard.ratings() {
+            assert_eq!(value, 99, "Hard left {name} at {value}");
+        }
+        // The buff never leaves the scale the rest of the game is measured on.
+        let strongest = Attributes { speed: 99, tackling: 99, ..base };
+        assert_eq!(Difficulty::Normal.buff(strongest).speed, 99);
+        assert_eq!(Difficulty::Hard.buff(strongest).tackling, 99);
     }
 }

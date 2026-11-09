@@ -765,9 +765,28 @@ impl<'a> PlaySim<'a> {
 
     fn attrs(&self, i: usize) -> Attributes {
         let p = &self.players[i];
-        match p.side {
+        let attrs = match p.side {
             Side::Offense => self.offense.roster[p.player].attrs,
             Side::Defense => self.defense.roster[p.player].attrs,
+        };
+        if self.cpu_side(p.side) {
+            self.difficulty.buff(attrs)
+        } else {
+            attrs
+        }
+    }
+
+    /// Whether that sideline is the one the CPU is running, and so the one the
+    /// difficulty buffs. The pad is on one side at most, which leaves the other
+    /// side to the AI; with nobody on the pad the ball is played against the
+    /// defence, the way every level has leaned on it from the start.
+    fn cpu_side(&self, side: Side) -> bool {
+        let human_offense = self.control.is_some();
+        let human_defense = self.def_control.is_some() || self.human_defender.is_some();
+        match (human_offense, human_defense) {
+            (true, _) => side == Side::Defense,
+            (false, true) => side == Side::Offense,
+            (false, false) => side == Side::Defense,
         }
     }
 
@@ -4529,6 +4548,32 @@ mod tests {
             "the return was only {} yards",
             r.return_yards
         );
+    }
+
+    /// The level buffs the ratings of the side the CPU is running, and only that
+    /// side: the pad's own men play at their own numbers.
+    #[test]
+    fn the_other_sideline_plays_buffed() {
+        let (off, def) = teams();
+        let book = playbook();
+        let play = book
+            .iter()
+            .find(|p| p.family.is_pass())
+            .expect("no pass play");
+        let dcall = defensive_playbook()[0].clone();
+        let s = setup(45.0, 1, 10.0, 93);
+        let mut sim = PlaySim::new(&off, &def, play, &dcall, &s);
+        let qb = off.roster[sim.players[0].player].attrs;
+        let db = def.roster[sim.players[7].player].attrs;
+        assert_eq!(sim.attrs(0), qb, "Easy leaves the offence alone");
+        sim.difficulty = Difficulty::Hard;
+        // Nobody on the pad: the defence is the side the ball is played against.
+        assert_eq!(sim.attrs(0), qb, "the pad's side keeps its own numbers");
+        assert_eq!(sim.attrs(7), db.maxed(), "the defence plays maxed out");
+        // Pad on a defender: now the offence is the CPU's side.
+        sim.set_human_defender(Some(7));
+        assert_eq!(sim.attrs(0), qb.maxed(), "the CPU offence plays maxed out");
+        assert_eq!(sim.attrs(7), db, "the man on the pad keeps his numbers");
     }
 
     /// The harder levels give the line one man each instead of letting two men

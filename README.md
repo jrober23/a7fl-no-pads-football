@@ -671,7 +671,11 @@ throws on early downs and pushes the ball downfield instead of grinding for the
 sticks, and is quicker to go for it on fourth down. **Hard** adds a defence that
 hunts the ball: it presses and plays man on third down, and it goes for the strip,
 so a hard side takes the ball away more often, on the ground and in the air. The
-level is remembered in `settings.cfg`, so the card opens on the last one played.
+level also buffs the ratings of the side the CPU is running: untouched on Easy,
+lifted 45% on Normal, and every rating at the top of the scale on Hard, so a
+hard side is faster, stronger and surer-handed as well as more aggressive. Your
+own men always play at their own numbers. The level is remembered in
+`settings.cfg`, so the card opens on the last one played.
 
 **Lens** opens a live preview: left and right zoom, up and down tilt, X resets. It is
 the real broadcast camera on a real formation rather than a diagram, and the two

@@ -89,6 +89,40 @@ impl Attributes {
         n(self.stamina)
     }
 
+    /// Every rating lifted by `scale`, held to the top of the scale so a buffed
+    /// side is still measured on the same 1..99 numbers as everybody else.
+    pub fn scaled(self, scale: f32) -> Attributes {
+        self.lifted(|v| v as f32 * scale)
+    }
+
+    /// Every rating at the top of the scale.
+    pub fn maxed(self) -> Attributes {
+        self.lifted(|_| 99.0)
+    }
+
+    fn lifted(self, f: impl Fn(u8) -> f32) -> Attributes {
+        let v = |x: u8| (f(x).round() as u32).min(99) as u8;
+        Attributes {
+            speed: v(self.speed),
+            accel: v(self.accel),
+            agility: v(self.agility),
+            strength: v(self.strength),
+            catching: v(self.catching),
+            accuracy: v(self.accuracy),
+            power: v(self.power),
+            awareness: v(self.awareness),
+            pass_rush: v(self.pass_rush),
+            pass_block: v(self.pass_block),
+            run_block: v(self.run_block),
+            tackling: v(self.tackling),
+            elusiveness: v(self.elusiveness),
+            break_tackle: v(self.break_tackle),
+            coverage: v(self.coverage),
+            discipline: v(self.discipline),
+            stamina: v(self.stamina),
+        }
+    }
+
     /// The ten numbers a man is judged by, on the same 40..99 scale the rest of
     /// the game uses. Two of them are not stored as such: throwing is what the arm
     /// and the accuracy add up to, route running is catching, agility and
