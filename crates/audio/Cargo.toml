@@ -9,6 +9,10 @@ description = "Sound for 7 on 7 No Pads Football: a device that may not be there
 # Pinned exactly. rodio 0.22 renamed its terms -- `Sink` became `Player` and
 # `OutputStream` became `Sink` -- so a 0.20 example off a blog says the opposite
 # of what this version means, and a loose requirement would keep moving.
-# No decoders: everything this crate plays is generated in memory, so the
-# Symphonia features stay off and the binary does not grow a file parser.
+# No decoders: everything this crate generates is made in memory, so the
+# Symphonia features stay off and the binary does not grow a codec stack. The
+# player's own sounds are WAVs, and hound reads those.
 rodio = { version = "=0.22.2", default-features = false, features = ["playback"] }
+# WAV only, on purpose: it is the one format a player's own crowd can be handed
+# to the game in without shipping a decoder for every music format there is.
+hound = "3.5"

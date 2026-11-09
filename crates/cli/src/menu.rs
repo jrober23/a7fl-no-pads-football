@@ -1091,7 +1091,6 @@ fn settings_screen(
     // needs the device a game would open. Without a sound card every call below
     // is still safe; it just makes no noise.
     let audio = nopads_audio::Audio::open();
-    audio.set_music(settings.music_level());
     audio.set_effects(settings.effects_level());
     // The room starts down: the menu itself is quiet, and only the music row
     // brings the bed up.
@@ -1115,14 +1114,17 @@ fn settings_screen(
             }
         }
 
-        // The room under the menu belongs to the music row: it comes up while
-        // that row holds the highlight, so the row is set against the sound it
-        // controls, and it goes back down when the highlight moves on.
-        audio.set_bed(if pick == MUSIC {
+        // The background belongs to the music row: it comes up while that row
+        // holds the highlight, so the row is set against the sound it controls,
+        // and it goes back down when the highlight moves on. A player who
+        // brought a music track hears it here too, on the same level.
+        let heard = pick == MUSIC;
+        audio.set_bed(if heard {
             nopads_audio::BED_BETWEEN
         } else {
             0.0
         });
+        audio.set_music(if heard { settings.music_level() } else { 0.0 });
 
         // Left and right walk a value; A cycles it forward, so the row can be
         // changed without a stick.

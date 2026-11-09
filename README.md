@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.131-windows-x86_64.zip` from the
+Grab `7on7-v0.25.132-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -40,6 +40,38 @@ cargo run -- film --seed 4  # render broadcast stills + a highlight GIF into out
 
 `sim` and `play` accept `--home N` / `--away N` to pick teams by index
 (`teams` prints them in order); `film` also takes `--out DIR`.
+
+## Your own sounds
+
+Everything the game plays is generated in code, which is why the download is one
+executable and no asset folder. It will also read your own files if you put them
+next to it, because a real crowd beats a synthesised one:
+
+```
+sounds/crowd.wav   the room under the game: looped, and ducked while the ball is live
+sounds/cheer.wav   the crowd's answer to a score: played once, from the start
+sounds/music.wav   optional music: looped under everything, on the MUSIC level
+```
+
+The folder is looked for beside the executable first and then in the directory
+the game was started from, so `cargo run` picks up `./sounds` and the unzipped
+release picks up `sounds/` beside `7on7.exe`. Each file is optional on its own,
+and one that is missing, unreadable or in a format it cannot read is skipped
+without a word: the game plays its own sound instead, exactly as it did before.
+
+WAV is the format — 16, 24 or 32-bit PCM, or 32-bit float, at any sample rate,
+mono or stereo. It is folded to mono and resampled to 48 kHz, which is what the
+mixer runs at; a stereo file keeps its balance but not its width. Any editor
+exports this, and with ffmpeg:
+
+```sh
+ffmpeg -i my-crowd.mp3 -ac 1 -ar 48000 -c:a pcm_s16le sounds/crowd.wav
+```
+
+`crowd.wav` wants a seamless loop, because the game joins the end straight to the
+start without a crossfade of its own. `crowd.wav` and `music.wav` are both set by
+the settings screen's MUSIC row, and `cheer.wav` by EFFECTS — and both rows are
+heard while they are set, so the preview in the settings screen is your file.
 
 ## The players
 

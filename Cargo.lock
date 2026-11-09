@@ -2254,6 +2254,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "hound"
+version = "3.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
 name = "image"
 version = "0.25.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2802,14 +2808,15 @@ checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 
 [[package]]
 name = "nopads_audio"
-version = "0.25.131"
+version = "0.25.132"
 dependencies = [
+ "hound",
  "rodio",
 ]
 
 [[package]]
 name = "nopads_cli"
-version = "0.25.131"
+version = "0.25.132"
 dependencies = [
  "bevy",
  "minifb",
@@ -2821,11 +2828,11 @@ dependencies = [
 
 [[package]]
 name = "nopads_core"
-version = "0.25.131"
+version = "0.25.132"
 
 [[package]]
 name = "nopads_platform"
-version = "0.25.131"
+version = "0.25.132"
 dependencies = [
  "gilrs",
  "nopads_core",
@@ -2833,7 +2840,7 @@ dependencies = [
 
 [[package]]
 name = "nopads_render"
-version = "0.25.131"
+version = "0.25.132"
 dependencies = [
  "gif",
  "image",

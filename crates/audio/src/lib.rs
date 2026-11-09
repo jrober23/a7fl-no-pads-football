@@ -6,11 +6,13 @@
 //! optional, and every call on [`Audio`] is a no-op when it is missing. Nothing
 //! upstream has to ask whether the machine can make a noise.
 //!
-//! Nothing here is loaded from disk. The bed under the game and the swell that
-//! answers a score are generated in memory, so the release keeps shipping as one
-//! executable with no asset directory; a recorded crowd can replace either
-//! behind the same calls when there is one worth shipping.
+//! Nothing here is loaded from disk by default. The bed under the game and the
+//! swell that answers a score are generated in memory, so the release keeps
+//! shipping as one executable with no asset directory. A player who brings a
+//! `sounds` folder of WAVs of their own gets those instead -- the generated
+//! sounds are the fallback, not the requirement.
 
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -41,6 +43,11 @@ pub const BED_LIVE: f32 = 0.22;
 /// second to settle, which is a duck rather than a step. A step in a noise bed
 /// is a click.
 const BED_SMOOTH: f32 = 1.0 / (0.07 * SAMPLE_RATE as f32);
+/// The folder a player's own sounds are read from, if it is there.
+const SOUND_DIR: &str = "sounds";
+/// Where the music track starts before a settings file says otherwise: the same
+/// 80% the volume rows ship with.
+const MUSIC_DEFAULT: f32 = 0.8;
 
 /// The game's sound, or the absence of it.
 pub struct Audio {
@@ -57,6 +64,12 @@ pub struct Audio {
     /// never ends, so it plays until this is dropped. It is also the music bus:
     /// the bed today, a stadium loop when there is one.
     bed: Option<Player>,
+    /// The music, when the player brought a `music.wav`: looped under everything
+    /// and on the same level as the background bus.
+    music: Option<Player>,
+    /// The crowd's answer, when the player brought a `cheer.wav`, already in the
+    /// shape everything here plays: mono at [`SAMPLE_RATE`].
+    cheer: Option<Arc<Vec<f32>>>,
 }
 
 impl Audio {
@@ -66,6 +79,12 @@ impl Audio {
     /// remote terminal all land in the same place here: a game that plays fine
     /// and makes no noise.
     pub fn open() -> Audio {
+        // The player's own files, if they brought any. Each is optional on its
+        // own: a crowd of their own with the generated swell still answering a
+        // score is a perfectly reasonable thing to want.
+        let room = load_clip("crowd.wav");
+        let cheer = load_clip("cheer.wav").map(Arc::new);
+        let music = load_clip("music.wav");
         match DeviceSinkBuilder::open_default_sink() {
             Ok(mut sink) => {
                 // rodio prints a line to stderr when the sink is dropped. This
@@ -75,12 +94,22 @@ impl Audio {
                 let crowd = Player::connect_new(sink.mixer());
                 let bed_level = Arc::new(AtomicU32::new(BED_BETWEEN.to_bits()));
                 let bed = Player::connect_new(sink.mixer());
-                bed.append(CrowdBed::new(Arc::clone(&bed_level)));
+                bed.append(match room {
+                    Some(samples) => CrowdBed::from_samples(samples, Arc::clone(&bed_level)),
+                    None => CrowdBed::new(Arc::clone(&bed_level)),
+                });
+                let track = Player::connect_new(sink.mixer());
+                if let Some(samples) = music {
+                    track.append(samples_buffer(samples).repeat_infinite());
+                    track.set_volume(MUSIC_DEFAULT);
+                }
                 Audio {
                     _sink: Some(sink),
                     crowd: Some(crowd),
                     bed_level: Some(bed_level),
                     bed: Some(bed),
+                    music: Some(track),
+                    cheer,
                 }
             }
             Err(_) => Audio::silent(),
@@ -96,6 +125,8 @@ impl Audio {
             crowd: None,
             bed_level: None,
             bed: None,
+            music: None,
+            cheer: None,
         }
     }
 
@@ -125,8 +156,12 @@ impl Audio {
     /// The background bus: the crowd bed today, and the music that will share
     /// the same player. This is the settings screen's MUSIC row.
     pub fn set_music(&self, level: f32) {
+        let level = level.clamp(0.0, 1.0);
         if let Some(bed) = &self.bed {
-            bed.set_volume(level.clamp(0.0, 1.0));
+            bed.set_volume(level);
+        }
+        if let Some(music) = &self.music {
+            music.set_volume(level);
         }
     }
 
@@ -158,7 +193,16 @@ impl Audio {
         let Some(crowd) = &self.crowd else {
             return;
         };
-        crowd.append(crowd_swell());
+        crowd.append(self.swell());
+    }
+
+    /// The crowd's answer: the player's own file when they brought one, and the
+    /// generated swell otherwise.
+    fn swell(&self) -> SamplesBuffer {
+        match &self.cheer {
+            Some(samples) => samples_buffer(samples.as_ref().clone()),
+            None => crowd_swell(),
+        }
     }
 
     /// One swell on the effects bus, in place of whatever was already playing on
@@ -170,7 +214,7 @@ impl Audio {
             return;
         };
         crowd.clear();
-        crowd.append(crowd_swell());
+        crowd.append(self.swell());
     }
 }
 
@@ -226,10 +270,17 @@ struct CrowdBed {
 }
 
 impl CrowdBed {
+    /// The generated room.
     fn new(target: Arc<AtomicU32>) -> CrowdBed {
+        CrowdBed::from_samples(bed_loop(), target)
+    }
+
+    /// The same loop over whatever period it is handed: the generated bed, or a
+    /// player's own `crowd.wav` read into samples.
+    fn from_samples(period: Vec<f32>, target: Arc<AtomicU32>) -> CrowdBed {
         let level = f32::from_bits(target.load(Ordering::Relaxed));
         CrowdBed {
-            period: bed_loop(),
+            period,
             at: 0,
             target,
             level,
@@ -309,6 +360,108 @@ fn next_noise(state: &mut u32) -> f32 {
     (x as f32 / u32::MAX as f32) * 2.0 - 1.0
 }
 
+/// Where a player's own sound is looked for, in the order it is looked for: a
+/// `sounds` folder beside the executable, so the unzipped release works wherever
+/// it is put, and then one in the directory the game was started from, which is
+/// where `cargo run` finds it.
+fn sound_path(name: &str) -> Option<PathBuf> {
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(Path::to_path_buf))
+    {
+        roots.push(dir);
+    }
+    if let Ok(dir) = std::env::current_dir() {
+        roots.push(dir);
+    }
+    roots
+        .into_iter()
+        .map(|root| root.join(SOUND_DIR).join(name))
+        .find(|path| path.is_file())
+}
+
+/// A player's sound by name, or nothing when they did not bring one.
+fn load_clip(name: &str) -> Option<Vec<f32>> {
+    load_clip_at(&sound_path(name)?)
+}
+
+fn load_clip_at(path: &Path) -> Option<Vec<f32>> {
+    let samples = read_wav(path)?;
+    (!samples.is_empty()).then_some(samples)
+}
+
+/// A WAV read into the shape everything here plays: mono at [`SAMPLE_RATE`].
+///
+/// 16, 24 and 32-bit PCM and 32-bit float are the formats an editor exports by
+/// default. Anything else is not read, which is not a failure: the game has its
+/// own sound to fall back on, and a player who drops in a file it cannot use
+/// should get a game, not an error.
+fn read_wav(path: &Path) -> Option<Vec<f32>> {
+    let mut reader = hound::WavReader::open(path).ok()?;
+    let spec = reader.spec();
+    if spec.channels == 0 || spec.sample_rate == 0 || spec.bits_per_sample == 0 {
+        return None;
+    }
+    let samples: Vec<f32> = match spec.sample_format {
+        hound::SampleFormat::Float => reader.samples::<f32>().filter_map(Result::ok).collect(),
+        hound::SampleFormat::Int => {
+            let bits = spec.bits_per_sample.min(32);
+            let scale = 1.0 / (1i64 << (bits - 1)) as f32;
+            if bits <= 16 {
+                reader
+                    .samples::<i16>()
+                    .filter_map(Result::ok)
+                    .map(|sample| sample as f32 * scale)
+                    .collect()
+            } else {
+                reader
+                    .samples::<i32>()
+                    .filter_map(Result::ok)
+                    .map(|sample| sample as f32 * scale)
+                    .collect()
+            }
+        }
+    };
+    // Mono is what the bed and the swell are built in, and what the mixer here
+    // is known to take: a stereo file folds down rather than being played at
+    // half speed or on one side.
+    let channels = spec.channels as usize;
+    let frames: Vec<f32> = samples
+        .chunks(channels)
+        .map(|frame| frame.iter().sum::<f32>() / frame.len() as f32)
+        .collect();
+    if frames.is_empty() {
+        return None;
+    }
+    if spec.sample_rate == SAMPLE_RATE {
+        return Some(frames);
+    }
+    // Linear interpolation onto the mixer's rate. A crowd does not need better,
+    // and the last sample is held for the tail so the end does not step.
+    let step = spec.sample_rate as f64 / SAMPLE_RATE as f64;
+    let out_len = ((frames.len() as f64) / step).round().max(1.0) as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let at = i as f64 * step;
+        let low = at.floor() as usize;
+        let frac = (at - at.floor()) as f32;
+        let a = frames[low.min(frames.len() - 1)];
+        let b = frames[(low + 1).min(frames.len() - 1)];
+        out.push(a + (b - a) * frac);
+    }
+    Some(out)
+}
+
+/// A clip as a source the mixer will take.
+fn samples_buffer(samples: Vec<f32>) -> SamplesBuffer {
+    SamplesBuffer::new(
+        ChannelCount::new(CHANNELS).expect("a mono channel count is not zero"),
+        SampleRate::new(SAMPLE_RATE).expect("a sample rate is not zero"),
+        samples,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +533,8 @@ mod tests {
             crowd: None,
             bed_level: Some(Arc::clone(&level)),
             bed: None,
+            music: None,
+            cheer: None,
         };
         {
             let _ducked = audio.ducked();
@@ -454,6 +609,80 @@ mod tests {
         assert!(
             back > live * 1.5,
             "the bed never came back up: {back} against {live}"
+        );
+    }
+
+    /// A WAV written by the test, so the reader is checked against a real file
+    /// rather than against itself.
+    fn write_test_wav(path: &Path, rate: u32, channels: u16, samples: &[i16]) {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let mut writer = hound::WavWriter::create(path, spec).expect("a temp file");
+        for sample in samples {
+            writer.write_sample(*sample).expect("a written sample");
+        }
+        writer.finalize().expect("a finished file");
+    }
+
+    fn temp_wav(tag: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("nopads-{}-{}.wav", tag, std::process::id()))
+    }
+
+    #[test]
+    fn a_stereo_file_folds_to_mono_and_lands_on_the_mixers_rate() {
+        let path = temp_wav("stereo");
+        // A quarter second of file at a quarter of the rate everything here runs
+        // at, so the length it comes back as says whether the rate was honoured.
+        let mut data = Vec::new();
+        for _ in 0..4 {
+            data.push(i16::MAX);
+            data.push(0);
+        }
+        write_test_wav(&path, SAMPLE_RATE / 4, 2, &data);
+        let clip = read_wav(&path).expect("the file was not read");
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            clip.len(),
+            16,
+            "the rate was not honoured: {} samples came back",
+            clip.len()
+        );
+        // A loud left against a silent right folds to half.
+        assert!(
+            (clip[0] - 0.5).abs() < 0.02,
+            "the channels were not folded: {}",
+            clip[0]
+        );
+    }
+
+    #[test]
+    fn a_sound_that_is_not_there_is_not_a_failure() {
+        let missing = std::env::temp_dir().join("nopads-this-file-is-not-here.wav");
+        let _ = std::fs::remove_file(&missing);
+        assert!(load_clip_at(&missing).is_none());
+        // A file with a header and no samples is the same as no file at all.
+        let empty = temp_wav("empty");
+        write_test_wav(&empty, SAMPLE_RATE, 1, &[]);
+        assert!(load_clip_at(&empty).is_none());
+        let _ = std::fs::remove_file(&empty);
+    }
+
+    #[test]
+    fn a_loaded_room_loops_the_players_file() {
+        let target = Arc::new(AtomicU32::new(BED_BETWEEN.to_bits()));
+        let mut bed = CrowdBed::from_samples(vec![1.0, 2.0, 3.0], Arc::clone(&target));
+        let out: Vec<f32> = (0..4).map(|_| bed.next().expect("a sample")).collect();
+        assert!(
+            out[1] > out[0] && out[2] > out[1],
+            "the file did not play in order: {out:?}"
+        );
+        assert!(
+            out[3] < out[2],
+            "the file did not wrap round to its start: {out:?}"
         );
     }
 
