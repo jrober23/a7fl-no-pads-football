@@ -1872,6 +1872,19 @@ impl<'a> PlaySim<'a> {
         }
     }
 
+    /// How far behind the line the quarterback sets his feet.
+    ///
+    /// A drop is the depth the play asks for, and that is the whole answer while
+    /// there is one. With no drop to take he sets where he took the snap: a play
+    /// fake in the gun is sold from the pocket he is already standing in, not by
+    /// walking himself into the line to sell it.
+    fn qb_set_depth(&self) -> f32 {
+        if self.play.drop > 0.0 {
+            return self.play.drop.max(1.0);
+        }
+        (-self.play.alignment(OffRole::Qb).x).max(1.0)
+    }
+
     fn update_qb(&mut self, i: usize, dt: f32) {
         if let Some(ctl) = self.control {
             self.update_qb_human(i, dt, ctl);
@@ -1887,9 +1900,8 @@ impl<'a> PlaySim<'a> {
                     self.fake_step(i, dt);
                     return;
                 }
-                let drop = self.play.drop.max(1.0);
                 let target = Vec2::new(
-                    self.los - self.dirf() * drop,
+                    self.los - self.dirf() * self.qb_set_depth(),
                     self.players[i].pos.y * 0.85,
                 );
                 let spd = self.speed_cap(i) * if self.t < SNAP_DELAY + 0.7 { 0.85 } else { 0.6 };
@@ -1927,7 +1939,7 @@ impl<'a> PlaySim<'a> {
         } else {
             // Standing in the pocket, drifting to the spot the play asks for.
             let anchor = Vec2::new(
-                self.los - self.dirf() * self.play.drop.max(1.0),
+                self.los - self.dirf() * self.qb_set_depth(),
                 self.players[i].pos.y * 0.9,
             );
             self.steer(i, anchor, self.speed_cap(i) * 0.35, dt);

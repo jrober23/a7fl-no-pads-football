@@ -2836,7 +2836,7 @@ fn play_editor(
             };
         }
         if input.pressed.dummy && play.family.is_pass() {
-            play.drop = play.drop.next();
+            play.drop = play.drop.next(play.family);
         }
         if input.pressed.shoulder {
             // Who takes the ball: the five skill spots in the order they line
@@ -2905,17 +2905,10 @@ fn play_editor(
             &format!(
                 "DRAWING {} - {} - {} - {}",
                 role.label(),
-                if play.family.is_pass() { "PASS" } else { "RUN" },
+                play.family.label(),
                 if play.family.is_pass() {
-                    format!(
-                        "DROP {}{}",
-                        play.drop.label(),
-                        if play.family == PlayFamily::PlayAction {
-                            " - PLAY ACTION"
-                        } else {
-                            ""
-                        }
-                    )
+                    // The steps he takes, or the plain fact that he takes none.
+                    play.drop.label(play.family).to_string()
                 } else if play.handoff == Handoff::Option {
                     "OPTION: QB KEEPS AND PITCHES".to_string()
                 } else {
@@ -3381,7 +3374,7 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
         rows.push((
             p.name.as_str(),
             if p.family.is_pass() {
-                format!("{} - {}", p.family.label(), p.drop.label())
+                format!("{} - {}", p.family.label(), p.drop.label(p.family))
             } else if p.handoff == Handoff::Option {
                 format!(
                     "OPTION - PITCH TO {}",

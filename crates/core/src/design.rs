@@ -27,7 +27,8 @@ use crate::playbook::{
 /// before his feet are set, which is how long the routes have to get open.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Drop {
-    /// Whatever the family of the play normally asks for.
+    /// Whatever the family of the play normally asks for -- and on a play fake,
+    /// nothing: the give is sold from where he stands.
     #[default]
     None,
     Three,
@@ -45,23 +46,53 @@ impl Drop {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Drop::None => "BY THE BOOK",
+    /// What the play actually does. A drop the player left alone is the one its
+    /// family is written to use, and a play fake has none to be given: the
+    /// quarterback sells the give from where he stands, so a gun play action
+    /// does not step back the way a dropback pass does.
+    pub fn resolved(self, family: PlayFamily) -> Drop {
+        if self != Drop::None {
+            return self;
+        }
+        match family {
+            PlayFamily::QuickPass | PlayFamily::Screen => Drop::Three,
+            PlayFamily::DropbackPass => Drop::Five,
+            PlayFamily::PlayAction
+            | PlayFamily::RunInside
+            | PlayFamily::RunOutside
+            | PlayFamily::QbRun => Drop::None,
+        }
+    }
+
+    /// What the row says: the steps he takes, or the plain fact that he takes
+    /// none. There is no such thing on a football field as a drop "by the book",
+    /// so nothing here says it.
+    pub fn label(self, family: PlayFamily) -> &'static str {
+        match self.resolved(family) {
+            Drop::None => "NO DROP",
             Drop::Three => "3 STEP",
             Drop::Five => "5 STEP",
             Drop::Seven => "7 STEP",
         }
     }
 
-    /// The next drop across, for the editor's button.
-    pub fn next(self) -> Drop {
-        match self {
-            Drop::None => Drop::Three,
-            Drop::Three => Drop::Five,
-            Drop::Five => Drop::Seven,
-            Drop::Seven => Drop::None,
+    /// The next drop across, for the editor's button: the next one that changes
+    /// what the play does, so a press never looks like it did nothing.
+    pub fn next(self, family: PlayFamily) -> Drop {
+        let now = self.resolved(family);
+        let mut at = self;
+        for _ in 0..4 {
+            at = match at {
+                Drop::None => Drop::Three,
+                Drop::Three => Drop::Five,
+                Drop::Five => Drop::Seven,
+                Drop::Seven => Drop::None,
+            };
+            if at.resolved(family) != now {
+                return at;
+            }
         }
+        at
     }
 }
 
@@ -909,12 +940,9 @@ fn design_play(
     // An option is a run the quarterback owns: he keeps it at the mesh, and the
     // man the play was drawn for runs his path as the man he can pitch it to.
     let option_run = !pass && p.handoff == Handoff::Option;
-    // The player's drop if he set one, the family's own if he left it alone.
-    let drop = p.drop.yards().unwrap_or(match p.family {
-        PlayFamily::QuickPass | PlayFamily::Screen => 3.0,
-        PlayFamily::DropbackPass | PlayFamily::PlayAction => 5.0,
-        _ => 0.0,
-    });
+    // The player's drop if he set one, the family's own if he left it alone --
+    // and none at all on a play fake, which is sold where he stands.
+    let drop = p.drop.resolved(p.family).yards().unwrap_or(0.0);
     let mut assignments: Vec<(OffRole, Assign)> = Vec::new();
     for slot in 0..7 {
         let role = form.roles[slot];
@@ -2074,5 +2102,60 @@ call 0 COVER_1 ManFree
         book.plays.truncate(1);
         let problems = book.problems();
         assert!(problems.iter().any(|p| p.contains("OFFENSE NEEDS")));
+    }
+
+    #[test]
+    fn a_play_fake_takes_no_drop() {
+        // The quarterback in the gun sells the give from the pocket he is
+        // standing in. Handing him a dropback would have him stepping back off a
+        // run fake, which is not the play anybody drew.
+        let book = DesignBook::from_built_in(crate::playbook::Book::WestCoast);
+        let form = &book.offense[0];
+        let mut p = DesignPlay::blank("BANG 8".to_string());
+        p.family = PlayFamily::PlayAction;
+        assert_eq!(
+            design_play("BANG 8", "BANG", 0, form, &p).drop,
+            0.0,
+            "a play fake took a drop step"
+        );
+        p.family = PlayFamily::DropbackPass;
+        assert_eq!(design_play("BANG 8", "BANG", 0, form, &p).drop, 5.0);
+        p.family = PlayFamily::QuickPass;
+        assert_eq!(design_play("BANG 8", "BANG", 0, form, &p).drop, 3.0);
+        // And what the row says about it is the truth on the field, not a phrase
+        // nobody on a football field has ever said.
+        assert_eq!(Drop::None.label(PlayFamily::PlayAction), "NO DROP");
+        assert_eq!(Drop::None.label(PlayFamily::DropbackPass), "5 STEP");
+        assert_eq!(Drop::None.label(PlayFamily::QuickPass), "3 STEP");
+        assert_eq!(Drop::Seven.label(PlayFamily::PlayAction), "7 STEP");
+    }
+
+    #[test]
+    fn the_drop_button_always_changes_the_drop() {
+        let families = [
+            PlayFamily::QuickPass,
+            PlayFamily::DropbackPass,
+            PlayFamily::PlayAction,
+            PlayFamily::Screen,
+        ];
+        let states = [Drop::None, Drop::Three, Drop::Five, Drop::Seven];
+        for family in families {
+            for drop in states {
+                let next = drop.next(family);
+                assert_ne!(
+                    next.resolved(family),
+                    drop.resolved(family),
+                    "{} at {} pressed right and the play did not change",
+                    family.label(),
+                    drop.label(family)
+                );
+            }
+            // Pressing on never falls off the end of the states.
+            let mut at = Drop::None;
+            for _ in 0..9 {
+                at = at.next(family);
+                assert!(states.contains(&at));
+            }
+        }
     }
 }
