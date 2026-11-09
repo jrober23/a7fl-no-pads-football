@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use android_activity::input::{Axis, InputEvent, KeyAction};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
+use nopads_core::difficulty::Difficulty;
 use nopads_core::math::Vec2;
 use nopads_platform::pad::{Buttons, Input};
 use nopads_platform::settings::Settings;
@@ -33,7 +34,15 @@ pub fn run(app: AndroidApp) {
         std::env::set_var("HOME", &data);
         log(&format!("android_main: home is {}", data.display()));
     }
-    let settings = Settings::load();
+    let mut settings = Settings::load();
+    // A phone has no settings screen, and a first run has no settings file, so it
+    // would take the desktop default: Easy, the one tier the 0.25.116 buffs left
+    // alone, which plays exactly like the build before them. Start on Normal
+    // instead, and keep whatever a settings file asks for.
+    if !Settings::path().exists() {
+        settings.difficulty = Difficulty::Normal.index();
+        log("android_main: no settings file, so starting on Normal");
+    }
     log(&format!(
         "android_main: settings {}x{} fullscreen={} difficulty={}",
         settings.width, settings.height, settings.fullscreen, settings.difficulty
