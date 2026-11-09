@@ -230,3 +230,50 @@ fn the_fake_is_sold_from_the_pocket_he_snapped_in() {
         after - snap
     );
 }
+
+/// The league's own play actions sell the fake the same way a drawn one does:
+/// from the pocket the quarterback snapped in, with the ball out, never walking
+/// after the runner. Their drops are small -- a boot is a step, not a five-step
+/// dropback -- so the pocket is the whole of what the defense is being sold.
+#[test]
+fn the_leagues_play_actions_sell_from_the_pocket_too() {
+    let teams = league_teams();
+    let def = defensive_playbook()[0].clone();
+    let mut checked = 0;
+    for p in playbook()
+        .into_iter()
+        .filter(|p| p.family == PlayFamily::PlayAction)
+    {
+        let mut sim = PlaySim::new(&teams[0], &teams[1], &p, &def, &setup(7));
+        let qb = sim.qb;
+        let los = 40.0f32;
+        let snap = los - sim.players[qb].pos.x;
+        let (mut deep, mut shallow, mut give) = (snap, snap, 0.0f32);
+        while sim.t < SNAP_DELAY + 0.45 {
+            sim.step(1.0 / 60.0);
+            let q = sim.players[qb].pos;
+            deep = deep.max(los - q.x);
+            shallow = shallow.min(los - q.x);
+            if sim.t > SNAP_DELAY {
+                give = give.max(sim.players[qb].give);
+            }
+        }
+        assert!(
+            deep - snap < 0.5 && snap - shallow < 0.5,
+            "{}: drifted {:.2} yards back and {:.2} forward selling the fake",
+            p.name,
+            deep - snap,
+            snap - shallow
+        );
+        assert!(
+            give > 0.5,
+            "{}: the ball was never shown on the fake",
+            p.name
+        );
+        checked += 1;
+    }
+    assert!(
+        checked >= 4,
+        "only {checked} play actions in the league book: that is not the check this test is"
+    );
+}
