@@ -95,6 +95,8 @@ pub const MAX_PLAY_TIME: f32 = 13.0;
 /// How long the quarterback sells a play action: the ball is shown to the man
 /// coming across his face and pulled back before he turns to throw.
 const FAKE_SELL: f32 = 0.45;
+/// How far out the ball is held while a play fake is being sold.
+const PA_GIVE: f32 = 0.85;
 /// How hard the men behind the front lean toward a fake while it is being sold.
 const PA_LEAN: f32 = 2.6;
 /// How long a runner may go without gaining a yard before the play is dead. A
@@ -1197,16 +1199,24 @@ impl<'a> PlaySim<'a> {
         self.pa_fake.map(|(_, left)| left > 0.0).unwrap_or(false)
     }
 
-    /// The step of the fake: he goes to the man he is selling it to, at a
-    /// runner's pace, so the two of them meet the way a give would.
+    /// The step of the fake: he turns to the man he is selling it to at the
+    /// depth he took the snap, and reaches the ball out toward him.
+    ///
+    /// Not to wherever the man's feet have carried him. A quarterback who walks
+    /// after a runner is not selling a give, he is running; on a play fake in the
+    /// gun the pocket is what the defense is meant to believe in, and every yard
+    /// he drifts is a yard that story does not hold.
     fn fake_step(&mut self, i: usize, dt: f32) {
         let Some((man, _)) = self.pa_fake else {
             return;
         };
-        // He goes to the man, not to a spot on the ground: the ball is put where
-        // the runner is, the way a give is, and the runner runs through it.
-        let him = self.players[man].pos;
-        self.steer(i, him, self.speed_cap(i) * 0.85, dt);
+        let me = self.players[i].pos;
+        let depth = (-self.play.alignment(OffRole::Qb).x).max(0.6);
+        // Across to him, but only as far as a step: the sell is a turn of the
+        // shoulders with the ball out, not a walk to the far side of the field.
+        let across = (self.players[man].pos.y - me.y).clamp(-1.6, 1.6);
+        let at = Vec2::new(self.los - self.dirf() * depth, me.y + across);
+        self.steer(i, at, self.speed_cap(i) * 0.85, dt);
     }
 
     fn setup_handoff(&mut self) {
@@ -1747,6 +1757,12 @@ impl<'a> PlaySim<'a> {
         // Cleared every frame and set again by the mesh below: a give is only
         // being offered while the exchange is still to be made.
         self.players[self.qb].give = 0.0;
+        // A play fake is a give shown and taken back: the ball is out in his
+        // hands for as long as the sell lasts, so the defense sees what the
+        // runner it is lying to sees.
+        if self.selling_fake() {
+            self.players[self.qb].give = PA_GIVE;
+        }
         if self.carrier.is_none() && a_run {
             if let Some((idx, at)) = self.handoff {
                 let kind = self.play.handoff;

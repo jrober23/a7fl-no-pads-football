@@ -5,7 +5,7 @@ use nopads_core::math::Vec2;
 use nopads_core::playbook::{
     defensive_playbook, Assign, Formation, Handoff, OffRole, Play, PlayFamily,
 };
-use nopads_core::sim::{CoverageJob, Phase, PlaySim, SnapSetup};
+use nopads_core::sim::{CoverageJob, Phase, PlaySim, SnapSetup, SNAP_DELAY};
 use nopads_core::team::league_teams;
 
 fn setup(seed: u64) -> SnapSetup {
@@ -180,5 +180,53 @@ fn a_play_action_is_still_a_pass() {
         out.passer.is_some(),
         "nobody threw it on a play action: {:?}",
         out.outcome
+    );
+}
+
+/// A play fake in the gun is sold from the pocket the quarterback snapped in: he
+/// turns to the man, shows him the ball, and his feet stay where the play put
+/// them. Walking after the runner is how a fake turns into a scramble.
+#[test]
+fn the_fake_is_sold_from_the_pocket_he_snapped_in() {
+    let teams = league_teams();
+    let def = defensive_playbook()[0].clone();
+    let mut p = play_action();
+    p.formation = Formation::Pistol;
+    p.drop = 0.0;
+    let mut sim = PlaySim::new(&teams[0], &teams[1], &p, &def, &setup(3));
+    let qb = sim.qb;
+    let los = 40.0f32;
+    let y0 = sim.players[qb].pos.y;
+    let snap = los - sim.players[qb].pos.x;
+    assert!((snap - 3.2).abs() < 0.2, "he is not in the gun: {snap:.2} yards deep");
+    let (mut deep, mut shallow, mut across, mut offered) = (snap, snap, 0.0f32, 0.0f32);
+    while sim.t < SNAP_DELAY + 0.45 {
+        sim.step(1.0 / 60.0);
+        let q = sim.players[qb].pos;
+        deep = deep.max(los - q.x);
+        shallow = shallow.min(los - q.x);
+        across = across.max((q.y - y0).abs());
+        if sim.t > SNAP_DELAY {
+            offered = offered.max(sim.players[qb].give);
+        }
+    }
+    assert!(
+        deep - snap < 0.5 && snap - shallow < 0.5,
+        "he drifted selling it: {:.2} yards back, {:.2} forward",
+        deep - snap,
+        snap - shallow
+    );
+    assert!(across > 0.3, "he never turned to the man: {across:.2} yards across");
+    assert!(offered > 0.5, "the ball was never shown: give {offered:.2}");
+    // And once the sell is over he stays in the pocket rather than falling back
+    // out of it on the momentum of the fake.
+    while sim.t < SNAP_DELAY + 0.9 {
+        sim.step(1.0 / 60.0);
+    }
+    let after = los - sim.players[qb].pos.x;
+    assert!(
+        (after - snap).abs() < 0.8,
+        "he ended {:.2} yards from where he snapped after the fake",
+        after - snap
     );
 }
