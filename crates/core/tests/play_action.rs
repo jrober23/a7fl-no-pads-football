@@ -2,8 +2,8 @@
 //! leans on it.
 
 use nopads_core::math::Vec2;
-use nopads_core::playbook::{playbook, 
-    defensive_playbook, Assign, Formation, Handoff, OffRole, Play, PlayFamily,
+use nopads_core::playbook::{
+    defensive_playbook, playbook, Assign, Formation, Handoff, OffRole, Play, PlayFamily,
 };
 use nopads_core::sim::{CoverageJob, Phase, PlaySim, SnapSetup, SNAP_DELAY};
 use nopads_core::team::league_teams;
