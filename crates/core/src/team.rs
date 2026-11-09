@@ -1104,7 +1104,7 @@ pub fn clubs() -> Vec<Club> {
         Club { city: "Detroit", name: "Assembly", abbr: "DET", division: Division::North, primary: Rgb::hex(0x1F3A5F), secondary: Rgb::hex(0x14263F), accent: Rgb::hex(0xFF6B35), pattern: SidePanel, seed: 0xA7F1_0003, level: 3 },
         Club { city: "Minneapolis", name: "Northwind", abbr: "MIN", division: Division::North, primary: Rgb::hex(0x2E4A7D), secondary: Rgb::hex(0x1B2E50), accent: Rgb::hex(0xC8E6FF), pattern: Hoops, seed: 0xA7F1_0004, level: 6 },
         // South
-        Club { city: "Atlanta", name: "Fireflies", abbr: "ATL", division: Division::South, primary: Rgb::hex(0x3B1F5E), secondary: Rgb::hex(0x261340), accent: Rgb::hex(0xFFD166), pattern: Sash, seed: 0xA7F1_0005, level: 4 },
+        Club { city: "Atlanta", name: "Phoenixes", abbr: "ATL", division: Division::South, primary: Rgb::hex(0xC1121F), secondary: Rgb::hex(0x5A0A10), accent: Rgb::hex(0xFFB703), pattern: Sash, seed: 0xA7F1_0005, level: 4 },
         Club { city: "Miami", name: "Riptide", abbr: "MIA", division: Division::South, primary: Rgb::hex(0x0FA3B1), secondary: Rgb::hex(0x0B6E77), accent: Rgb::hex(0xF6F7EB), pattern: Hoops, seed: 0xA7F1_0006, level: 3 },
         Club { city: "Dallas", name: "Rustlers", abbr: "DAL", division: Division::South, primary: Rgb::hex(0x7A2E1E), secondary: Rgb::hex(0x4E1C12), accent: Rgb::hex(0xE9C46A), pattern: ShoulderStripe, seed: 0xA7F1_0007, level: 7 },
         Club { city: "Nashville", name: "Brass", abbr: "NSH", division: Division::South, primary: Rgb::hex(0xA8761F), secondary: Rgb::hex(0x6E4C12), accent: Rgb::hex(0x1B1B1B), pattern: Solid, seed: 0xA7F1_0008, level: 5 },
