@@ -1,0 +1,33 @@
+name: android
+
+# The tag that publishes the Windows zip also publishes the APK, so one release
+# carries both clients.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Android SDK and NDK
+        run: |
+          sdkmanager "platforms;android-35" "build-tools;34.0.0" "ndk;27.2.12479018"
+      - name: Build the APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          VERSION_NAME: ${{ github.ref_name }}
+          VERSION_CODE: ${{ github.run_number }}
+        run: ./android/build-apk.sh
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: target/android/*.apk

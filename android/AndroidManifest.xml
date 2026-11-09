@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A NativeActivity with no Java in it: the OS loads libnopads_android.so and
+     calls android_main, so the APK carries no dex at all. Landscape, because the
+     game is a broadcast picture, and a controller because that is how it is
+     played. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.nopads.football">
+
+    <uses-feature android:name="android.hardware.gamepad" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+
+    <application
+        android:label="7 on 7 No Pads Football"
+        android:hasCode="false"
+        android:extractNativeLibs="true">
+
+        <activity
+            android:name="android.app.NativeActivity"
+            android:label="7 on 7 No Pads Football"
+            android:exported="true"
+            android:screenOrientation="sensorLandscape"
+            android:configChanges="orientation|keyboardHidden|screenSize|keyboard|navigation|uiMode|smallestScreenSize|screenLayout|density">
+            <meta-data android:name="android.app.lib_name" android:value="nopads_android" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

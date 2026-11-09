@@ -12,7 +12,9 @@
 
 use std::io::{self, Write};
 
-use nopads_core::math::{Rgb, Vec2};
+use nopads_core::math::Rgb;
+#[cfg(not(target_os = "android"))]
+use nopads_core::math::Vec2;
 use nopads_render::raster::Frame;
 use nopads_render::terminal::{self, Screen};
 
@@ -62,11 +64,16 @@ pub enum View {
 impl View {
     /// Try a window first; fall back to the terminal when there is no display.
     pub fn open(force_terminal: bool, settings: &Settings) -> View {
+        // Android's surface comes from the activity, not from a size the settings
+        // screen picks, so the settings are not consulted there at all.
+        #[cfg(target_os = "android")]
+        let _ = settings;
         if !force_terminal {
             #[cfg(feature = "bevy_view")]
             if let Some(bevy) = BevyView::attach(settings) {
                 return View::Bevy(bevy);
             }
+            #[cfg(not(target_os = "android"))]
             if let Some(window) = WindowView::open(settings) {
                 return View::Window(window);
             }
@@ -193,6 +200,7 @@ impl View {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 pub struct WindowView {
     window: minifb::Window,
     buf: Vec<u32>,
@@ -204,6 +212,7 @@ pub struct WindowView {
     fullscreen: bool,
 }
 
+#[cfg(not(target_os = "android"))]
 impl WindowView {
     fn open(settings: &Settings) -> Option<WindowView> {
         let mut window = minifb::Window::new(
@@ -424,3 +433,13 @@ mod tests {
         assert_eq!(frame.color.len(), CANVAS_W * CANVAS_H);
     }
 }
+
+/// The Android surface, which stands where the window stands on a desktop.
+///
+/// It is named `WindowView` too, so every screen that knows how to put a picture
+/// in a window puts it on the phone without being told twice.
+#[cfg(target_os = "android")]
+#[path = "android.rs"]
+pub mod android;
+#[cfg(target_os = "android")]
+pub use android::WindowView;

@@ -1,0 +1,16 @@
+[package]
+name = "nopads_android"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Android front end for 7 on 7 No Pads Football"
+
+# The APK ships this as lib/arm64-v8a/libnopads_android.so and the activity
+# loads it by the name below.
+[lib]
+name = "nopads_android"
+crate-type = ["cdylib"]
+
+[dependencies]
+nopads_cli = { path = "../cli", default-features = false }
+android-activity = { version = "0.6", features = ["native-activity"] }

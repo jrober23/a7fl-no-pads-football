@@ -12,7 +12,10 @@ path = "src/main.rs"
 [dependencies]
 nopads_core = { path = "../core" }
 nopads_render = { path = "../render" }
-nopads_platform = { path = "../platform" }
+nopads_platform = { path = "../platform", default-features = false }
+# The desktop window. Android has no X11, Wayland or Win32 to open, so the
+# crate is not even built there: the surface stands in for it.
+[target.'cfg(not(target_os = "android"))'.dependencies]
 minifb = "0.29.0"
 # Optional second window backend. Off by default: the minifb window has no GPU
 # requirement, so most builds should not pay for this.
@@ -27,6 +30,12 @@ bevy = { version = "0.20", default-features = false, features = [
   "x11",
   "multi_threaded",
 ], optional = true }
+
+# The Android front end needs the activity's window and its input queue. Only
+# built for that target: nowhere else has either.
+[target.'cfg(target_os = "android")'.dependencies]
+android-activity = { version = "0.6", features = ["native-activity"] }
+ndk = "0.9"
 
 [features]
 # Gamepad support. On by default so `cargo run -- arcade` just works; build with

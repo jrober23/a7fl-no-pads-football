@@ -2698,11 +2698,21 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "610a5acd306ec67f907abe5567859a3c693fb9886eb1f012ab8f2a47bef3db51"
 
 [[package]]
+name = "nopads_android"
+version = "0.25.48"
+dependencies = [
+ "android-activity",
+ "nopads_cli",
+]
+
+[[package]]
 name = "nopads_cli"
 version = "0.25.48"
 dependencies = [
+ "android-activity",
  "bevy",
  "minifb",
+ "ndk",
  "nopads_core",
  "nopads_platform",
  "nopads_render",

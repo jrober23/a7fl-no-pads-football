@@ -22,14 +22,10 @@ use nopads_render::hud;
 use nopads_render::passing::{Badge, Guide, PassUi, Tone};
 use nopads_render::raster::Frame;
 
-mod arcade;
-mod menu;
-mod view;
+use nopads_cli::{arcade, menu, view};
 
 #[cfg(feature = "bevy_view")]
-mod bevy_host;
-#[cfg(feature = "bevy_view")]
-mod view_bevy;
+use nopads_cli::{bevy_host, view_bevy};
 
 use nopads_platform::{pad, settings};
 
