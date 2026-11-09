@@ -3376,30 +3376,24 @@ fn draw_play_list(frame: &mut Frame, book: &DesignBook, fi: usize, slide: &ui::S
     let plays = book.plays_of(fi).len();
     let mut rows: Vec<(&str, String)> = Vec::new();
     for p in book.plays_of(fi) {
-        let ways = p.routes.iter().map(|r| r.len()).sum::<usize>();
+        // What the play is, in as few words as it takes: the name has the rest of
+        // the row, and a count of waypoints is the drawing's business, not his.
         rows.push((
             p.name.as_str(),
             if p.family.is_pass() {
-                format!(
-                    "{} - {} - {} WAYPOINTS",
-                    p.family.label(),
-                    p.drop.label(),
-                    ways
-                )
+                format!("{} - {}", p.family.label(), p.drop.label())
             } else if p.handoff == Handoff::Option {
                 format!(
-                    "OPTION - QB KEEPS - PITCH TO {} - {} WAYPOINTS",
-                    p.carrier_role(&book.offense[fi]).label(),
-                    ways
+                    "OPTION - PITCH TO {}",
+                    p.carrier_role(&book.offense[fi]).label()
                 )
             } else {
                 // Whose ball it is, by the job he is wearing: a run to the tight
                 // end standing in the backfield says TE here, not RB.
                 format!(
-                    "{} RUNS - {} - {} WAYPOINTS",
+                    "{} RUNS - {}",
                     p.carrier_role(&book.offense[fi]).label(),
-                    p.handoff.label(),
-                    ways
+                    p.handoff.label()
                 )
             },
         ));
