@@ -55,4 +55,4 @@ jobs:
             sleep 15
           done
           gh release view "$tag" > /dev/null 2>&1 || gh release create "$tag" --title "$tag" --generate-notes
-          gh release upload "$tag" target/android/*.apk --clobber
+          gh release upload "$tag" target/android/7on7-*.apk --clobber
