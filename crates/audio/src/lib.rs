@@ -54,8 +54,9 @@ pub struct Audio {
     /// sample, so the game only ever stores a number here.
     bed_level: Option<Arc<AtomicU32>>,
     /// The bed's own player, kept alive for the length of the game. Its source
-    /// never ends, so it plays until this is dropped.
-    _bed: Option<Player>,
+    /// never ends, so it plays until this is dropped. It is also the music bus:
+    /// the bed today, a stadium loop when there is one.
+    bed: Option<Player>,
 }
 
 impl Audio {
@@ -79,7 +80,7 @@ impl Audio {
                     _sink: Some(sink),
                     crowd: Some(crowd),
                     bed_level: Some(bed_level),
-                    _bed: Some(bed),
+                    bed: Some(bed),
                 }
             }
             Err(_) => Audio::silent(),
@@ -94,7 +95,7 @@ impl Audio {
             _sink: None,
             crowd: None,
             bed_level: None,
-            _bed: None,
+            bed: None,
         }
     }
 
@@ -118,6 +119,22 @@ impl Audio {
     pub fn set_bed(&self, level: f32) {
         if let Some(bed) = &self.bed_level {
             bed.store(level.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+        }
+    }
+
+    /// The background bus: the crowd bed today, and the music that will share
+    /// the same player. This is the settings screen's MUSIC row.
+    pub fn set_music(&self, level: f32) {
+        if let Some(bed) = &self.bed {
+            bed.set_volume(level.clamp(0.0, 1.0));
+        }
+    }
+
+    /// The effects bus: the crowd's answer to a score, and the cues that join
+    /// it. This is the settings screen's EFFECTS row.
+    pub fn set_effects(&self, level: f32) {
+        if let Some(crowd) = &self.crowd {
+            crowd.set_volume(level.clamp(0.0, 1.0));
         }
     }
 
@@ -294,6 +311,8 @@ mod tests {
         audio.bed_down();
         audio.bed_up();
         audio.set_bed(4.0);
+        audio.set_music(0.5);
+        audio.set_effects(0.5);
     }
 
     #[test]
@@ -347,7 +366,7 @@ mod tests {
             _sink: None,
             crowd: None,
             bed_level: Some(Arc::clone(&level)),
-            _bed: None,
+            bed: None,
         };
         {
             let _ducked = audio.ducked();

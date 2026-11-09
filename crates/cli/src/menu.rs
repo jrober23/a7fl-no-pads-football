@@ -1077,7 +1077,7 @@ fn settings_screen(
     pad: &mut Option<&mut Pad>,
     settings: &mut Settings,
 ) -> Option<()> {
-    const ROWS: usize = 6;
+    const ROWS: usize = 8;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
@@ -1138,6 +1138,18 @@ fn settings_screen(
                     settings.fullscreen = !settings.fullscreen;
                     changed = true;
                 }
+                5 => {
+                    let n = (nopads_platform::settings::VOLUME_STEPS + 1) as isize;
+                    settings.music_volume =
+                        ((settings.music_volume as isize + dir).rem_euclid(n)) as usize;
+                    changed = true;
+                }
+                6 => {
+                    let n = (nopads_platform::settings::VOLUME_STEPS + 1) as isize;
+                    settings.effects_volume =
+                        ((settings.effects_volume as isize + dir).rem_euclid(n)) as usize;
+                    changed = true;
+                }
                 _ => {
                     if forward {
                         return Some(());
@@ -1163,6 +1175,8 @@ fn settings_screen(
             ("CONTROLS", String::new()),
             ("RESOLUTION", settings.resolution_label()),
             ("DISPLAY", settings.display_label().to_string()),
+            ("MUSIC", settings.music_label()),
+            ("EFFECTS", settings.effects_label()),
             ("BACK", String::new()),
         ];
         let mut frame = Frame::new(UI_W, UI_H);

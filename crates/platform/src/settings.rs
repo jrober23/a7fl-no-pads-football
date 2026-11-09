@@ -18,6 +18,16 @@ pub const RESOLUTIONS: [(usize, usize); 4] = [(960, 540), (1280, 720), (1600, 90
 /// fifteen; the short ones are for a game that has to fit in a lunch break.
 pub const QUARTER_CHOICES: [u32; 6] = [4, 6, 8, 10, 12, 15];
 
+/// How many steps the volume rows offer: 0 to this, in tenths. Ten steps is more
+/// than a pad can pick out and few enough to walk with the stick.
+pub const VOLUME_STEPS: usize = 10;
+
+/// A volume row's reading: a percentage, because that is what a player expects a
+/// volume to say.
+fn volume_label(step: usize) -> String {
+    format!("{}%", step.min(VOLUME_STEPS) * 100 / VOLUME_STEPS)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Settings {
     /// Index into the camera list the game runs on.
@@ -33,6 +43,13 @@ pub struct Settings {
     pub difficulty: usize,
     /// Minutes in a quarter, from [QUARTER_CHOICES].
     pub quarter_minutes: u32,
+    /// How loud the background bed is, 0 to [VOLUME_STEPS]. It is the crowd
+    /// under the game today, and shares its bus with the music when there is a
+    /// loop to play.
+    pub music_volume: usize,
+    /// How loud the effects are, 0 to [VOLUME_STEPS]: the crowd's answer to a
+    /// score, and every cue that joins it later.
+    pub effects_volume: usize,
 }
 
 impl Default for Settings {
@@ -46,6 +63,8 @@ impl Default for Settings {
             lens_tilt: 0.0,
             difficulty: 0,
             quarter_minutes: 15,
+            music_volume: 8,
+            effects_volume: 8,
         }
     }
 }
@@ -89,6 +108,25 @@ impl Settings {
         format!("{} MIN", self.quarter_minutes)
     }
 
+    /// A volume row's reading: a percentage, because that is what a player
+    /// expects a volume to say.
+    pub fn music_label(&self) -> String {
+        volume_label(self.music_volume)
+    }
+
+    pub fn effects_label(&self) -> String {
+        volume_label(self.effects_volume)
+    }
+
+    /// The same two as a multiplier for the audio crate.
+    pub fn music_level(&self) -> f32 {
+        self.music_volume as f32 / VOLUME_STEPS as f32
+    }
+
+    pub fn effects_level(&self) -> f32 {
+        self.effects_volume as f32 / VOLUME_STEPS as f32
+    }
+
     pub fn display_label(&self) -> &'static str {
         if self.fullscreen {
             "FULLSCREEN"
@@ -110,7 +148,7 @@ impl Settings {
 
     pub fn text(&self) -> String {
         format!(
-            "# 7 on 7 No Pads Football settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\n",
+            "# 7 on 7 No Pads Football settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\nmusic={}\neffects={}\n",
             self.camera,
             self.width,
             self.height,
@@ -119,6 +157,8 @@ impl Settings {
             self.lens_tilt,
             self.difficulty,
             self.quarter_minutes,
+            self.music_volume,
+            self.effects_volume,
         )
     }
 
@@ -172,6 +212,16 @@ impl Settings {
                         out.quarter_minutes = v;
                     }
                 }
+                "music" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        out.music_volume = v;
+                    }
+                }
+                "effects" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        out.effects_volume = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -185,6 +235,8 @@ impl Settings {
             self.camera = 0;
         }
         self.difficulty %= 3;
+        self.music_volume = self.music_volume.min(VOLUME_STEPS);
+        self.effects_volume = self.effects_volume.min(VOLUME_STEPS);
         // A hand-edited quarter length snaps to the nearest offered one rather
         // than to a clock the menus cannot walk back to.
         if !QUARTER_CHOICES.contains(&self.quarter_minutes) {
@@ -254,6 +306,8 @@ mod tests {
             lens_tilt: 0.1,
             difficulty: 2,
             quarter_minutes: 6,
+            music_volume: 3,
+            effects_volume: 4,
         };
         let back = Settings::parse(&s.text());
         assert_eq!(back.camera, s.camera);
@@ -261,6 +315,21 @@ mod tests {
         assert_eq!(back.height, s.height);
         assert_eq!(back.fullscreen, s.fullscreen);
         assert_eq!(back.quarter_minutes, s.quarter_minutes);
+        assert_eq!(back.music_volume, s.music_volume);
+        assert_eq!(back.effects_volume, s.effects_volume);
+        assert_eq!(back.music_label(), "30%");
+    }
+
+    #[test]
+    fn a_volume_off_the_scale_comes_back_to_it() {
+        let loud = Settings::parse("music=99\neffects=11");
+        assert_eq!(loud.music_volume, VOLUME_STEPS);
+        assert_eq!(loud.effects_volume, VOLUME_STEPS);
+        assert_eq!(loud.music_level(), 1.0);
+        // A file written before the rows existed still reads as the defaults.
+        let old = Settings::parse("camera=1\nquarters=8");
+        assert_eq!(old.music_volume, Settings::default().music_volume);
+        assert_eq!(old.effects_volume, Settings::default().effects_volume);
     }
 
     #[test]
