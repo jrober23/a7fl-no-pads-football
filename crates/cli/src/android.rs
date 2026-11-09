@@ -7,9 +7,9 @@
 //! activity's surface byte by byte, the way it was letterboxed into a window.
 
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::OnceLock;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use android_activity::input::{Axis, InputEvent, KeyAction};
 use android_activity::{AndroidApp, InputStatus, MainEvent, PollEvent};
@@ -201,6 +201,9 @@ fn present(window: &ndk::native_window::NativeWindow, frame: &Frame) -> bool {
     let Ok(mut buffer) = window.lock(None) else {
         return true;
     };
+    // Only the work after the buffer arrives is the frame's cost; waiting for a
+    // buffer is the display's clock, not ours.
+    let started = Instant::now();
     let (w, h, stride) = (buffer.width(), buffer.height(), buffer.stride());
     if w < 32 || h < 32 || frame.w == 0 || frame.h == 0 {
         return true;
@@ -228,35 +231,67 @@ fn present(window: &ndk::native_window::NativeWindow, frame: &Frame) -> bool {
     let dh = ((frame.h as f32 * scale) as usize).clamp(1, h);
     let ox = (w - dw) / 2;
     let oy = (h - dh) / 2;
+    // Which source column each output column takes. One divide per column rather
+    // than one per pixel: at 1080 wide that is a thousand divides a frame instead
+    // of a million.
+    let columns = column_map(dw, frame.w);
     // SAFETY: the lock guard exposes `stride * height` pixels of `per_pixel` bytes
     // each, and every write below stays inside that span.
     unsafe {
-        std::ptr::write_bytes(bits, 0, stride * h * per_pixel);
-        for y in 0..dh {
-            let sy = (y * frame.h / dh).min(frame.h - 1);
-            let row = sy * frame.w;
-            let out = (oy + y) * stride + ox;
-            for x in 0..dw {
-                let sx = (x * frame.w / dw).min(frame.w - 1);
-                let c = frame.color[row + sx];
-                let p = bits.add((out + x) * per_pixel);
-                if per_pixel == 4 {
-                    p.write(c.r);
-                    p.add(1).write(c.g);
-                    p.add(2).write(c.b);
-                    p.add(3).write(255);
-                } else {
-                    // RGB_565: five bits of red, six of green, five of blue.
-                    let r = ((c.r as u16) >> 3) << 11;
-                    let g = ((c.g as u16) >> 2) << 5;
-                    let b = (c.b as u16) >> 3;
-                    let pixel = (r | g | b).to_le_bytes();
-                    p.write(pixel[0]);
-                    p.add(1).write(pixel[1]);
+        // Only what the picture does not cover needs clearing: the bars above and
+        // below it, and the margins either side. The whole-surface clear this
+        // replaces wrote ten megabytes a frame on a 1080x2340 phone.
+        if oy > 0 {
+            std::ptr::write_bytes(bits, 0, oy * stride * per_pixel);
+        }
+        let below = oy + dh;
+        if below < h {
+            std::ptr::write_bytes(
+                bits.add(below * stride * per_pixel),
+                0,
+                (h - below) * stride * per_pixel,
+            );
+        }
+        if ox > 0 || ox + dw < w {
+            for y in 0..dh {
+                let row = bits.add((oy + y) * stride * per_pixel);
+                std::ptr::write_bytes(row, 0, ox * per_pixel);
+                std::ptr::write_bytes(
+                    row.add((ox + dw) * per_pixel),
+                    0,
+                    (w - ox - dw) * per_pixel,
+                );
+            }
+        }
+        // The pixel format is settled once for the frame rather than once for each
+        // pixel, and a four-byte surface is written a word at a time.
+        if per_pixel == 4 {
+            for y in 0..dh {
+                let sy = (y * frame.h / dh).min(frame.h - 1) * frame.w;
+                let out = bits.add(((oy + y) * stride + ox) * 4).cast::<u32>();
+                for x in 0..dw {
+                    let c = frame.color[sy + columns[x]];
+                    let pixel =
+                        0xFF00_0000 | ((c.b as u32) << 16) | ((c.g as u32) << 8) | c.r as u32;
+                    out.add(x).write_unaligned(pixel);
+                }
+            }
+        } else {
+            // RGB_565: five bits of red, six of green, five of blue.
+            for y in 0..dh {
+                let sy = (y * frame.h / dh).min(frame.h - 1) * frame.w;
+                let out = bits.add(((oy + y) * stride + ox) * 2).cast::<u16>();
+                for x in 0..dw {
+                    let c = frame.color[sy + columns[x]];
+                    let pixel = (((c.r as u16) >> 3) << 11)
+                        | (((c.g as u16) >> 2) << 5)
+                        | ((c.b as u16) >> 3);
+                    out.add(x).write_unaligned(pixel);
                 }
             }
         }
     }
+    count_frame(started.elapsed().as_secs_f32() * 1000.0);
     // Dropping the guard unlocks and posts the buffer.
     true
 }
@@ -264,6 +299,42 @@ fn present(window: &ndk::native_window::NativeWindow, frame: &Frame) -> bool {
 /// True once a frame has actually reached the screen, so the surface geometry is
 /// reported once rather than every frame.
 static PRESENTED: AtomicBool = AtomicBool::new(false);
+
+/// Frames drawn since the last report, and when that report was due.
+static FRAMES: AtomicU32 = AtomicU32::new(0);
+static REPORT_AT_MS: AtomicU64 = AtomicU64::new(0);
+
+/// One source column per output column, for the nearest-neighbour stretch.
+fn column_map(dw: usize, source_width: usize) -> Vec<usize> {
+    (0..dw)
+        .map(|x| (x * source_width / dw).min(source_width - 1))
+        .collect()
+}
+
+/// Report the frame rate to logcat every couple of seconds, with the cost of the
+/// blit alone in it.
+///
+/// A phone cannot be profiled from here, so the game says how it is doing: `fps`
+/// is what reached the screen, and `blit` separates drawing the picture from
+/// making it. Low fps with a small blit is the renderer; a large blit is this.
+fn count_frame(blit_ms: f32) {
+    static START: OnceLock<Instant> = OnceLock::new();
+    let start = START.get_or_init(Instant::now);
+    let now_ms = start.elapsed().as_millis() as u64;
+    let frames = FRAMES.fetch_add(1, Ordering::Relaxed) + 1;
+    let since = REPORT_AT_MS.load(Ordering::Relaxed);
+    if now_ms < since + 2000 {
+        return;
+    }
+    let span = if since == 0 { now_ms } else { now_ms - since }.max(1);
+    log(&format!(
+        "fps {:.1}, blit {:.1} ms",
+        frames as f64 * 1000.0 / span as f64,
+        blit_ms
+    ));
+    FRAMES.store(0, Ordering::Relaxed);
+    REPORT_AT_MS.store(now_ms, Ordering::Relaxed);
+}
 
 /// Write a line to logcat.
 ///
