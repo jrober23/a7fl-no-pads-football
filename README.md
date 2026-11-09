@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.133-windows-x86_64.zip` from the
+Grab `7on7-v0.25.134-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -49,7 +49,8 @@ next to it, because a real crowd beats a synthesised one:
 
 ```
 sounds/crowd.wav   the room under the game: looped, and ducked while the ball is live
-sounds/cheer.wav   the crowd's answer to a score: played once, from the start
+sounds/cheer.wav   the crowd's answer: played once for a score, and a shorter,
+                   quieter cut of it for a big play
 sounds/music.wav   optional music: looped under everything, on the MUSIC level
 ```
 
@@ -72,6 +73,11 @@ ffmpeg -i my-crowd.mp3 -ac 1 -ar 48000 -c:a pcm_s16le sounds/crowd.wav
 start without a crossfade of its own. `crowd.wav` and `music.wav` are both set by
 the settings screen's MUSIC row, and `cheer.wav` by EFFECTS — and both rows are
 heard while they are set, so the preview in the settings screen is your file.
+
+`cheer.wav` answers points, and it also answers a big play — a gain of twenty
+yards or more, a turnover, or a stop on fourth down. That one is the first second
+of the file, faded out and turned down, so the room stirs for the play without
+taking anything away from the touchdown.
 
 ## The players
 

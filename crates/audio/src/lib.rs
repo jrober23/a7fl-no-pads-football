@@ -28,6 +28,15 @@ const SAMPLE_RATE: u32 = 48_000;
 const CHANNELS: u16 = 1;
 /// How long the swell that answers a score runs, in seconds.
 const SWELL_SECONDS: f32 = 1.7;
+/// How long the smaller answer to a big play lasts, in seconds: points get the
+/// whole crowd, a long gain gets a rise that is over before the next snap.
+const RISE_SECONDS: f32 = 1.1;
+/// The fade on the end of that cut, so a crowd file stopped short of its own
+/// ending does not click.
+const RISE_FADE: f32 = 0.35;
+/// A big play against a score: the board did not move, so the room does not get
+/// up all the way.
+const RISE_LEVEL: f32 = 0.45;
 /// The bed loops over this many seconds. Long enough that the ear stops hearing
 /// a period, short enough that the buffer is a couple of megabytes.
 const BED_SECONDS: f32 = 8.0;
@@ -196,11 +205,35 @@ impl Audio {
         crowd.append(self.swell());
     }
 
-    /// The crowd's answer: the player's own file when they brought one, and the
-    /// generated swell otherwise.
+    /// The crowd noticing a big play rather than points: a long gain, a
+    /// turnover, a stop on fourth down.
+    ///
+    /// The same source as a score -- the player's `cheer.wav` or the generated
+    /// swell -- cut to [`RISE_SECONDS`], faded out and turned down. It is a
+    /// smaller thing on purpose: a crowd that answers every twenty-yard throw
+    /// the way it answers six points has nothing left for six points.
+    pub fn crowd_rise(&self) {
+        let Some(crowd) = &self.crowd else {
+            return;
+        };
+        crowd.append(self.rise());
+    }
+
+    /// The crowd's answer to a score.
     fn swell(&self) -> SamplesBuffer {
+        samples_buffer(self.swell_samples())
+    }
+
+    /// The same answer, shortened and turned down for a big play.
+    fn rise(&self) -> SamplesBuffer {
+        samples_buffer(shortened(self.swell_samples(), RISE_SECONDS, RISE_LEVEL))
+    }
+
+    /// The crowd's answer before it is shaped for a source: the player's own
+    /// file when they brought one, and the generated swell otherwise.
+    fn swell_samples(&self) -> Vec<f32> {
         match &self.cheer {
-            Some(samples) => samples_buffer(samples.as_ref().clone()),
+            Some(samples) => samples.as_ref().clone(),
             None => crowd_swell(),
         }
     }
@@ -321,7 +354,7 @@ impl Source for CrowdBed {
 /// The swell that answers a score: two low-passed noise streams, so it reads as
 /// a roar with voices in it rather than as static, under an envelope that rises
 /// fast and falls slowly.
-fn crowd_swell() -> SamplesBuffer {
+fn crowd_swell() -> Vec<f32> {
     let total = (SAMPLE_RATE as f32 * SWELL_SECONDS) as usize;
     let mut samples = Vec::with_capacity(total);
     // A seeded generator, not `rand`: the same swell every time makes it
@@ -343,11 +376,25 @@ fn crowd_swell() -> SamplesBuffer {
         let wobble = 1.0 + 0.18 * (t * std::f32::consts::TAU * 3.1).sin();
         samples.push((body * attack * release * wobble * 0.32).clamp(-1.0, 1.0));
     }
-    SamplesBuffer::new(
-        ChannelCount::new(CHANNELS).expect("a mono channel count is not zero"),
-        SampleRate::new(SAMPLE_RATE).expect("a sample rate is not zero"),
-        samples,
-    )
+    samples
+}
+
+/// The head of a crowd sound, turned down, and faded out over its last
+/// [`RISE_FADE`] seconds.
+///
+/// Cutting a swell off at a fixed length is how a big play gets a shorter
+/// answer than a score without a second generator, but a cut is a step in a
+/// waveform and a step is a click: the tail is what makes it an ending.
+fn shortened(mut samples: Vec<f32>, seconds: f32, level: f32) -> Vec<f32> {
+    let want = (SAMPLE_RATE as f32 * seconds).max(1.0) as usize;
+    samples.truncate(want);
+    let total = samples.len();
+    let fade = ((SAMPLE_RATE as f32 * RISE_FADE) as usize).clamp(1, total.max(1));
+    for (i, sample) in samples.iter_mut().enumerate() {
+        let left = total.saturating_sub(i) as f32 / fade as f32;
+        *sample *= level * left.min(1.0);
+    }
+    samples
 }
 
 /// White noise in `-1..=1` from a xorshift, so none of this needs a dependency.
@@ -473,6 +520,7 @@ mod tests {
         // The calls the game makes have to be safe without a device: a headless
         // run and a machine with no sound card both come through here.
         audio.crowd_sting();
+        audio.crowd_rise();
         audio.crowd_cue();
         audio.bed_down();
         audio.bed_up();
@@ -483,7 +531,7 @@ mod tests {
 
     #[test]
     fn the_crowd_swell_rises_and_falls_away() {
-        let swell: Vec<f32> = crowd_swell().collect();
+        let swell: Vec<f32> = crowd_swell();
         let rate = SAMPLE_RATE as usize;
         assert!(
             swell.len() > rate,
@@ -520,8 +568,8 @@ mod tests {
     fn the_swell_is_the_same_every_time() {
         // Deterministic noise: a sound the player hears twice should be the
         // sound, not a different recording of one.
-        let first: Vec<f32> = crowd_swell().collect();
-        let second: Vec<f32> = crowd_swell().collect();
+        let first: Vec<f32> = crowd_swell();
+        let second: Vec<f32> = crowd_swell();
         assert_eq!(first, second);
     }
 
@@ -684,6 +732,31 @@ mod tests {
             out[3] < out[2],
             "the file did not wrap round to its start: {out:?}"
         );
+    }
+
+    #[test]
+    fn a_big_play_gets_a_shorter_quieter_crowd() {
+        let score = crowd_swell();
+        let rise = shortened(score.clone(), RISE_SECONDS, RISE_LEVEL);
+        assert_eq!(
+            rise.len(),
+            (SAMPLE_RATE as f32 * RISE_SECONDS) as usize,
+            "the rise is not the length it was asked for"
+        );
+        assert!(
+            rise.len() < score.len(),
+            "a big play lasts longer than a score"
+        );
+        let peak = |samples: &[f32]| samples.iter().fold(0.0f32, |loud, s| loud.max(s.abs()));
+        let loud = peak(&rise);
+        assert!(
+            loud > 0.0 && loud < peak(&score) * RISE_LEVEL + 0.01,
+            "the rise is as loud as a score: {loud} against {}",
+            peak(&score)
+        );
+        // The cut is an ending: the last sample is silence rather than a step.
+        let end = rise.last().copied().unwrap_or(1.0).abs();
+        assert!(end < 0.01, "the rise stops on a step: {end}");
     }
 
     /// Run by hand on a machine that has a sound card:

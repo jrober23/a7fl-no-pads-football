@@ -2199,6 +2199,8 @@ impl Arcade {
         // worth cheering is the one that moved the board.
         if record.score_after() != record.score_before() {
             self.audio.crowd_sting();
+        } else if big_play(&record) {
+            self.audio.crowd_rise();
         }
         match &record {
             PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
@@ -5129,6 +5131,32 @@ fn throw_off_controls(
     )
 }
 
+/// The plays the room notices short of points: a long gain, a turnover, and a
+/// stop on fourth down.
+///
+/// Points have their own, louder answer, so anything that moved the board is
+/// not here -- [`Arcade::report`] asks this only when the score did not change.
+/// A penalty is a flag, not a play, and a try has no downs to be short of.
+fn big_play(record: &PlayRecord) -> bool {
+    /// Yards from scrimmage that turn a crowd's head.
+    const BIG_GAIN: f32 = 20.0;
+    match record {
+        PlayRecord::Scrimmage(r) => {
+            let result = &r.result;
+            if r.is_try || result.touchdown || result.safety || result.penalty.is_some() {
+                return false;
+            }
+            result.turnover
+                || result.yards >= BIG_GAIN
+                // Fourth down and short of the marker: the defense got off the
+                // field, whether the ball was thrown or run.
+                || (r.down >= 4 && result.yards < r.to_go)
+        }
+        // A return that did not score is still the biggest thing on a throw-off.
+        PlayRecord::ThrowOff(r) => !r.result.touchdown && r.result.return_yards >= BIG_GAIN,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5157,6 +5185,44 @@ mod tests {
         assert_eq!(gauntlet_points(false, 30.0), 1);
         assert_eq!(gauntlet_points(false, 60.0), 2);
         assert_eq!(gauntlet_points(true, 4.0), 6);
+    }
+
+    /// What the room answers short of points: a long gain and a stop on fourth
+    /// down, and not an ordinary first down.
+    #[test]
+    fn a_long_gain_and_a_stop_on_fourth_down_are_what_the_room_notices() {
+        let teams = nopads_core::team::league_teams();
+        let mut game =
+            nopads_core::game::GameState::new(teams[0].clone(), teams[1].clone(), 0xA7F1_5EED);
+        let (mut long, mut stop, mut quiet) = (false, false, false);
+        for _ in 0..800 {
+            let Some(record) = game.simulate_next() else { break };
+            let PlayRecord::Scrimmage(r) = &record else {
+                continue;
+            };
+            let result = &r.result;
+            if r.is_try || result.touchdown || result.safety || result.penalty.is_some() {
+                continue;
+            }
+            if result.yards >= 20.0 {
+                long = true;
+                assert!(big_play(&record), "a {}-yard gain was missed", result.yards);
+            } else if r.down >= 4 && result.yards < r.to_go {
+                stop = true;
+                assert!(big_play(&record), "a fourth-down stop was missed");
+            } else if r.down == 1 && !result.turnover && result.yards.abs() < 8.0 {
+                quiet = true;
+                assert!(
+                    !big_play(&record),
+                    "a {}-yard first down got the crowd up",
+                    result.yards
+                );
+            }
+        }
+        assert!(
+            long && stop && quiet,
+            "the game did not turn up all three: long {long}, stop {stop}, quiet {quiet}"
+        );
     }
 
     /// A drill has no clock on the bug and no score, because it has neither: the
