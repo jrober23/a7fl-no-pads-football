@@ -23,15 +23,19 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # Puts cmdline-tools and sdkmanager on PATH; the NDK is then an ordinary
-      # package rather than a tarball this workflow has to unpack itself.
-      - uses: android-actions/setup-android@v3
-
+      # The runner's SDK has cmdline-tools but nothing on PATH, and the old
+      # `setup-android` action wants a "tools" package that no longer exists.
+      # Find the sdkmanager that is already there and install what we need.
       - name: Android SDK and NDK
         run: |
-          yes | sdkmanager --licenses > /dev/null || true
-          sdkmanager "platforms;android-35" "build-tools;34.0.0" "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          sdkmanager_bin="$(ls -d /usr/local/lib/android/sdk/cmdline-tools/*/bin/sdkmanager | tail -1)"
+          sdk_root="$(cd "$(dirname "$sdkmanager_bin")/../.." && pwd)"
+          echo "$(dirname "$sdkmanager_bin")" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$sdk_root" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$sdk_root" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$sdk_root/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          yes | "$sdkmanager_bin" --licenses > /dev/null || true
+          "$sdkmanager_bin" "platforms;android-35" "build-tools;34.0.0" "ndk;27.2.12479018"
 
       - name: Build the APK
         env:
@@ -39,6 +43,16 @@ jobs:
           VERSION_CODE: ${{ github.run_number }}
         run: ./android/build-apk.sh
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: target/android/*.apk
+      # The release is made by the Windows job; this waits for it so the APK lands
+      # on the same release, and makes it itself if the Windows build failed.
+      - name: Attach the APK to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          for _ in $(seq 1 10); do
+            gh release view "$tag" > /dev/null 2>&1 && break
+            sleep 15
+          done
+          gh release view "$tag" > /dev/null 2>&1 || gh release create "$tag" --title "$tag" --generate-notes
+          gh release upload "$tag" target/android/*.apk --clobber
