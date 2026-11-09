@@ -1078,15 +1078,33 @@ fn settings_screen(
     settings: &mut Settings,
 ) -> Option<()> {
     const ROWS: usize = 8;
+    /// Row numbers, because the two volume rows are also the two the screen
+    /// makes a sound for.
+    const MUSIC: usize = 5;
+    const EFFECTS: usize = 6;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
     let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
+    // The volume rows are heard while they are set, which means this screen
+    // needs the device a game would open. Without a sound card every call below
+    // is still safe; it just makes no noise.
+    let audio = nopads_audio::Audio::open();
+    audio.set_music(settings.music_level());
+    audio.set_effects(settings.effects_level());
+    // The room starts down: the menu itself is quiet, and only the music row
+    // brings the bed up.
+    audio.set_bed(0.0);
+    // The swell that previews the effects row is over a second long, so it is
+    // allowed to play out before the next one: a stick held on the row would
+    // otherwise restart it every frame and never get past its attack.
+    let mut cue_wait = 0.0f32;
     loop {
         let now = Instant::now();
         let dt = now.duration_since(last).as_secs_f32().min(0.1);
         last = now;
+        cue_wait = (cue_wait - dt).max(0.0);
         let input = pad::mix(pad.as_deref_mut(), view.poll());
         if input.pressed.b || input.pressed.start {
             return Some(());
@@ -1096,6 +1114,15 @@ fn settings_screen(
                 pick = wrap(pick, ROWS, -d);
             }
         }
+
+        // The room under the menu belongs to the music row: it comes up while
+        // that row holds the highlight, so the row is set against the sound it
+        // controls, and it goes back down when the highlight moves on.
+        audio.set_bed(if pick == MUSIC {
+            nopads_audio::BED_BETWEEN
+        } else {
+            0.0
+        });
 
         // Left and right walk a value; A cycles it forward, so the row can be
         // changed without a stick.
@@ -1142,12 +1169,20 @@ fn settings_screen(
                     let n = (nopads_platform::settings::VOLUME_STEPS + 1) as isize;
                     settings.music_volume =
                         ((settings.music_volume as isize + dir).rem_euclid(n)) as usize;
+                    audio.set_music(settings.music_level());
                     changed = true;
                 }
                 6 => {
                     let n = (nopads_platform::settings::VOLUME_STEPS + 1) as isize;
                     settings.effects_volume =
                         ((settings.effects_volume as isize + dir).rem_euclid(n)) as usize;
+                    audio.set_effects(settings.effects_level());
+                    // The crowd answering, at the level the row has reached: the
+                    // row is a number until it is heard.
+                    if cue_wait == 0.0 {
+                        audio.crowd_cue();
+                        cue_wait = 0.45;
+                    }
                     changed = true;
                 }
                 _ => {

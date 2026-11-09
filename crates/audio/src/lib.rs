@@ -160,6 +160,18 @@ impl Audio {
         };
         crowd.append(crowd_swell());
     }
+
+    /// One swell on the effects bus, in place of whatever was already playing on
+    /// it. This is the settings screen's EFFECTS row: a run of presses should be
+    /// heard as a level moving, not as a queue of swells piling up behind each
+    /// other.
+    pub fn crowd_cue(&self) {
+        let Some(crowd) = &self.crowd else {
+            return;
+        };
+        crowd.clear();
+        crowd.append(crowd_swell());
+    }
 }
 
 /// See [`Audio::ducked`]: dropping this puts the room back up.
@@ -308,6 +320,7 @@ mod tests {
         // The calls the game makes have to be safe without a device: a headless
         // run and a machine with no sound card both come through here.
         audio.crowd_sting();
+        audio.crowd_cue();
         audio.bed_down();
         audio.bed_up();
         audio.set_bed(4.0);
