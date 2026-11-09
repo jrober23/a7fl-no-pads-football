@@ -79,6 +79,9 @@ pub struct Audio {
     /// The crowd's answer, when the player brought a `cheer.wav`, already in the
     /// shape everything here plays: mono at [`SAMPLE_RATE`].
     cheer: Option<Arc<Vec<f32>>>,
+    /// The crowd's answer to a big play, when the player brought a `rise.wav`:
+    /// their own recording, played as it is rather than cut from the score's.
+    rise_clip: Option<Arc<Vec<f32>>>,
 }
 
 impl Audio {
@@ -93,6 +96,7 @@ impl Audio {
         // score is a perfectly reasonable thing to want.
         let room = load_clip("crowd.wav");
         let cheer = load_clip("cheer.wav").map(Arc::new);
+        let rise_clip = load_clip("rise.wav").map(Arc::new);
         let music = load_clip("music.wav");
         match DeviceSinkBuilder::open_default_sink() {
             Ok(mut sink) => {
@@ -119,6 +123,7 @@ impl Audio {
                     bed: Some(bed),
                     music: Some(track),
                     cheer,
+                    rise_clip,
                 }
             }
             Err(_) => Audio::silent(),
@@ -136,6 +141,7 @@ impl Audio {
             bed: None,
             music: None,
             cheer: None,
+            rise_clip: None,
         }
     }
 
@@ -208,10 +214,13 @@ impl Audio {
     /// The crowd noticing a big play rather than points: a long gain, a
     /// turnover, a stop on fourth down.
     ///
-    /// The same source as a score -- the player's `cheer.wav` or the generated
-    /// swell -- cut to [`RISE_SECONDS`], faded out and turned down. It is a
-    /// smaller thing on purpose: a crowd that answers every twenty-yard throw
-    /// the way it answers six points has nothing left for six points.
+    /// A player who brought a `rise.wav` hears their own recording, played once
+    /// from the start, the way a score gets their `cheer.wav`: a sound somebody
+    /// made for the moment should not be cut down to fit it. Without one, the
+    /// score's source -- their `cheer.wav`, or the generated swell -- is cut to
+    /// [`RISE_SECONDS`], faded out and turned down. Either way it is a smaller
+    /// thing on purpose: a crowd that answers every twenty-yard throw the way it
+    /// answers six points has nothing left for six points.
     pub fn crowd_rise(&self) {
         let Some(crowd) = &self.crowd else {
             return;
@@ -224,9 +233,13 @@ impl Audio {
         samples_buffer(self.swell_samples())
     }
 
-    /// The same answer, shortened and turned down for a big play.
+    /// The answer to a big play: the player's own file when they brought one,
+    /// and the score's source shortened and turned down when they did not.
     fn rise(&self) -> SamplesBuffer {
-        samples_buffer(shortened(self.swell_samples(), RISE_SECONDS, RISE_LEVEL))
+        match &self.rise_clip {
+            Some(samples) => samples_buffer(samples.as_ref().clone()),
+            None => samples_buffer(shortened(self.swell_samples(), RISE_SECONDS, RISE_LEVEL)),
+        }
     }
 
     /// The crowd's answer before it is shaped for a source: the player's own
@@ -583,6 +596,7 @@ mod tests {
             bed: None,
             music: None,
             cheer: None,
+            rise_clip: None,
         };
         {
             let _ducked = audio.ducked();
@@ -757,6 +771,40 @@ mod tests {
         // The cut is an ending: the last sample is silence rather than a step.
         let end = rise.last().copied().unwrap_or(1.0).abs();
         assert!(end < 0.01, "the rise stops on a step: {end}");
+    }
+
+    #[test]
+    fn a_players_own_rise_is_played_as_it_was_recorded() {
+        let own = || Audio {
+            _sink: None,
+            crowd: None,
+            bed_level: None,
+            bed: None,
+            music: None,
+            cheer: None,
+            rise_clip: Some(Arc::new(vec![0.25; 480])),
+        };
+        let rise: Vec<f32> = own().rise().collect();
+        assert_eq!(
+            rise.len(),
+            480,
+            "the file was not played in full: {} samples",
+            rise.len()
+        );
+        assert!(
+            rise.iter().all(|s| (s - 0.25).abs() < 1e-6),
+            "a file the player brought was shortened or turned down"
+        );
+        // And with no file of their own, a big play is still the shortened cut
+        // of the score's sound rather than nothing or the whole thing.
+        let mut audio = own();
+        audio.rise_clip = None;
+        let fallback: Vec<f32> = audio.rise().collect();
+        assert_eq!(
+            fallback.len(),
+            (SAMPLE_RATE as f32 * RISE_SECONDS) as usize,
+            "the fallback is not the cut a big play asks for"
+        );
     }
 
     /// Run by hand on a machine that has a sound card:
