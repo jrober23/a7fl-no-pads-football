@@ -13,4 +13,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 nopads_cli = { path = "../cli", default-features = false }
+
+# Only the Android build has an activity to attach to. On a desktop the crate is
+# an empty library that still compiles, so `cargo build` works everywhere.
+[target.'cfg(target_os = "android")'.dependencies]
 android-activity = { version = "0.6", features = ["native-activity"] }

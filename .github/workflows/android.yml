@@ -7,6 +7,9 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -19,15 +22,23 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
+
+      # Puts cmdline-tools and sdkmanager on PATH; the NDK is then an ordinary
+      # package rather than a tarball this workflow has to unpack itself.
+      - uses: android-actions/setup-android@v3
+
       - name: Android SDK and NDK
         run: |
+          yes | sdkmanager --licenses > /dev/null || true
           sdkmanager "platforms;android-35" "build-tools;34.0.0" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
       - name: Build the APK
         env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
           VERSION_NAME: ${{ github.ref_name }}
           VERSION_CODE: ${{ github.run_number }}
         run: ./android/build-apk.sh
+
       - uses: softprops/action-gh-release@v2
         with:
           files: target/android/*.apk
