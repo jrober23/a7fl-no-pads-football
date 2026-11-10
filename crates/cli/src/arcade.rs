@@ -21,7 +21,7 @@ use nopads_core::playbook::{
     DefFront, DefRole, Formation, OffRole, Play,
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
-use nopads_core::sim::{Hit, DefControl, Phase, PlayResult, PlaySim, QbControl};
+use nopads_core::sim::{Hit, DefControl, Phase, PlayResult, PlaySim, QbControl, SnapSetup};
 use nopads_core::team::{league_teams, Team};
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use nopads_render::broadcast::{HandCamera, Broadcast, CameraMode};
@@ -1477,26 +1477,81 @@ impl Arcade {
             self.game.teams[1].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
         ];
 
-        // The cards sit over the field, not over a black page. A throw-off is run
-        // behind them as a warm-up — the two clubs out on the field, the ball
-        // going and the coverage running down — and the lens cuts between the
-        // angles while the introduction is up.
-        let setup = self.throw_off_to_play(false);
-        let (tside, rside) = match &setup {
+        // The cards sit over the field, not over a black page. What runs behind
+        // them is a montage of the two clubs rather than one play on a loop: the
+        // kickoff opens it, then each side gets a snap of its own -- a run, a ball
+        // down the field, a screen -- and the lens cuts between the angles while
+        // the introduction is up.
+        let kick_setup = self.throw_off_to_play(false);
+        let (tside, rside) = match &kick_setup {
             Some(s) => (s.throwing_team, s.receiving_team),
             None => (0, 1),
         };
         let throwing = self.game.teams[tside].clone();
         let receiving = self.game.teams[rside].clone();
-        let mut warmup = setup
+        // The rehearsals run on their own field with their own seeds: the kickoff
+        // that is actually coming is not spent on the introduction, and nothing
+        // here is booked on the scoreboard.
+        let warm_teams = [self.game.teams[0].clone(), self.game.teams[1].clone()];
+        let warm_book = playbook();
+        let warm_defs = defensive_playbook();
+        let warm_setups = warm_up_setups(tside, rside);
+        let warm_calls: Vec<usize> = WARM_UP_CALLS
+            .iter()
+            .map(|name| warm_book.iter().position(|p| p.name == *name).unwrap_or(0))
+            .collect();
+        let coverage = warm_defs
+            .iter()
+            .position(|d| d.name == "COVER 2 ZONE")
+            .unwrap_or(0);
+        // Built once per scene and rebuilt when its turn comes round again: a shot
+        // in a montage is shown from the top, not from where it was left.
+        let mut snaps = [
+            warm_up_snap(
+                &warm_teams,
+                &warm_book,
+                &warm_defs,
+                &warm_setups,
+                &warm_calls,
+                coverage,
+                0,
+            ),
+            warm_up_snap(
+                &warm_teams,
+                &warm_book,
+                &warm_defs,
+                &warm_setups,
+                &warm_calls,
+                coverage,
+                1,
+            ),
+            warm_up_snap(
+                &warm_teams,
+                &warm_book,
+                &warm_defs,
+                &warm_setups,
+                &warm_calls,
+                coverage,
+                2,
+            ),
+        ];
+        let mut kick = kick_setup
             .as_ref()
             .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
+        let scenes = snaps.len() + usize::from(kick_setup.is_some());
+        // The kickoff opens it, unless there is none to open with.
+        let first = if kick_setup.is_some() { 0 } else { 1 };
+        let mut scene = first;
         let mut mode = 0usize;
         let mut page = 0usize;
         let opened = Instant::now();
         let mut last = Instant::now();
         let mut cut = Instant::now();
         let mut acc = 0.0f64;
+        // A dead ball is held for a beat before the montage moves on: long enough
+        // to see the play come to rest, short enough that the picture never sits.
+        let held = Duration::from_millis(900);
+        let mut dead_since: Option<Instant> = None;
         self.view.reset();
         loop {
             let now = Instant::now();
@@ -1507,28 +1562,61 @@ impl Arcade {
                 mode = (mode + 1) % CAMS.len();
             }
             acc += dt as f64;
-            while acc >= 1.0 / 60.0 {
-                let ended = match warmup.as_mut() {
-                    Some(sim) => {
-                        sim.step(1.0 / 60.0);
-                        sim.result.is_some()
+            while acc >= STEP as f64 && dead_since.is_none() {
+                acc -= STEP as f64;
+                match scene {
+                    0 => {
+                        if let Some(sim) = kick.as_mut() {
+                            let _ = sim.step(STEP);
+                        }
                     }
-                    None => true,
-                };
-                acc -= 1.0 / 60.0;
-                if ended {
-                    // The warm-up play finished: run another from the top, the
-                    // way a ground crew keeps the drill going behind a set.
-                    warmup = setup
-                        .as_ref()
-                        .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
-                    acc = 0.0;
-                    break;
+                    n => {
+                        let _ = snaps[n - 1].step(STEP);
+                    }
                 }
             }
-            let mut frame = match &warmup {
-                Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui_none()),
-                None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
+            let dead = match scene {
+                0 => kick.as_ref().map(|s| s.result.is_some()).unwrap_or(true),
+                n => snaps[n - 1].result.is_some(),
+            };
+            if dead {
+                let since = *dead_since.get_or_insert(now);
+                if since.elapsed() >= held {
+                    // On to the next shot, with a new lens for it: the montage
+                    // cuts, it does not sit on the last frame of the play.
+                    dead_since = None;
+                    acc = 0.0;
+                    cut = now;
+                    mode = (mode + 1) % CAMS.len();
+                    scene = if scene + 1 >= scenes { first } else { scene + 1 };
+                    match scene {
+                        0 => {
+                            kick = kick_setup
+                                .as_ref()
+                                .map(|s| ThrowOffSim::new(s, &throwing, &receiving));
+                        }
+                        n => {
+                            snaps[n - 1] = warm_up_snap(
+                                &warm_teams,
+                                &warm_book,
+                                &warm_defs,
+                                &warm_setups,
+                                &warm_calls,
+                                coverage,
+                                n - 1,
+                            );
+                        }
+                    }
+                }
+            } else {
+                dead_since = None;
+            }
+            let mut frame = match scene {
+                0 => match &kick {
+                    Some(sim) => self.broadcast.throw_off_frame_live(sim, CAMS[mode], &ui_none()),
+                    None => nopads_render::Frame::new(CANVAS_W, CANVAS_H),
+                },
+                n => self.broadcast.live_frame(&snaps[n - 1], CAMS[mode]),
             };
             let (title, left, right, _prompt) = &pages[page];
             // The banner goes up on its own for a beat, the cards arrive on it,
@@ -2584,6 +2672,84 @@ impl Arcade {
 }
 
 /// No markers on the picture: used for the warm-up behind the matchup cards.
+/// The plays the introduction runs behind the cards, in the order it runs them:
+/// the kickoff is the opener, then each club gets a snap of its own.
+const WARM_UP_CALLS: [&str; 3] = ["POWER O", "DEEP SHOT", "RB SCREEN"];
+
+/// The rehearsal's own balls, so the introduction never borrows the one the game
+/// is about to kick off with: a first down for each side and a third down, placed
+/// where the offense has a half of field in front of it.
+fn warm_up_setups(throwing: usize, receiving: usize) -> [SnapSetup; 3] {
+    // Team 0 attacks towards the far end of the field, team 1 back towards the
+    // near one, which is the way the game lays the field out before the kick.
+    let attack = |team: usize| if team == 0 { 1i8 } else { -1i8 };
+    let spot = |dir: i8, from_mid: f32| {
+        if dir > 0 {
+            60.0 - from_mid
+        } else {
+            60.0 + from_mid
+        }
+    };
+    let (theirs, ours) = (attack(throwing), attack(receiving));
+    [
+        SnapSetup {
+            los: spot(ours, 15.0),
+            ball_y: 0.0,
+            direction: ours,
+            down: 1,
+            to_go: 10.0,
+            seed: 0x5A17_0001,
+            offense_team: receiving,
+            defense_team: throwing,
+            is_try: false,
+        },
+        SnapSetup {
+            los: spot(theirs, 10.0),
+            ball_y: 0.0,
+            direction: theirs,
+            down: 3,
+            to_go: 6.0,
+            seed: 0x5A17_0002,
+            offense_team: throwing,
+            defense_team: receiving,
+            is_try: false,
+        },
+        SnapSetup {
+            los: spot(ours, 5.0),
+            ball_y: 0.0,
+            direction: ours,
+            down: 2,
+            to_go: 8.0,
+            seed: 0x5A17_0003,
+            offense_team: receiving,
+            defense_team: throwing,
+            is_try: false,
+        },
+    ]
+}
+
+/// One scene of the montage. The sim borrows the teams, the calls and the setup it
+/// was given, so they are handed down from the introduction's own locals rather
+/// than stored beside the sim they belong to.
+fn warm_up_snap<'a>(
+    teams: &'a [Team; 2],
+    book: &'a [Play],
+    defs: &'a [DefCall],
+    setups: &'a [SnapSetup; 3],
+    calls: &'a [usize],
+    coverage: usize,
+    scene: usize,
+) -> PlaySim<'a> {
+    let setup = &setups[scene];
+    PlaySim::new(
+        &teams[setup.offense_team],
+        &teams[setup.defense_team],
+        &book[calls[scene]],
+        &defs[coverage],
+        setup,
+    )
+}
+
 fn ui_none() -> PassUi {
     PassUi {
         flag: None,
@@ -5255,6 +5421,45 @@ mod tests {
         assert_eq!(gauntlet_points(false, 30.0), 1);
         assert_eq!(gauntlet_points(false, 60.0), 2);
         assert_eq!(gauntlet_points(true, 4.0), 6);
+    }
+
+    /// The montage behind the introduction has to actually end: a scene that never
+    /// died would leave the cards over one frozen play for the whole open.
+    #[test]
+    fn every_warm_up_scene_runs_to_a_dead_ball() {
+        let teams = nopads_core::team::league_teams();
+        let warm_teams = [teams[0].clone(), teams[1].clone()];
+        let book = playbook();
+        let defs = defensive_playbook();
+        for name in WARM_UP_CALLS {
+            assert!(
+                book.iter().any(|p| p.name == name),
+                "{name} is not in the playbook, so the montage would fall back"
+            );
+        }
+        let coverage = defs
+            .iter()
+            .position(|d| d.name == "COVER 2 ZONE")
+            .expect("the montage's coverage is gone");
+        let setups = warm_up_setups(0, 1);
+        let calls: Vec<usize> = WARM_UP_CALLS
+            .iter()
+            .map(|name| book.iter().position(|p| p.name == *name).unwrap_or(0))
+            .collect();
+        for scene in 0..WARM_UP_CALLS.len() {
+            let mut sim =
+                warm_up_snap(&warm_teams, &book, &defs, &setups, &calls, coverage, scene);
+            let mut t = 0.0;
+            while sim.result.is_none() && t < 10.0 {
+                sim.step(1.0 / 60.0);
+                t += 1.0 / 60.0;
+            }
+            assert!(
+                sim.result.is_some(),
+                "warm-up scene {scene} ({}) never ended: {t:.1}s",
+                WARM_UP_CALLS[scene]
+            );
+        }
     }
 
     /// What the room answers short of points: a long gain and a stop on fourth
