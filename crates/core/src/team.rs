@@ -3,7 +3,7 @@
 //! Everything is generated deterministically from a seed so a saved game can be
 //! replayed and rendered pixel-for-pixel.
 
-use crate::playbook::Book;
+use crate::playbook::{Book, PlayFamily};
 use crate::math::{clamp, lerp, Rgb, Rng};
 
 // ---------------------------------------------------------------------------
@@ -443,6 +443,149 @@ impl TeamRatings {
 }
 
 // ---------------------------------------------------------------------------
+// What a club is known for
+// ---------------------------------------------------------------------------
+
+/// The parts of the game a club can be known for: one list, read from both ends.
+/// A club's best are its strengths and its worst are its weaknesses, and the same
+/// word is a compliment on one sideline and a scouting note on the other.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aspect {
+    DeepBall,
+    QuickGame,
+    RunGame,
+    Perimeter,
+    Pocket,
+    PassRush,
+    Coverage,
+    BallHawks,
+}
+
+impl Aspect {
+    pub const ALL: [Aspect; 8] = [
+        Aspect::DeepBall,
+        Aspect::QuickGame,
+        Aspect::RunGame,
+        Aspect::Perimeter,
+        Aspect::Pocket,
+        Aspect::PassRush,
+        Aspect::Coverage,
+        Aspect::BallHawks,
+    ];
+
+    /// The words on the card.
+    pub fn label(self) -> &'static str {
+        match self {
+            Aspect::DeepBall => "DEEP BALL",
+            Aspect::QuickGame => "QUICK GAME",
+            Aspect::RunGame => "POWER RUN",
+            Aspect::Perimeter => "PERIMETER",
+            Aspect::Pocket => "POCKET",
+            Aspect::PassRush => "PRESSURE",
+            Aspect::Coverage => "COVERAGE",
+            Aspect::BallHawks => "BALL HAWKS",
+        }
+    }
+
+    /// The play family a club's identity sells on the call sheet. The defensive
+    /// parts of the game have none: what they change is the call on the other side
+    /// of the ball.
+    pub fn family(self) -> Option<PlayFamily> {
+        match self {
+            Aspect::DeepBall => Some(PlayFamily::DropbackPass),
+            Aspect::QuickGame => Some(PlayFamily::QuickPass),
+            Aspect::RunGame => Some(PlayFamily::RunInside),
+            Aspect::Perimeter => Some(PlayFamily::RunOutside),
+            Aspect::Pocket | Aspect::PassRush | Aspect::Coverage | Aspect::BallHawks => None,
+        }
+    }
+}
+
+/// A part of the game at or above this is a strength worth naming on a card.
+const GOOD_AT: u8 = 68;
+/// At or below this it is the thing the club cannot do.
+const POOR_AT: u8 = 52;
+/// How far a club's identity moves the chance its coordinator calls that family.
+const TASTE: f32 = 0.14;
+
+#[cfg(test)]
+mod aspect_tests {
+    use super::*;
+
+    /// Every club has to be known for something: a matchup card that says a side
+    /// has no strength and no weakness is a card with nothing on it.
+    #[test]
+    fn every_club_has_a_strength_and_a_weakness() {
+        let clubs = league_teams();
+        let mut named: Vec<&'static str> = Vec::new();
+        for club in &clubs {
+            let scores = club.aspect_scores();
+            let score_of = |a: Aspect| {
+                scores
+                    .iter()
+                    .find(|(b, _)| *b == a)
+                    .map(|(_, s)| *s)
+                    .unwrap_or(0)
+            };
+            let strength = club.strength();
+            let weakness = club.weakness();
+            assert!(
+                score_of(strength) >= score_of(weakness),
+                "{} is better at its weakness ({:?}) than at its strength ({:?})",
+                club.abbr,
+                weakness,
+                strength
+            );
+            assert!(!club.strengths().is_empty(), "{} has no strength", club.abbr);
+            assert!(!club.weaknesses().is_empty(), "{} has no weakness", club.abbr);
+            assert!(!strength.label().is_empty() && !weakness.label().is_empty());
+            named.push(strength.label());
+        }
+        // The league cannot all be known for the same thing: a scouting report
+        // that reads the same for every club is not a scouting report.
+        named.sort_unstable();
+        named.dedup();
+        assert!(
+            named.len() >= 3,
+            "the whole league is known for the same thing: {named:?}"
+        );
+    }
+
+    /// The identity has to reach the field, not just the card: a club known for a
+    /// family calls it more, and a club that cannot do it calls it less.
+    #[test]
+    fn a_clubs_identity_reaches_its_call_sheet() {
+        let clubs = league_teams();
+        let mut leaned = 0;
+        for club in &clubs {
+            for aspect in Aspect::ALL {
+                let Some(family) = aspect.family() else { continue };
+                let taste = club.taste(family);
+                if club.strengths().contains(&aspect) {
+                    leaned += 1;
+                    assert!(
+                        taste > 0.0,
+                        "{} is known for {} but its coordinator does not lean on it",
+                        club.abbr,
+                        aspect.label()
+                    );
+                }
+                if club.weaknesses().contains(&aspect) {
+                    leaned += 1;
+                    assert!(
+                        taste < 0.0,
+                        "{} cannot do {} but its coordinator still calls it",
+                        club.abbr,
+                        aspect.label()
+                    );
+                }
+            }
+        }
+        assert!(leaned > 0, "no club's identity touched a call sheet");
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Edited depth charts
 // ---------------------------------------------------------------------------
 
@@ -521,6 +664,173 @@ impl Team {
     /// The club's number, from the men who will actually be on the field.
     pub fn ratings(&self) -> TeamRatings {
         TeamRatings::from_roster(&self.roster)
+    }
+
+    /// How the club rates at each part of the game, on the 40..99 scale the
+    /// attributes use. Each part is measured off the men who play it, so the
+    /// identity on the card and the numbers behind it cannot disagree.
+    pub fn aspect_scores(&self) -> [(Aspect, u8); 8] {
+        let top = |pos: Position, count: usize| -> Vec<&Player> {
+            let mut men: Vec<&Player> = self.roster.iter().filter(|p| p.pos == pos).collect();
+            men.sort_by_key(|p| std::cmp::Reverse(p.overall()));
+            men.truncate(count.max(1));
+            men
+        };
+        let avg = |men: &[&Player], of: fn(&Attributes) -> u8| -> u8 {
+            if men.is_empty() {
+                return 50;
+            }
+            let sum: u32 = men.iter().map(|p| of(&p.attrs) as u32).sum();
+            (sum as f32 / men.len() as f32).round() as u8
+        };
+        let mix = |parts: &[(u8, f32)]| -> u8 {
+            let weight: f32 = parts.iter().map(|(_, w)| *w).sum();
+            let sum: f32 = parts.iter().map(|(v, w)| *v as f32 * w).sum();
+            (sum / weight).round().clamp(1.0, 99.0) as u8
+        };
+        let qb = top(Position::Qb, 1);
+        let wr = top(Position::Wr, 2);
+        let ol = top(Position::Ol, 2);
+        let rb = top(Position::Rb, 1);
+        let dl = top(Position::Dl, 2);
+        let lb = top(Position::Lb, 2);
+        let db = top(Position::Db, 2);
+        [
+            (
+                Aspect::DeepBall,
+                mix(&[
+                    (avg(&qb, |a| a.accuracy), 0.4),
+                    (avg(&qb, |a| a.power), 0.2),
+                    (avg(&wr, |a| a.catching), 0.2),
+                    (avg(&wr, |a| a.speed), 0.2),
+                ]),
+            ),
+            (
+                Aspect::QuickGame,
+                mix(&[
+                    (avg(&qb, |a| a.accuracy), 0.5),
+                    (avg(&wr, |a| a.catching), 0.25),
+                    (avg(&wr, |a| a.agility), 0.25),
+                ]),
+            ),
+            (
+                Aspect::RunGame,
+                mix(&[
+                    (avg(&ol, |a| a.run_block), 0.45),
+                    (avg(&rb, |a| a.break_tackle), 0.3),
+                    (avg(&rb, |a| a.strength), 0.25),
+                ]),
+            ),
+            (
+                Aspect::Perimeter,
+                mix(&[
+                    (avg(&wr, |a| a.speed), 0.5),
+                    (avg(&rb, |a| a.speed), 0.2),
+                    (avg(&wr, |a| a.agility), 0.3),
+                ]),
+            ),
+            (
+                Aspect::Pocket,
+                mix(&[
+                    (avg(&ol, |a| a.pass_block), 0.65),
+                    (avg(&ol, |a| a.strength), 0.35),
+                ]),
+            ),
+            (
+                Aspect::PassRush,
+                mix(&[
+                    (avg(&dl, |a| a.pass_rush), 0.65),
+                    (avg(&dl, |a| a.strength), 0.35),
+                ]),
+            ),
+            (
+                Aspect::Coverage,
+                mix(&[
+                    (avg(&db, |a| a.coverage), 0.5),
+                    (avg(&lb, |a| a.coverage), 0.2),
+                    (avg(&db, |a| a.awareness), 0.3),
+                ]),
+            ),
+            (
+                Aspect::BallHawks,
+                mix(&[
+                    (avg(&db, |a| a.catching), 0.4),
+                    (avg(&db, |a| a.awareness), 0.3),
+                    (avg(&lb, |a| a.catching), 0.3),
+                ]),
+            ),
+        ]
+    }
+
+    /// The one thing this club is best at.
+    pub fn strength(&self) -> Aspect {
+        self.aspect_scores()
+            .into_iter()
+            .max_by_key(|(_, score)| *score)
+            .map(|(aspect, _)| aspect)
+            .unwrap_or(Aspect::Pocket)
+    }
+
+    /// The one thing it cannot do.
+    pub fn weakness(&self) -> Aspect {
+        self.aspect_scores()
+            .into_iter()
+            .min_by_key(|(_, score)| *score)
+            .map(|(aspect, _)| aspect)
+            .unwrap_or(Aspect::Coverage)
+    }
+
+    /// What the club is genuinely good at, best first, at most two. Never empty:
+    /// the leader is a strength even in a lean year, or the card would have a club
+    /// with nothing to plan for.
+    pub fn strengths(&self) -> Vec<Aspect> {
+        let mut scores = self.aspect_scores();
+        scores.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
+        let mut out: Vec<Aspect> = scores
+            .iter()
+            .filter(|(_, score)| *score >= GOOD_AT)
+            .map(|(aspect, _)| *aspect)
+            .collect();
+        out.truncate(2);
+        if out.is_empty() {
+            out.push(scores[0].0);
+        }
+        out
+    }
+
+    /// What the club cannot do, worst first, at most two. Never empty, for the
+    /// same reason the other list is never empty.
+    pub fn weaknesses(&self) -> Vec<Aspect> {
+        let mut scores = self.aspect_scores();
+        scores.sort_by_key(|(_, score)| *score);
+        let mut out: Vec<Aspect> = scores
+            .iter()
+            .filter(|(_, score)| *score <= POOR_AT)
+            .map(|(aspect, _)| *aspect)
+            .collect();
+        out.truncate(2);
+        if out.is_empty() {
+            out.push(scores[0].0);
+        }
+        out
+    }
+
+    /// How far this club's identity leans on a play family: positive when it is
+    /// what the club does, negative when it is the thing it cannot do. The
+    /// coordinator adds it to the chance it calls that family.
+    pub fn taste(&self, family: PlayFamily) -> f32 {
+        let mut taste = 0.0;
+        for aspect in self.strengths() {
+            if aspect.family() == Some(family) {
+                taste += TASTE;
+            }
+        }
+        for aspect in self.weaknesses() {
+            if aspect.family() == Some(family) {
+                taste -= TASTE;
+            }
+        }
+        taste
     }
 
     fn depth_by_pos(&self, pos: Position) -> Vec<usize> {

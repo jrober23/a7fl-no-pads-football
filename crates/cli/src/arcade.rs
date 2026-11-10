@@ -22,7 +22,7 @@ use nopads_core::playbook::{
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
 use nopads_core::sim::{Hit, DefControl, Phase, PlayResult, PlaySim, QbControl, SnapSetup};
-use nopads_core::team::{league_teams, Team};
+use nopads_core::team::{league_teams, Aspect, Team};
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use nopads_render::broadcast::{HandCamera, Broadcast, CameraMode};
 use nopads_render::hud;
@@ -1423,14 +1423,8 @@ impl Arcade {
                 format!("OFFENSE   {}", r.offense),
                 format!("DEFENSE   {}", r.defense),
                 String::new(),
-                if r.offense >= r.defense + 6 {
-                    "THEY WILL THROW IT"
-                } else if r.defense >= r.offense + 6 {
-                    "THEY WILL COME AFTER YOU"
-                } else {
-                    "NO WEAKNESS TO PICK ON"
-                }
-                .to_string(),
+                format!("STRENGTH  {}", team.strength().label()),
+                format!("WEAKNESS  {}", team.weakness().label()),
             ]
         };
         let star_lines = |teams: &Arcade, t: usize| -> Vec<String> {
@@ -1445,7 +1439,7 @@ impl Arcade {
                 .collect();
             stars.sort_by(|a, b| b.0.cmp(&a.0));
             let mut lines = vec![team.display_upper(), String::new(), "PLAYERS TO WATCH".to_string()];
-            for (overall, name, pos) in stars.into_iter().take(4) {
+            for (overall, name, pos) in stars.into_iter().take(3) {
                 lines.push(format!("{name}"));
                 lines.push(format!("   {}   OVERALL {}", pos, overall));
             }
@@ -1477,6 +1471,10 @@ impl Arcade {
             self.game.teams[1].primary.lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3),
         ];
 
+        // The match has a song of its own, and the stadium's music has no business
+        // here: one is the introduction, the other is for the lull after a play.
+        self.audio.stadium(false);
+        self.audio.intro_song();
         // The cards sit over the field, not over a black page. What runs behind
         // them is a montage of the two clubs rather than one play on a loop: the
         // kickoff opens it, then each side gets a snap of its own -- a run, a ball
@@ -1641,6 +1639,8 @@ impl Arcade {
                     page += 1;
                     self.view.reset();
                 } else {
+                    // The kickoff is next: the song fades instead of stopping.
+                    self.audio.intro_fade();
                     return true;
                 }
             }
@@ -2087,6 +2087,7 @@ impl Arcade {
         let Some(setup) = self.throw_off_to_play(free_throw) else {
             return true;
         };
+        self.audio.stadium(false);
         // The player runs the offense, so a throw-off is his to throw exactly
         // when his team is the one throwing it: after he scores, he throws it
         // off; after the other lot score, he receives it.
@@ -2166,6 +2167,8 @@ impl Arcade {
     // ------------------------------------------------------------------
 
     fn run_snap(&mut self, play: Play) {
+        // The stadium's music is for the lull after a play, not for the play.
+        self.audio.stadium(false);
         // Playing a snap is what tells us whose team this is, the first time.
         if self.my_team.is_none() {
             self.my_team = Some(self.game.possession);
@@ -2237,6 +2240,7 @@ impl Arcade {
 
     /// Their ball: call a defense, then put the pad on one of the seven.
     fn run_defense_snap(&mut self, def: DefCall) {
+        self.audio.stadium(false);
         let play = self.cpu_offense();
         let header = self.header();
         let defbook: &[DefCall] = &self.defbook;
@@ -2294,6 +2298,9 @@ impl Arcade {
     /// play at the whistle, in the live loop, so the crowd is not left waiting
     /// through a replay for the card to be shown the score.
     fn report(&mut self, record: PlayRecord) {
+        // The play is over, so the stadium's music comes back: it is the sound of
+        // the wait for the next call, not of the play.
+        self.audio.stadium(true);
         match &record {
             PlayRecord::Scrimmage(r) if r.result.penalty.is_some() => {
                 self.penalty_card(r);
@@ -2327,6 +2334,17 @@ impl Arcade {
                 return call.clone();
             }
         }
+        // A side known for its rush brings it on third down rather than sitting
+        // back to see the throw.
+        if situation.down >= 3
+            && self.game.teams[self.game.defense()]
+                .strengths()
+                .contains(&Aspect::PassRush)
+        {
+            if let Some(call) = book.iter().find(|d| d.name == "WILL BLITZ") {
+                return call.clone();
+            }
+        }
         let mut rng = Rng::new(self.game.seed ^ 0xD37E_C0DE);
         let pick = rng.index(book.len());
         book[pick].clone()
@@ -2342,7 +2360,11 @@ impl Arcade {
         } else if situation.yards_to_goal <= 3.0 || situation.to_go <= 2.0 {
             false
         } else {
-            rng.chance(0.55)
+            // The club's identity moves what it likes to call even against a
+            // player: a side known for the deep ball throws it more.
+            let air = self.game.teams[self.game.possession]
+                .taste(nopads_core::playbook::PlayFamily::DropbackPass);
+            rng.chance((0.55 + air).clamp(0.25, 0.85))
         };
         // Their book, not the player's: the other club calls its own game.
         let book =

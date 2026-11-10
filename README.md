@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.137-windows-x86_64.zip` from the
+Grab `7on7-v0.25.138-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -52,7 +52,12 @@ sounds/crowd.wav   the room under the game: looped, and ducked while the ball is
 sounds/cheer.wav   the crowd's answer to a score: played once, from the start
 sounds/rise.wav    a big play's answer, if you have one: played once, as it is;
                    without it the first second of cheer.wav is used, turned down
-sounds/music.wav   optional music: looped under everything, on the MUSIC level
+sounds/menu/       the front end's playlist: every WAV in the folder, in a running
+                   order the game picks, looped from the splash screen on
+sounds/menu.wav    the same playlist when you only have one track
+sounds/intro.wav   the match's own song: plays under the matchup card, and fades
+                   out when the kickoff arrives
+sounds/music.wav   stadium music: looped, and played only after a play
 ```
 
 The folder is looked for beside the executable first and then in the directory
@@ -71,10 +76,18 @@ ffmpeg -i my-crowd.mp3 -ac 1 -ar 48000 -c:a pcm_s16le sounds/crowd.wav
 ```
 
 `crowd.wav` wants a seamless loop, because the game joins the end straight to the
-start without a crossfade of its own. `crowd.wav` and `music.wav` are both set by
-the settings screen's MUSIC row, and `cheer.wav` and `rise.wav` by EFFECTS — and
-both rows are heard while they are set, so the preview in the settings screen is
-your file.
+start without a crossfade of its own. Everything musical — `menu/`, `menu.wav`,
+`intro.wav` and `music.wav` — is on the settings screen's MUSIC row, and
+`cheer.wav` and `rise.wav` are on EFFECTS; both rows are heard while they are set,
+so the preview in the settings screen is your file.
+
+The three windows are different on purpose. The front end runs the playlist from
+the moment the splash screen comes up, the way a broadcast show does, and it stops
+when a game is picked. `intro.wav` is the match's own song: it starts when the
+matchup card comes up and fades out over about a second and a half as the kickoff
+arrives. `music.wav` is stadium music: silent before the snap and during the play,
+coming up after the whistle through the card and the call sheet until the next
+snap.
 
 `cheer.wav` answers points, and it also answers a big play — a gain of twenty
 yards or more, a turnover, or a stop on fourth down. Put a `rise.wav` beside it

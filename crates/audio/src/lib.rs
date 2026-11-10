@@ -13,7 +13,7 @@
 //! sounds are the fallback, not the requirement.
 
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -57,6 +57,13 @@ const SOUND_DIR: &str = "sounds";
 /// Where the music track starts before a settings file says otherwise: the same
 /// 80% the volume rows ship with.
 const MUSIC_DEFAULT: f32 = 0.8;
+/// The folder inside `sounds` the front end's playlist is read from.
+const PLAYLIST_DIR: &str = "menu";
+/// How long the match's intro song takes to fade once the kickoff arrives.
+const INTRO_FADE_SECONDS: f32 = 1.4;
+/// One sample of that fade. The level walks a straight line down rather than
+/// chasing a target it never quite reaches, so the song truly gets to silence.
+const INTRO_STEP: f32 = 1.0 / (INTRO_FADE_SECONDS * SAMPLE_RATE as f32);
 
 /// The game's sound, or the absence of it.
 pub struct Audio {
@@ -73,9 +80,26 @@ pub struct Audio {
     /// never ends, so it plays until this is dropped. It is also the music bus:
     /// the bed today, a stadium loop when there is one.
     bed: Option<Player>,
-    /// The music, when the player brought a `music.wav`: looped under everything
-    /// and on the same level as the background bus.
+    /// The stadium's music, when the player brought a `music.wav`: looped, and
+    /// audible only in the lull after a play.
     music: Option<Player>,
+    /// The front end's playlist: every WAV in `sounds/menu`, joined into one
+    /// running order and looped. The menu starts it and dropping this stops it,
+    /// because a match has an intro song of its own.
+    menu: Option<Player>,
+    /// The match's intro song: `sounds/intro.wav`, played from the top when the
+    /// matchup comes up.
+    intro: Option<Player>,
+    /// The intro song's samples, kept so a second match can play it again.
+    intro_clip: Option<Arc<Vec<f32>>>,
+    /// How loud the intro is right now. The kickoff turns this down and the source
+    /// walks there, which is a fade rather than a cut.
+    intro_level: Option<Arc<AtomicU32>>,
+    /// The music row's level, held here so the menu's playlist and the stadium's
+    /// after-play window both follow the same number.
+    music_level: Option<Arc<AtomicU32>>,
+    /// Whether the stadium's music is in its after-play window.
+    stadium: Option<Arc<AtomicBool>>,
     /// The crowd's answer, when the player brought a `cheer.wav`, already in the
     /// shape everything here plays: mono at [`SAMPLE_RATE`].
     cheer: Option<Arc<Vec<f32>>>,
@@ -98,6 +122,9 @@ impl Audio {
         let cheer = load_clip("cheer.wav").map(Arc::new);
         let rise_clip = load_clip("rise.wav").map(Arc::new);
         let music = load_clip("music.wav");
+        // The front end's playlist and the match's own song.
+        let playlist = load_playlist();
+        let intro_clip = load_clip("intro.wav").map(Arc::new);
         match DeviceSinkBuilder::open_default_sink() {
             Ok(mut sink) => {
                 // rodio prints a line to stderr when the sink is dropped. This
@@ -111,17 +138,35 @@ impl Audio {
                     Some(samples) => CrowdBed::from_samples(samples, Arc::clone(&bed_level)),
                     None => CrowdBed::new(Arc::clone(&bed_level)),
                 });
+                // The stadium's music is queued but held silent: it comes up
+                // after a play, not before it.
                 let track = Player::connect_new(sink.mixer());
                 if let Some(samples) = music {
                     track.append(samples_buffer(samples).repeat_infinite());
-                    track.set_volume(MUSIC_DEFAULT);
+                    track.set_volume(0.0);
                 }
+                // The playlist is queued and paused: the menu starts it, so a
+                // `sim` or `film` run never hears the front end's music.
+                let menu = Player::connect_new(sink.mixer());
+                if let Some(samples) = playlist {
+                    menu.append(samples_buffer(samples).repeat_infinite());
+                    menu.set_volume(0.0);
+                    menu.pause();
+                }
+                // The intro song is queued per match, by `intro_song`.
+                let intro = Player::connect_new(sink.mixer());
                 Audio {
                     _sink: Some(sink),
                     crowd: Some(crowd),
                     bed_level: Some(bed_level),
                     bed: Some(bed),
                     music: Some(track),
+                    menu: Some(menu),
+                    intro: Some(intro),
+                    intro_clip,
+                    intro_level: Some(Arc::new(AtomicU32::new(MUSIC_DEFAULT.to_bits()))),
+                    music_level: Some(Arc::new(AtomicU32::new(MUSIC_DEFAULT.to_bits()))),
+                    stadium: Some(Arc::new(AtomicBool::new(false))),
                     cheer,
                     rise_clip,
                 }
@@ -140,6 +185,12 @@ impl Audio {
             bed_level: None,
             bed: None,
             music: None,
+            menu: None,
+            intro: None,
+            intro_clip: None,
+            intro_level: None,
+            music_level: None,
+            stadium: None,
             cheer: None,
             rise_clip: None,
         }
@@ -168,15 +219,87 @@ impl Audio {
         }
     }
 
-    /// The background bus: the crowd bed today, and the music that will share
-    /// the same player. This is the settings screen's MUSIC row.
+    /// The music row, on every bus it moves: the menu's playlist, the match's intro
+    /// song and the stadium's after-play track. The crowd bed shares it, as it
+    /// always has.
     pub fn set_music(&self, level: f32) {
         let level = level.clamp(0.0, 1.0);
+        if let Some(row) = &self.music_level {
+            row.store(level.to_bits(), Ordering::Relaxed);
+        }
         if let Some(bed) = &self.bed {
             bed.set_volume(level);
         }
+        if let Some(menu) = &self.menu {
+            menu.set_volume(level);
+        }
+        self.apply_stadium();
+    }
+
+    fn music_level_now(&self) -> f32 {
+        self.music_level
+            .as_ref()
+            .map(|level| f32::from_bits(level.load(Ordering::Relaxed)))
+            .unwrap_or(0.0)
+    }
+
+    /// Start the front end's playlist. It runs from the splash screen until a game
+    /// is picked, and the music row moves it.
+    pub fn menu_music(&self) {
+        if let Some(menu) = &self.menu {
+            menu.set_volume(self.music_level_now());
+            menu.play();
+        }
+    }
+
+    /// The stadium's music, on or off: it plays after a play, not before the snap
+    /// and not under the introduction, the way a stadium's DJ is on the other side
+    /// of the whistle.
+    pub fn stadium(&self, on: bool) {
+        if let Some(flag) = &self.stadium {
+            flag.store(on, Ordering::Relaxed);
+        }
+        self.apply_stadium();
+    }
+
+    fn apply_stadium(&self) {
+        let level = self.music_level_now();
+        let open = self
+            .stadium
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false);
         if let Some(music) = &self.music {
-            music.set_volume(level);
+            music.set_volume(if open { level } else { 0.0 });
+        }
+    }
+
+    /// Hold the stadium's music off for as long as the guard lives: the ball is
+    /// live, which is the one time the music is not on.
+    pub fn during_play(&self) -> Stadium<'_> {
+        self.stadium(false);
+        Stadium(self)
+    }
+
+    /// The match's own song, from the top. It runs under the introduction and is
+    /// faded out when the kickoff arrives.
+    pub fn intro_song(&self) {
+        let (Some(intro), Some(clip), Some(level)) =
+            (&self.intro, &self.intro_clip, &self.intro_level)
+        else {
+            return;
+        };
+        level.store(MUSIC_DEFAULT.to_bits(), Ordering::Relaxed);
+        intro.clear();
+        intro.append(IntroClip::new(clip.as_ref().clone(), Arc::clone(level)));
+        intro.play();
+    }
+
+    /// Fade the intro song out rather than cutting it: the kickoff is coming, and
+    /// a record stopped mid-bar sounds like a mistake.
+    pub fn intro_fade(&self) {
+        if let Some(level) = &self.intro_level {
+            level.store(0, Ordering::Relaxed);
         }
     }
 
@@ -270,6 +393,72 @@ pub struct Duck<'a>(&'a Audio);
 impl Drop for Duck<'_> {
     fn drop(&mut self) {
         self.0.bed_up();
+    }
+}
+
+/// See [`Audio::during_play`]: dropping this brings the stadium's music back.
+pub struct Stadium<'a>(&'a Audio);
+
+impl Drop for Stadium<'_> {
+    fn drop(&mut self) {
+        self.0.stadium(true);
+    }
+}
+
+/// The match's intro song as a `Source`: it plays once, and it reads its level
+/// from an atomic every sample, so the kickoff can turn it down without holding
+/// the player.
+struct IntroClip {
+    samples: Vec<f32>,
+    at: usize,
+    target: Arc<AtomicU32>,
+    level: f32,
+}
+
+impl IntroClip {
+    fn new(samples: Vec<f32>, target: Arc<AtomicU32>) -> IntroClip {
+        let level = f32::from_bits(target.load(Ordering::Relaxed));
+        IntroClip {
+            samples,
+            at: 0,
+            target,
+            level,
+        }
+    }
+}
+
+impl Iterator for IntroClip {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        let sample = *self.samples.get(self.at)?;
+        let target = f32::from_bits(self.target.load(Ordering::Relaxed));
+        // A walk to the target, not a chase: a fade that only approaches silence
+        // never arrives, and this one has to end.
+        let step = (target - self.level).clamp(-INTRO_STEP, INTRO_STEP);
+        self.level = (self.level + step).clamp(0.0, 1.0);
+        self.at += 1;
+        Some(sample * self.level)
+    }
+}
+
+impl Source for IntroClip {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> ChannelCount {
+        ChannelCount::new(CHANNELS).expect("a mono channel count is not zero")
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        SampleRate::new(SAMPLE_RATE).expect("a sample rate is not zero")
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        Some(Duration::from_secs_f32(
+            self.samples.len() as f32 / SAMPLE_RATE as f32,
+        ))
     }
 }
 
@@ -424,7 +613,7 @@ fn next_noise(state: &mut u32) -> f32 {
 /// `sounds` folder beside the executable, so the unzipped release works wherever
 /// it is put, and then one in the directory the game was started from, which is
 /// where `cargo run` finds it.
-fn sound_path(name: &str) -> Option<PathBuf> {
+fn sound_roots() -> Vec<PathBuf> {
     let mut roots: Vec<PathBuf> = Vec::new();
     if let Some(dir) = std::env::current_exe()
         .ok()
@@ -436,9 +625,83 @@ fn sound_path(name: &str) -> Option<PathBuf> {
         roots.push(dir);
     }
     roots
+}
+
+fn sound_path(name: &str) -> Option<PathBuf> {
+    sound_roots()
         .into_iter()
         .map(|root| root.join(SOUND_DIR).join(name))
         .find(|path| path.is_file())
+}
+
+/// The front end's playlist: every WAV in `sounds/menu`, joined into one running
+/// order the game picks, so the menu has more than one track and does not open on
+/// the same one every evening. A single `sounds/menu.wav` is a playlist of one, so
+/// a player with one track does not have to make a folder for it.
+fn load_playlist() -> Option<Vec<f32>> {
+    let clips = playlist_clips();
+    if clips.is_empty() {
+        return None;
+    }
+    let order = rotate(clips, playlist_seed());
+    let total: usize = order.iter().map(|clip| clip.len()).sum();
+    let mut out = Vec::with_capacity(total);
+    for clip in order {
+        out.extend(clip);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// Every track of the playlist, in the order the files were found: the first
+/// `sounds/menu` folder either root has.
+fn playlist_clips() -> Vec<Vec<f32>> {
+    for root in sound_roots() {
+        let dir = root.join(SOUND_DIR).join(PLAYLIST_DIR);
+        if !dir.is_dir() {
+            continue;
+        }
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let mut files: Vec<PathBuf> = entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension()
+                    .map(|ext| ext.eq_ignore_ascii_case("wav"))
+                    .unwrap_or(false)
+            })
+            .collect();
+        files.sort();
+        let clips: Vec<Vec<f32>> = files.iter().filter_map(|path| load_clip_at(path)).collect();
+        if !clips.is_empty() {
+            return clips;
+        }
+    }
+    load_clip("menu.wav").into_iter().collect()
+}
+
+/// A running order for the playlist: Fisher-Yates from a seed, so a second evening
+/// of play does not open on the same track. The tests seed it, so the order can be
+/// checked.
+fn rotate(clips: Vec<Vec<f32>>, mut seed: u32) -> Vec<Vec<f32>> {
+    let mut order = clips;
+    for i in (1..order.len()).rev() {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        let j = (seed as usize) % (i + 1);
+        order.swap(i, j);
+    }
+    order
+}
+
+fn playlist_seed() -> u32 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.subsec_nanos())
+        .unwrap_or(0xA7F1_2026)
+        | 1
 }
 
 /// A player's sound by name, or nothing when they did not bring one.
@@ -540,6 +803,11 @@ mod tests {
         audio.set_bed(4.0);
         audio.set_music(0.5);
         audio.set_effects(0.5);
+        audio.menu_music();
+        audio.intro_song();
+        audio.intro_fade();
+        audio.stadium(true);
+        audio.during_play();
     }
 
     #[test]
@@ -595,6 +863,12 @@ mod tests {
             bed_level: Some(Arc::clone(&level)),
             bed: None,
             music: None,
+            menu: None,
+            intro: None,
+            intro_clip: None,
+            intro_level: None,
+            music_level: None,
+            stadium: None,
             cheer: None,
             rise_clip: None,
         };
@@ -781,6 +1055,12 @@ mod tests {
             bed_level: None,
             bed: None,
             music: None,
+            menu: None,
+            intro: None,
+            intro_clip: None,
+            intro_level: None,
+            music_level: None,
+            stadium: None,
             cheer: None,
             rise_clip: Some(Arc::new(vec![0.25; 480])),
         };
@@ -805,6 +1085,50 @@ mod tests {
             (SAMPLE_RATE as f32 * RISE_SECONDS) as usize,
             "the fallback is not the cut a big play asks for"
         );
+    }
+
+    #[test]
+    fn a_playlist_runs_every_track_once() {
+        // Four tracks, told apart by their first sample.
+        let clips: Vec<Vec<f32>> = (0..4).map(|i| vec![i as f32; 8]).collect();
+        for seed in [1u32, 7, 0xDEAD_BEEF, 42] {
+            let order = rotate(clips.clone(), seed);
+            assert_eq!(order.len(), 4, "seed {seed} lost a track");
+            let mut seen: Vec<f32> = order.iter().map(|clip| clip[0]).collect();
+            seen.sort_by(|a, b| a.partial_cmp(b).expect("a finite sample"));
+            assert_eq!(
+                seen,
+                vec![0.0, 1.0, 2.0, 3.0],
+                "seed {seed} dropped or repeated a track"
+            );
+        }
+    }
+
+    #[test]
+    fn the_intro_song_fades_out_when_the_kickoff_comes() {
+        let level = Arc::new(AtomicU32::new(MUSIC_DEFAULT.to_bits()));
+        let mut song = IntroClip::new(vec![1.0; SAMPLE_RATE as usize * 4], Arc::clone(&level));
+        // It opens at the music row's level, not at the file's own.
+        let opening = (0..480)
+            .map(|_| song.next().expect("a sample"))
+            .fold(0.0f32, f32::max);
+        assert!(
+            (opening - MUSIC_DEFAULT).abs() < 0.01,
+            "the song opened at {opening}"
+        );
+        // The kickoff arrives: the song walks down to silence instead of stopping
+        // on a step, which is what a cut sounds like.
+        level.store(0, Ordering::Relaxed);
+        let fade: Vec<f32> = (0..(SAMPLE_RATE as usize * 13 / 10))
+            .map(|_| song.next().expect("a sample"))
+            .collect();
+        let middle = fade[fade.len() / 2].abs();
+        let last = fade[fade.len() - 1].abs();
+        assert!(
+            middle > 0.0 && middle < MUSIC_DEFAULT * 0.6,
+            "the fade is not moving: {middle}"
+        );
+        assert!(last < 0.01, "the song never faded out: {last}");
     }
 
     /// Run by hand on a machine that has a sound card:

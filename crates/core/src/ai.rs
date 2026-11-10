@@ -178,14 +178,24 @@ pub fn choose_offense(g: &GameState, seed: u64) -> Play {
     // A normal or hard coordinator is chasing the end zone, not just the sticks:
     // it throws on early downs rather than grinding the ball for four yards.
     let push = g.difficulty.aggression();
-    if push > 0.0 && s.down <= 2 && s.to_go >= 5.0 && rng.chance(0.30 + 0.30 * push) {
+    // A club known for throwing it down the field takes its shots; one that cannot
+    // throws the short stuff instead. This is the identity on the field rather
+    // than on a card.
+    let air = g.teams[g.offense()].taste(PlayFamily::DropbackPass);
+    if push > 0.0
+        && s.down <= 2
+        && s.to_go >= 5.0
+        && rng.chance((0.30 + 0.30 * push + air).clamp(0.05, 0.9))
+    {
         return pick_family(&mut rng, book, &[PlayFamily::DropbackPass, PlayFamily::PlayAction, PlayFamily::QuickPass],
         )
         .clone();
     }
 
-    // Normal down and distance: establish the run on early downs.
-    if s.down <= 2 && s.to_go <= 6.0 && rng.chance(0.55) {
+    // Normal down and distance: establish the run on early downs, more so for a
+    // club whose identity is the run and less for one that cannot block it.
+    let run = g.teams[g.offense()].taste(PlayFamily::RunInside);
+    if s.down <= 2 && s.to_go <= 6.0 && rng.chance((0.55 + run).clamp(0.1, 0.85)) {
         return pick_family(&mut rng, book, &[PlayFamily::RunInside, PlayFamily::RunOutside, PlayFamily::QbRun],
         )
         .clone();
@@ -256,8 +266,16 @@ pub fn choose_defense(g: &GameState, seed: u64) -> DefCall {
             return by_name("COVER 1 MAN");
         }
     }
-    // Third down: mix.
+    // Third down: mix. A side that lives on its rush hunts rather than waiting to
+    // see the throw.
     if s.down == 3 {
+        if g.teams[g.defense()]
+            .strengths()
+            .contains(&crate::team::Aspect::PassRush)
+            && rng.chance(0.45)
+        {
+            return by_name("WILL BLITZ");
+        }
         return if rng.chance(0.45) {
             by_name("COVER 2 ZONE")
         } else if rng.chance(0.5) {

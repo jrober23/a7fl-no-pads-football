@@ -207,6 +207,12 @@ pub fn run_from(
     resume: Option<PlayTest>,
 ) -> Option<Front> {
     let mut pad = pad;
+    // The front end's playlist opens with the splash screen and runs until a game
+    // is picked: the device is held here, so leaving the menu stops the music and
+    // the match can have a song of its own.
+    let audio = nopads_audio::Audio::open();
+    audio.set_music(settings.music_level());
+    audio.menu_music();
     if splash {
         splash_screen(view, &mut pad)?;
     }
@@ -277,7 +283,7 @@ pub fn run_from(
                 drawn?;
             }
             Start::Settings => {
-                settings_screen(view, &mut pad, settings)?;
+                settings_screen(view, &mut pad, settings, &audio)?;
             }
             Start::Quit => return None,
         }
@@ -1076,6 +1082,7 @@ fn settings_screen(
     view: &mut View,
     pad: &mut Option<&mut Pad>,
     settings: &mut Settings,
+    audio: &nopads_audio::Audio,
 ) -> Option<()> {
     const ROWS: usize = 8;
     /// Row numbers, because the two volume rows are also the two the screen
@@ -1087,13 +1094,12 @@ fn settings_screen(
     let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
-    // The volume rows are heard while they are set, which means this screen
-    // needs the device a game would open. Without a sound card every call below
-    // is still safe; it just makes no noise.
-    let audio = nopads_audio::Audio::open();
+    // The volume rows are heard while they are set, on the front end's own device:
+    // the same one the playlist is playing on, so a level is set against the music
+    // it is moving. Without a sound card every call below is still safe; it just
+    // makes no noise.
     audio.set_effects(settings.effects_level());
-    // The room starts down: the menu itself is quiet, and only the music row
-    // brings the bed up.
+    // The room starts down: the menu is music, not crowd.
     audio.set_bed(0.0);
     // The swell that previews the effects row is over a second long, so it is
     // allowed to play out before the next one: a stick held on the row would
@@ -1114,17 +1120,16 @@ fn settings_screen(
             }
         }
 
-        // The background belongs to the music row: it comes up while that row
-        // holds the highlight, so the row is set against the sound it controls,
-        // and it goes back down when the highlight moves on. A player who
-        // brought a music track hears it here too, on the same level.
+        // The crowd answers the music row and nothing else: it comes up while that
+        // row holds the highlight. The music itself is the menu's now -- it plays
+        // from the splash screen on -- so walking to another row must not cut it
+        // off, and the row only moves its level.
         let heard = pick == MUSIC;
         audio.set_bed(if heard {
             nopads_audio::BED_BETWEEN
         } else {
             0.0
         });
-        audio.set_music(if heard { settings.music_level() } else { 0.0 });
 
         // Left and right walk a value; A cycles it forward, so the row can be
         // changed without a stick.
