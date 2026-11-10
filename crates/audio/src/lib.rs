@@ -45,9 +45,9 @@ const BED_SECONDS: f32 = 8.0;
 const BED_CROSSFADE: f32 = 0.75;
 /// The bed between plays: the room waiting on the call.
 pub const BED_BETWEEN: f32 = 0.9;
-/// The bed during the snap: still there, so the picture is not silent, but out
-/// of the way of the play.
-pub const BED_LIVE: f32 = 0.22;
+/// The bed during the snap: up under the play, so the room is heard while the
+/// ball is live, but still behind the hits.
+pub const BED_LIVE: f32 = 0.32;
 /// How fast the bed moves to a new level, per sample: about a seventieth of a
 /// second to settle, which is a duck rather than a step. A step in a noise bed
 /// is a click.
@@ -124,6 +124,9 @@ pub struct Audio {
     /// The player the cues play on. One at a time: every cue clears it, so a
     /// sound is never heard a second after the moment it belongs to.
     sfx: Option<Player>,
+    /// Cues played this session. The clock is the seed and this is what makes the
+    /// seed move: a run of hits must not be one hit played five times.
+    cues_played: AtomicU32,
 }
 
 impl Audio {
@@ -201,6 +204,7 @@ impl Audio {
                     catch_clip,
                     tackle_clip,
                     sfx: Some(sfx),
+                    cues_played: AtomicU32::new(0),
                 }
             }
             Err(_) => Audio::silent(),
@@ -228,6 +232,7 @@ impl Audio {
             catch_clip: None,
             tackle_clip: None,
             sfx: None,
+            cues_played: AtomicU32::new(0),
             rise_clip: None,
         }
     }
@@ -354,23 +359,27 @@ impl Audio {
 
     /// The ball leaving the passer's hand.
     pub fn throw_sound(&self) {
-        self.effect(&self.throw_clip, throw_whoosh);
+        self.effect(&self.throw_clip, throw_whoosh, false);
     }
 
     /// A ball coming down in somebody's hands.
+    ///
+    /// Two catches in a row are two different catches: the pitch and the level
+    /// move a little from one to the next.
     pub fn catch_sound(&self) {
-        self.effect(&self.catch_clip, catch_slap);
+        self.effect(&self.catch_clip, catch_slap, true);
     }
 
-    /// The hit landing.
+    /// The hit landing, moved the same way a catch is, so a run of tackles is a
+    /// run of hits rather than one hit on a loop.
     pub fn tackle_sound(&self) {
-        self.effect(&self.tackle_clip, tackle_thud);
+        self.effect(&self.tackle_clip, tackle_thud, true);
     }
 
     /// One cue on the effects bus: the player's own file when they brought one,
     /// the generated version when they did not, and silence when there is no
     /// device at all -- which is every headless run.
-    fn effect(&self, clip: &Option<Arc<Vec<f32>>>, generated: fn() -> Vec<f32>) {
+    fn effect(&self, clip: &Option<Arc<Vec<f32>>>, generated: fn() -> Vec<f32>, vary: bool) {
         let Some(sfx) = &self.sfx else {
             return;
         };
@@ -378,6 +387,13 @@ impl Audio {
         let samples = match clip {
             Some(samples) => samples.as_ref().clone(),
             None => generated(),
+        };
+        let samples = if vary {
+            let tick = self.cues_played.fetch_add(1, Ordering::Relaxed);
+            let (speed, gain) = cue_variation(tick);
+            varied(&samples, speed, gain)
+        } else {
+            samples
         };
         sfx.append(samples_buffer(samples));
     }
@@ -744,6 +760,48 @@ fn tackle_thud() -> Vec<f32> {
     samples
 }
 
+/// How a repeated cue is moved from the last one: a little faster or slower, and
+/// never louder than the sound itself, so a run of hits cannot build up.
+fn cue_variation(tick: u32) -> (f32, f32) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|since| since.subsec_nanos())
+        .unwrap_or(0xA7F1_2026);
+    let mut seed = (nanos ^ tick.wrapping_mul(0x9E37_79B9)) | 1;
+    let speed = 0.92 + 0.16 * next_unit(&mut seed);
+    let gain = 0.82 + 0.18 * next_unit(&mut seed);
+    (speed, gain)
+}
+
+/// A clip as it is heard this time: resampled by `speed` -- above one is shorter
+/// and higher -- and scaled by `gain`. Linear interpolation, the same as the
+/// reader uses for a file that arrived at another rate.
+fn varied(samples: &[f32], speed: f32, gain: f32) -> Vec<f32> {
+    let speed = speed.clamp(0.5, 2.0);
+    let last = samples.len().saturating_sub(1) as f32;
+    let out_len = ((samples.len() as f32) / speed).round().max(1.0) as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let at = (i as f32 * speed).min(last);
+        let low = at.floor() as usize;
+        let frac = at - at.floor();
+        let a = samples[low.min(samples.len() - 1)];
+        let b = samples[(low + 1).min(samples.len() - 1)];
+        out.push((a + (b - a) * frac) * gain);
+    }
+    out
+}
+
+/// A number in `0..=1` from the same xorshift the noise comes from.
+fn next_unit(state: &mut u32) -> f32 {
+    let mut x = *state;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    *state = x;
+    x as f32 / u32::MAX as f32
+}
+
 /// White noise in `-1..=1` from a xorshift, so none of this needs a dependency.
 fn next_noise(state: &mut u32) -> f32 {
     let mut x = *state;
@@ -1039,6 +1097,7 @@ mod tests {
             catch_clip: None,
             tackle_clip: None,
             sfx: None,
+            cues_played: AtomicU32::new(0),
             rise_clip: None,
         };
         {
@@ -1235,6 +1294,7 @@ mod tests {
             catch_clip: None,
             tackle_clip: None,
             sfx: None,
+            cues_played: AtomicU32::new(0),
             rise_clip: Some(Arc::new(vec![0.25; 480])),
         };
         let rise: Vec<f32> = own().rise().collect();
@@ -1334,6 +1394,41 @@ mod tests {
                 "the {name} has a sample that is not a number"
             );
         }
+    }
+
+    #[test]
+    fn a_repeated_hit_is_not_the_same_hit() {
+        let hits: Vec<(f32, f32)> = (0..8).map(cue_variation).collect();
+        for (speed, gain) in &hits {
+            assert!((0.9..=1.1).contains(speed), "a hit at {speed} speed");
+            assert!((0.8..=1.0).contains(gain), "a hit at {gain} level");
+        }
+        // Eight hits, eight different pitches: a run of tackles must not be one
+        // sample heard eight times.
+        let pitches: std::collections::BTreeSet<u32> = hits
+            .iter()
+            .map(|(speed, _)| (speed * 1000.0) as u32)
+            .collect();
+        assert!(
+            pitches.len() > 5,
+            "eight hits came out in only {} pitches",
+            pitches.len()
+        );
+        // And the move is a real resample: a faster hit is shorter, and the
+        // level it was given is the level it plays at.
+        let same = varied(&[1.0; 480], 1.0, 1.0);
+        let faster = varied(&[1.0; 480], 1.06, 0.9);
+        assert_eq!(same.len(), 480, "the unchanged hit changed length");
+        assert!(
+            faster.len() < same.len(),
+            "a faster hit was not shorter: {} against {}",
+            faster.len(),
+            same.len()
+        );
+        assert!(
+            faster.iter().all(|s| (s - 0.9).abs() < 0.01),
+            "the level was not applied to the resampled hit"
+        );
     }
 
     /// Run by hand on a machine that has a sound card:
