@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.141-windows-x86_64.zip` from the
+Grab `7on7-v0.25.142-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -84,8 +84,9 @@ ffmpeg -i my-crowd.mp3 -ac 1 -ar 48000 -c:a pcm_s16le sounds/crowd.wav
 `crowd.wav` wants a seamless loop, because the game joins the end straight to the
 start without a crossfade of its own. Everything musical — `menu/`, `menu.wav`,
 `intro.wav`, `stadium/` and `music.wav` — is on the settings screen's MUSIC row,
-and `cheer.wav`, `rise.wav` and the whole `sfx/` folder are on EFFECTS; both rows
-are heard while they are set, so the preview in the settings screen is your file.
+`crowd.wav`, `cheer.wav` and `rise.wav` are on CROWD, and the whole `sfx/` folder
+is on EFFECTS. Every row is heard while it is set, so the preview in the settings
+screen is your file.
 
 The three windows are different on purpose. The front end runs the playlist from
 the moment the splash screen comes up, the way a broadcast show does, and it stops
