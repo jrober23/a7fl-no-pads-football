@@ -1084,13 +1084,15 @@ fn settings_screen(
     settings: &mut Settings,
     audio: &nopads_audio::Audio,
 ) -> Option<()> {
-    const ROWS: usize = 8;
-    /// Row numbers, because the two volume rows are also the two the screen
-    /// makes a sound for.
+    const ROWS: usize = 9;
+    /// Row numbers, because the three volume rows are the ones the screen makes
+    /// a sound for.
     const MUSIC: usize = 5;
     const EFFECTS: usize = 6;
+    const CROWD: usize = 7;
     let mut pick = 0usize;
     let mut nav = Repeat::default();
+    let mut across = Repeat::default();
     let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
@@ -1099,6 +1101,7 @@ fn settings_screen(
     // it is moving. Without a sound card every call below is still safe; it just
     // makes no noise.
     audio.set_effects(settings.effects_level());
+    audio.set_crowd(settings.crowd_level());
     // The room starts down: the menu is music, not crowd.
     audio.set_bed(0.0);
     // The swell that previews the effects row is over a second long, so it is
@@ -1120,21 +1123,20 @@ fn settings_screen(
             }
         }
 
-        // The crowd answers the music row and nothing else: it comes up while that
-        // row holds the highlight. The music itself is the menu's now -- it plays
-        // from the splash screen on -- so walking to another row must not cut it
-        // off, and the row only moves its level.
-        let heard = pick == MUSIC;
-        audio.set_bed(if heard {
-            nopads_audio::BED_BETWEEN
-        } else {
-            0.0
-        });
+        // The room answers the crowd row and nothing else: it comes up while that
+        // row holds the highlight, at the level it plays at on the field. The
+        // music itself is the menu's now -- it plays from the splash screen on --
+        // so walking to another row must not cut it off.
+        let heard = pick == CROWD;
+        audio.set_bed(if heard { nopads_audio::BED_LIVE } else { 0.0 });
 
-        // Left and right walk a value; A cycles it forward, so the row can be
-        // changed without a stick.
-        let left = input.stick.x < -0.55 || input.pressed.x;
-        let right = input.stick.x > 0.55;
+        // Left and right walk a value, one press at a time. The value used to move
+        // on every frame the key was down, so a single tap ran through two or
+        // three choices before it was let go; this is the same repeat the rows
+        // use. A cycles a value forward, so a row can be changed without a stick.
+        let across = across.step(input.stick.x, dt);
+        let left = across < 0 || (across == 0 && input.pressed.x);
+        let right = across > 0;
         let forward = input.pressed.a;
         let mut changed = false;
         if left || right || forward {
@@ -1184,8 +1186,21 @@ fn settings_screen(
                     settings.effects_volume =
                         ((settings.effects_volume as isize + dir).rem_euclid(n)) as usize;
                     audio.set_effects(settings.effects_level());
-                    // The crowd answering, at the level the row has reached: the
-                    // row is a number until it is heard.
+                    // A hit at the level the row has reached: the row is a number
+                    // until it is heard.
+                    if cue_wait == 0.0 {
+                        audio.tackle_sound();
+                        cue_wait = 0.45;
+                    }
+                    changed = true;
+                }
+                7 => {
+                    let n = (nopads_platform::settings::VOLUME_STEPS + 1) as isize;
+                    settings.crowd_volume =
+                        ((settings.crowd_volume as isize + dir).rem_euclid(n)) as usize;
+                    audio.set_crowd(settings.crowd_level());
+                    // The room is already up on this row, so the swell is heard
+                    // over the field it belongs to rather than over the menu.
                     if cue_wait == 0.0 {
                         audio.crowd_cue();
                         cue_wait = 0.45;
@@ -1219,6 +1234,7 @@ fn settings_screen(
             ("DISPLAY", settings.display_label().to_string()),
             ("MUSIC", settings.music_label()),
             ("EFFECTS", settings.effects_label()),
+            ("CROWD", settings.crowd_label()),
             ("BACK", String::new()),
         ];
         let mut frame = Frame::new(UI_W, UI_H);
@@ -1280,6 +1296,7 @@ fn game_setup(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settin
     const DIFFICULTY: [&str; 3] = ["EASY", "NORMAL", "HARD"];
     let mut pick = 0usize;
     let mut nav = Repeat::default();
+    let mut across = Repeat::default();
     let mut slide = ui::Slide::new(0);
     let mut last = Instant::now();
     view.reset();
@@ -1296,8 +1313,11 @@ fn game_setup(view: &mut View, pad: &mut Option<&mut Pad>, settings: &mut Settin
                 pick = wrap(pick, ROWS, -d);
             }
         }
-        let left = input.stick.x < -0.55 || input.pressed.x;
-        let right = input.stick.x > 0.55;
+        // One press, one step. A held arrow key used to run past two quarter
+        // lengths or two difficulties before it was let go.
+        let across = across.step(input.stick.x, dt);
+        let left = across < 0 || (across == 0 && input.pressed.x);
+        let right = across > 0;
         if left || right || input.pressed.a {
             let dir = if left { -1isize } else { 1 };
             match pick {

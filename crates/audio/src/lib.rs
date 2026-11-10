@@ -43,11 +43,13 @@ const BED_SECONDS: f32 = 8.0;
 /// How much of the bed's head is folded into its tail, in seconds, so the loop
 /// joins itself without a click.
 const BED_CROSSFADE: f32 = 0.75;
-/// The bed between plays: the room waiting on the call.
-pub const BED_BETWEEN: f32 = 0.9;
-/// The bed during the snap: up under the play, so the room is heard while the
-/// ball is live, but still behind the hits.
-pub const BED_LIVE: f32 = 0.32;
+/// The bed between plays: the room waiting on the call, a little under full so
+/// the snap is heard as the room coming up rather than as nothing changing.
+pub const BED_BETWEEN: f32 = 0.75;
+/// The bed during the snap: full. The room is the loudest thing in the stadium
+/// while the ball is live, and at a third of this the field sounded empty; the
+/// CROWD row on the settings screen is what turns it down.
+pub const BED_LIVE: f32 = 1.0;
 /// How fast the bed moves to a new level, per sample: about a seventieth of a
 /// second to settle, which is a duck rather than a step. A step in a noise bed
 /// is a click.
@@ -108,6 +110,16 @@ pub struct Audio {
     music_level: Option<Arc<AtomicU32>>,
     /// Whether the stadium's music is in its after-play window.
     stadium: Option<Arc<AtomicBool>>,
+    /// The stadium's gate: the level the track's source reads every sample. The
+    /// window is a number rather than a player volume, so it opens on the
+    /// whistle and shuts on the snap wherever the audio thread has got to, and
+    /// the track can fade rather than step.
+    stadium_level: Option<Arc<AtomicU32>>,
+    /// The crowd row's level, held here so the bed under the play and the
+    /// crowd's answers to a score follow one number: the settings screen's CROWD
+    /// row. It is not the music row, which is what the menu and the stadium's
+    /// track follow.
+    crowd_level: Option<Arc<AtomicU32>>,
     /// The crowd's answer, when the player brought a `cheer.wav`, already in the
     /// shape everything here plays: mono at [`SAMPLE_RATE`].
     cheer: Option<Arc<Vec<f32>>>,
@@ -161,17 +173,27 @@ impl Audio {
                 sink.log_on_drop(false);
                 let crowd = Player::connect_new(sink.mixer());
                 let bed_level = Arc::new(AtomicU32::new(BED_BETWEEN.to_bits()));
+                // The crowd row ships full: the field is loud until the player
+                // says otherwise.
+                let crowd_level = Arc::new(AtomicU32::new(1.0f32.to_bits()));
                 let bed = Player::connect_new(sink.mixer());
                 bed.append(match room {
-                    Some(samples) => CrowdBed::from_samples(samples, Arc::clone(&bed_level)),
-                    None => CrowdBed::new(Arc::clone(&bed_level)),
+                    Some(samples) => CrowdBed::from_samples(
+                        samples,
+                        Arc::clone(&bed_level),
+                        Arc::clone(&crowd_level),
+                    ),
+                    None => CrowdBed::new(Arc::clone(&bed_level), Arc::clone(&crowd_level)),
                 });
-                // The stadium's music is queued but held silent: it comes up
-                // after a play, not before it.
+                // The stadium's music is queued behind its own gate, held at
+                // silence: it comes up after a play, not before it.
+                let stadium_level = Arc::new(AtomicU32::new(0.0f32.to_bits()));
                 let track = Player::connect_new(sink.mixer());
                 if let Some(samples) = music {
-                    track.append(samples_buffer(samples).repeat_infinite());
-                    track.set_volume(0.0);
+                    track.append(StadiumClip::new(
+                        Arc::new(samples),
+                        Arc::clone(&stadium_level),
+                    ));
                 }
                 // The playlist is queued and paused: the menu starts it, so a
                 // `sim` or `film` run never hears the front end's music.
@@ -198,6 +220,8 @@ impl Audio {
                     intro_level: Some(Arc::new(AtomicU32::new(MUSIC_DEFAULT.to_bits()))),
                     music_level: Some(Arc::new(AtomicU32::new(MUSIC_DEFAULT.to_bits()))),
                     stadium: Some(Arc::new(AtomicBool::new(false))),
+                    stadium_level: Some(stadium_level),
+                    crowd_level: Some(crowd_level),
                     cheer,
                     rise_clip,
                     throw_clip,
@@ -227,6 +251,8 @@ impl Audio {
             intro_level: None,
             music_level: None,
             stadium: None,
+            stadium_level: None,
+            crowd_level: None,
             cheer: None,
             throw_clip: None,
             catch_clip: None,
@@ -260,16 +286,14 @@ impl Audio {
         }
     }
 
-    /// The music row, on every bus it moves: the menu's playlist, the match's intro
-    /// song and the stadium's after-play track. The crowd bed shares it, as it
-    /// always has.
+    /// The music row, on every bus that carries music: the menu's playlist, the
+    /// match's intro song and the stadium's after-play track. The crowd has a row
+    /// of its own -- the field was quiet because the room was riding a volume
+    /// meant for music.
     pub fn set_music(&self, level: f32) {
         let level = level.clamp(0.0, 1.0);
         if let Some(row) = &self.music_level {
             row.store(level.to_bits(), Ordering::Relaxed);
-        }
-        if let Some(bed) = &self.bed {
-            bed.set_volume(level);
         }
         if let Some(menu) = &self.menu {
             menu.set_volume(level);
@@ -310,8 +334,8 @@ impl Audio {
             .as_ref()
             .map(|flag| flag.load(Ordering::Relaxed))
             .unwrap_or(false);
-        if let Some(music) = &self.music {
-            music.set_volume(if open { level } else { 0.0 });
+        if let Some(gate) = &self.stadium_level {
+            gate.store(if open { level } else { 0.0 }.to_bits(), Ordering::Relaxed);
         }
     }
 
@@ -344,16 +368,25 @@ impl Audio {
         }
     }
 
-    /// The effects bus: the crowd's answer to a score, and the cues that join
-    /// it. This is the settings screen's EFFECTS row, and it moves the crowd and
-    /// the play's own sounds together: one is nothing without the other.
+    /// The effects bus: the play's own sounds, and the hits the settings screen
+    /// previews with. This is the settings screen's EFFECTS row.
     pub fn set_effects(&self, level: f32) {
         let level = level.clamp(0.0, 1.0);
-        if let Some(crowd) = &self.crowd {
-            crowd.set_volume(level);
-        }
         if let Some(sfx) = &self.sfx {
             sfx.set_volume(level);
+        }
+    }
+
+    /// The crowd row: the room under the play and the crowd's answers to a
+    /// score and a big play. It used to ride the effects row, where turning up a
+    /// tackle turned up the stadium with it.
+    pub fn set_crowd(&self, level: f32) {
+        let level = level.clamp(0.0, 1.0);
+        if let Some(row) = &self.crowd_level {
+            row.store(level.to_bits(), Ordering::Relaxed);
+        }
+        if let Some(crowd) = &self.crowd {
+            crowd.set_volume(level);
         }
     }
 
@@ -576,7 +609,7 @@ fn bed_loop() -> Vec<f32> {
     let peak = raw.iter().fold(0.0f32, |loudest, s| loudest.max(s.abs()));
     if peak > 0.0 {
         for sample in &mut raw {
-            *sample *= 0.32 / peak;
+            *sample *= 0.45 / peak;
         }
     }
     raw
@@ -588,23 +621,25 @@ struct CrowdBed {
     period: Vec<f32>,
     at: usize,
     target: Arc<AtomicU32>,
+    crowd: Arc<AtomicU32>,
     level: f32,
 }
 
 impl CrowdBed {
     /// The generated room.
-    fn new(target: Arc<AtomicU32>) -> CrowdBed {
-        CrowdBed::from_samples(bed_loop(), target)
+    fn new(target: Arc<AtomicU32>, crowd: Arc<AtomicU32>) -> CrowdBed {
+        CrowdBed::from_samples(bed_loop(), target, crowd)
     }
 
     /// The same loop over whatever period it is handed: the generated bed, or a
     /// player's own `crowd.wav` read into samples.
-    fn from_samples(period: Vec<f32>, target: Arc<AtomicU32>) -> CrowdBed {
+    fn from_samples(period: Vec<f32>, target: Arc<AtomicU32>, crowd: Arc<AtomicU32>) -> CrowdBed {
         let level = f32::from_bits(target.load(Ordering::Relaxed));
         CrowdBed {
             period,
             at: 0,
             target,
+            crowd,
             level,
         }
     }
@@ -614,7 +649,10 @@ impl Iterator for CrowdBed {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        let target = f32::from_bits(self.target.load(Ordering::Relaxed));
+        // The room asked for, under the crowd row: full on the field at the row's
+        // shipped setting, and down with the row when the player wants it down.
+        let target = f32::from_bits(self.target.load(Ordering::Relaxed))
+            * f32::from_bits(self.crowd.load(Ordering::Relaxed));
         self.level += (target - self.level) * BED_SMOOTH;
         let sample = self.period[self.at] * self.level;
         self.at = (self.at + 1) % self.period.len();
@@ -623,6 +661,72 @@ impl Iterator for CrowdBed {
 }
 
 impl Source for CrowdBed {
+    fn current_span_len(&self) -> Option<usize> {
+        None
+    }
+
+    fn channels(&self) -> ChannelCount {
+        ChannelCount::new(CHANNELS).expect("a mono channel count is not zero")
+    }
+
+    fn sample_rate(&self) -> SampleRate {
+        SampleRate::new(SAMPLE_RATE).expect("a sample rate is not zero")
+    }
+
+    fn total_duration(&self) -> Option<Duration> {
+        None
+    }
+}
+
+/// How fast the stadium's gate opens and shuts, per sample: a record coming up
+/// over a third of a second rather than a switch.
+const STADIUM_STEP: f32 = 1.0 / (0.35 * SAMPLE_RATE as f32);
+
+/// The stadium's music as a `Source`: the joined playlist, looped, heard through
+/// a gate the game opens after a play and shuts on the snap.
+///
+/// The track was held silent with the player's own volume, which is a number the
+/// mixer reads on its own schedule and not a window anyone could see; a level
+/// read per sample is the same thing the crowd does, and it lets the window fade
+/// in instead of starting on a step.
+struct StadiumClip {
+    samples: Arc<Vec<f32>>,
+    at: usize,
+    gate: Arc<AtomicU32>,
+    level: f32,
+}
+
+impl StadiumClip {
+    fn new(samples: Arc<Vec<f32>>, gate: Arc<AtomicU32>) -> StadiumClip {
+        let level = f32::from_bits(gate.load(Ordering::Relaxed));
+        StadiumClip {
+            samples,
+            at: 0,
+            gate,
+            level,
+        }
+    }
+}
+
+impl Iterator for StadiumClip {
+    type Item = f32;
+
+    fn next(&mut self) -> Option<f32> {
+        if self.samples.is_empty() {
+            return None;
+        }
+        let target = f32::from_bits(self.gate.load(Ordering::Relaxed));
+        let step = (target - self.level).clamp(-STADIUM_STEP, STADIUM_STEP);
+        self.level = (self.level + step).clamp(0.0, 1.0);
+        // The track runs while it is shut, the way a record does: the next window
+        // is where the song has got to, not its first two seconds again.
+        let sample = self.samples[self.at] * self.level;
+        self.at = (self.at + 1) % self.samples.len();
+        Some(sample)
+    }
+}
+
+impl Source for StadiumClip {
     fn current_span_len(&self) -> Option<usize> {
         None
     }
@@ -1023,6 +1127,7 @@ mod tests {
         audio.set_bed(4.0);
         audio.set_music(0.5);
         audio.set_effects(0.5);
+        audio.set_crowd(0.5);
         audio.menu_music();
         audio.intro_song();
         audio.intro_fade();
@@ -1092,6 +1197,8 @@ mod tests {
             intro_level: None,
             music_level: None,
             stadium: None,
+            stadium_level: None,
+            crowd_level: None,
             cheer: None,
             throw_clip: None,
             catch_clip: None,
@@ -1141,13 +1248,14 @@ mod tests {
         );
         assert!(seam < rms, "the seam is a jump: {seam} against an rms of {rms}");
         let peak = bed.iter().fold(0.0f32, |loudest, s| loudest.max(s.abs()));
-        assert!(peak <= 0.33, "the bed is too hot at its peak: {peak}");
+        assert!(peak <= 0.46, "the bed is too hot at its peak: {peak}");
     }
 
     #[test]
     fn the_bed_follows_the_level_it_is_given() {
         let target = Arc::new(AtomicU32::new(BED_BETWEEN.to_bits()));
-        let mut bed = CrowdBed::new(Arc::clone(&target));
+        let crowd = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let mut bed = CrowdBed::new(Arc::clone(&target), Arc::clone(&crowd));
         let mean = |bed: &mut CrowdBed, samples: usize| {
             (0..samples).map(|_| bed.next().unwrap().abs()).sum::<f32>() / samples as f32
         };
@@ -1160,19 +1268,30 @@ mod tests {
         }
         let live = mean(&mut bed, window);
         assert!(
-            live < between * 0.5,
-            "the bed did not duck under the snap: {live} against {between}"
+            live > between * 1.2,
+            "the room did not come up under the snap: {live} against {between}"
         );
-        assert!(live > 0.0, "the bed went silent instead of quiet");
-        // And back up again, which is what happens on the whistle.
+        // And down again to the wait for the next call, which is the quieter end
+        // of the two now that the field is the loud one.
         target.store(BED_BETWEEN.to_bits(), Ordering::Relaxed);
         for _ in 0..SAMPLE_RATE as usize / 5 {
             bed.next();
         }
         let back = mean(&mut bed, window);
         assert!(
-            back > live * 1.5,
-            "the bed never came back up: {back} against {live}"
+            back < live * 0.85,
+            "the room stayed up after the play: {back} against {live}"
+        );
+        // And the crowd row turns the whole thing down, field and all.
+        crowd.store(0.5f32.to_bits(), Ordering::Relaxed);
+        target.store(BED_LIVE.to_bits(), Ordering::Relaxed);
+        for _ in 0..SAMPLE_RATE as usize / 5 {
+            bed.next();
+        }
+        let halved = mean(&mut bed, window);
+        assert!(
+            halved < live * 0.65,
+            "the crowd row did not move the room: {halved} against {live}"
         );
     }
 
@@ -1238,7 +1357,9 @@ mod tests {
     #[test]
     fn a_loaded_room_loops_the_players_file() {
         let target = Arc::new(AtomicU32::new(BED_BETWEEN.to_bits()));
-        let mut bed = CrowdBed::from_samples(vec![1.0, 2.0, 3.0], Arc::clone(&target));
+        let crowd = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let mut bed =
+            CrowdBed::from_samples(vec![1.0, 2.0, 3.0], Arc::clone(&target), crowd);
         let out: Vec<f32> = (0..4).map(|_| bed.next().expect("a sample")).collect();
         assert!(
             out[1] > out[0] && out[2] > out[1],
@@ -1289,6 +1410,8 @@ mod tests {
             intro_level: None,
             music_level: None,
             stadium: None,
+            stadium_level: None,
+            crowd_level: None,
             cheer: None,
             throw_clip: None,
             catch_clip: None,
@@ -1362,6 +1485,42 @@ mod tests {
             "the fade is not moving: {middle}"
         );
         assert!(last < 0.01, "the song never faded out: {last}");
+    }
+
+    #[test]
+    fn the_stadium_track_waits_for_its_window() {
+        let gate = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+        let mut track = StadiumClip::new(Arc::new(vec![1.0; 480]), Arc::clone(&gate));
+        // The ball is live: the record is still turning, and none of it is heard.
+        let shut: Vec<f32> = (0..480).map(|_| track.next().expect("a sample")).collect();
+        assert!(
+            shut.iter().all(|s| *s == 0.0),
+            "the stadium music played during the play"
+        );
+        // The whistle: it comes up over a fade, and it is heard inside the
+        // window rather than on the mixer's next pass.
+        gate.store(1.0f32.to_bits(), Ordering::Relaxed);
+        let opening: Vec<f32> = (0..SAMPLE_RATE as usize / 2)
+            .map(|_| track.next().expect("a sample"))
+            .collect();
+        assert!(
+            opening[0].abs() < 0.01,
+            "the window opened on a step: {}",
+            opening[0]
+        );
+        let last = opening[opening.len() - 1];
+        assert!(
+            (last - 1.0).abs() < 0.02,
+            "the track never came up: it settled at {last}"
+        );
+        // Shut again on the snap, and back where it was when the next window
+        // opens: the track kept running while nobody was listening.
+        gate.store(0, Ordering::Relaxed);
+        let quiet: Vec<f32> = (0..SAMPLE_RATE as usize / 2)
+            .map(|_| track.next().expect("a sample"))
+            .collect();
+        let tail = quiet[quiet.len() - 1].abs();
+        assert!(tail < 0.01, "the window never shut: {tail}");
     }
 
     #[test]

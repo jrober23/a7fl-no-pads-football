@@ -43,13 +43,16 @@ pub struct Settings {
     pub difficulty: usize,
     /// Minutes in a quarter, from [QUARTER_CHOICES].
     pub quarter_minutes: u32,
-    /// How loud the background bed is, 0 to [VOLUME_STEPS]. It is the crowd
-    /// under the game today, and shares its bus with the music when there is a
-    /// loop to play.
+    /// How loud the music is, 0 to [VOLUME_STEPS]: the front end's playlist, the
+    /// match's intro song and the stadium's after-play track.
     pub music_volume: usize,
-    /// How loud the effects are, 0 to [VOLUME_STEPS]: the crowd's answer to a
-    /// score, and every cue that joins it later.
+    /// How loud the effects are, 0 to [VOLUME_STEPS]: every cue that joins a
+    /// play, and the hit the settings screen previews.
     pub effects_volume: usize,
+    /// How loud the crowd is, 0 to [VOLUME_STEPS]: the room under the play and
+    /// the crowd's answers to a score and a big play. It ships full, because a
+    /// field with no room under it is the one thing a stadium cannot do.
+    pub crowd_volume: usize,
 }
 
 impl Default for Settings {
@@ -65,6 +68,7 @@ impl Default for Settings {
             quarter_minutes: 15,
             music_volume: 8,
             effects_volume: 8,
+            crowd_volume: VOLUME_STEPS,
         }
     }
 }
@@ -118,13 +122,21 @@ impl Settings {
         volume_label(self.effects_volume)
     }
 
-    /// The same two as a multiplier for the audio crate.
+    pub fn crowd_label(&self) -> String {
+        volume_label(self.crowd_volume)
+    }
+
+    /// The same three as a multiplier for the audio crate.
     pub fn music_level(&self) -> f32 {
         self.music_volume as f32 / VOLUME_STEPS as f32
     }
 
     pub fn effects_level(&self) -> f32 {
         self.effects_volume as f32 / VOLUME_STEPS as f32
+    }
+
+    pub fn crowd_level(&self) -> f32 {
+        self.crowd_volume as f32 / VOLUME_STEPS as f32
     }
 
     pub fn display_label(&self) -> &'static str {
@@ -148,7 +160,7 @@ impl Settings {
 
     pub fn text(&self) -> String {
         format!(
-            "# 7 on 7 No Pads Football settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\nmusic={}\neffects={}\n",
+            "# 7 on 7 No Pads Football settings. Delete this file to go back to the defaults.\ncamera={}\nwidth={}\nheight={}\nfullscreen={}\nzoom={:.2}\ntilt={:.2}\ndifficulty={}\nquarters={}\nmusic={}\neffects={}\ncrowd={}\n",
             self.camera,
             self.width,
             self.height,
@@ -159,6 +171,7 @@ impl Settings {
             self.quarter_minutes,
             self.music_volume,
             self.effects_volume,
+            self.crowd_volume,
         )
     }
 
@@ -222,6 +235,11 @@ impl Settings {
                         out.effects_volume = v;
                     }
                 }
+                "crowd" => {
+                    if let Ok(v) = value.parse::<usize>() {
+                        out.crowd_volume = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -237,6 +255,7 @@ impl Settings {
         self.difficulty %= 3;
         self.music_volume = self.music_volume.min(VOLUME_STEPS);
         self.effects_volume = self.effects_volume.min(VOLUME_STEPS);
+        self.crowd_volume = self.crowd_volume.min(VOLUME_STEPS);
         // A hand-edited quarter length snaps to the nearest offered one rather
         // than to a clock the menus cannot walk back to.
         if !QUARTER_CHOICES.contains(&self.quarter_minutes) {
@@ -308,6 +327,7 @@ mod tests {
             quarter_minutes: 6,
             music_volume: 3,
             effects_volume: 4,
+            crowd_volume: 5,
         };
         let back = Settings::parse(&s.text());
         assert_eq!(back.camera, s.camera);
@@ -317,19 +337,25 @@ mod tests {
         assert_eq!(back.quarter_minutes, s.quarter_minutes);
         assert_eq!(back.music_volume, s.music_volume);
         assert_eq!(back.effects_volume, s.effects_volume);
+        assert_eq!(back.crowd_volume, s.crowd_volume);
         assert_eq!(back.music_label(), "30%");
+        assert_eq!(back.crowd_label(), "50%");
     }
 
     #[test]
     fn a_volume_off_the_scale_comes_back_to_it() {
-        let loud = Settings::parse("music=99\neffects=11");
+        let loud = Settings::parse("music=99\neffects=11\ncrowd=42");
         assert_eq!(loud.music_volume, VOLUME_STEPS);
         assert_eq!(loud.effects_volume, VOLUME_STEPS);
+        assert_eq!(loud.crowd_volume, VOLUME_STEPS);
         assert_eq!(loud.music_level(), 1.0);
+        assert_eq!(loud.crowd_level(), 1.0);
         // A file written before the rows existed still reads as the defaults.
         let old = Settings::parse("camera=1\nquarters=8");
         assert_eq!(old.music_volume, Settings::default().music_volume);
         assert_eq!(old.effects_volume, Settings::default().effects_volume);
+        // The crowd row ships full, and a file that predates it reads as full.
+        assert_eq!(old.crowd_volume, VOLUME_STEPS);
     }
 
     #[test]

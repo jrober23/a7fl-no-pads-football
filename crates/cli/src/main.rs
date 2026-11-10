@@ -987,6 +987,7 @@ fn audio_for(settings: &settings::Settings) -> nopads_audio::Audio {
     let audio = nopads_audio::Audio::open();
     audio.set_music(settings.music_level());
     audio.set_effects(settings.effects_level());
+    audio.set_crowd(settings.crowd_level());
     audio
 }
 

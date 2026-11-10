@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.140-windows-x86_64.zip` from the
+Grab `7on7-v0.25.141-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -48,7 +48,8 @@ executable and no asset folder. It will also read your own files if you put them
 next to it, because a real crowd beats a synthesised one:
 
 ```
-sounds/crowd.wav   the room under the game: looped, and ducked while the ball is live
+sounds/crowd.wav   the room under the game: looped, full while the ball is live,
+                   and turned down by the CROWD row on the settings screen
 sounds/cheer.wav   the crowd's answer to a score: played once, from the start
 sounds/rise.wav    a big play's answer, if you have one: played once, as it is;
                    without it the first second of cheer.wav is used, turned down
