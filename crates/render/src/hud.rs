@@ -649,6 +649,95 @@ pub fn draw_card(
 }
 
 
+/// A compact card laid over the picture: a title, a line under it, and the rows
+/// that go with them.
+///
+/// The read-out after a play and the questions the game asks are the same card.
+/// They used to be full-screen text pages: the picture went away, and a page that
+/// reported one sentence filled the screen to do it. This is a pane of glass in
+/// the middle of the shot instead -- smaller than a page, see-through, and the
+/// same furniture the introduction's cards are built from.
+pub fn draw_notice(frame: &mut Frame, title: &str, subtitle: &str, lines: &[String], accent: Rgb) {
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    // The picture stays behind it: dimmed, not replaced, so the card sits on the
+    // play it is talking about.
+    frame.fill_rect_alpha(0, 0, w, h, INK, 0.32);
+
+    // Wrapped first, because the card is sized by what it has to say.
+    let text_w: usize = 560;
+    let mut rows: Vec<String> = Vec::new();
+    for line in lines {
+        if line.trim().is_empty() {
+            rows.push(String::new());
+            continue;
+        }
+        for piece in wrap_to(line.trim(), 2, text_w) {
+            rows.push(piece);
+        }
+    }
+    let pad = 24;
+    let head = if subtitle.is_empty() { 54 } else { 82 };
+    let panel_w = text_w as i32 + pad * 2;
+    let panel_h = (head + row_height(&rows, 24)).min(h - 40);
+    let x = (w - panel_w) / 2;
+    let y = (h - panel_h) / 2;
+
+    frame.rounded_rect_alpha(x - 2, y - 1, panel_w + 4, panel_h + 5, 16, Rgb::BLACK, 0.22);
+    frame.rounded_rect_alpha(x - 1, y - 1, panel_w + 2, panel_h + 2, 15, PANEL_EDGE, 0.55);
+    frame.rounded_rect_alpha(x, y, panel_w, panel_h, 14, Rgb::hex(0x1C2533), 0.62);
+    frame.fill_rect(x + 14, y + 6, panel_w - 28, 4, accent);
+    font::draw_centered(frame, w / 2, y + 20, title, 3, WHITE, 2);
+    if !subtitle.is_empty() {
+        font::draw_centered(frame, w / 2, y + 52, subtitle, 1, Rgb::hex(0xDCE3EC), 1);
+    }
+    let mut ry = y + head;
+    for row in &rows {
+        if ry + 20 > y + panel_h - 8 {
+            break;
+        }
+        if !row.is_empty() {
+            // The choice the pad is on reads the way it reads everywhere else.
+            let colour = if row.contains(">>") { YELLOW } else { WHITE };
+            font::draw_styled(frame, x + pad, ry, row, 2, colour, 1, false);
+        }
+        ry += 24;
+    }
+}
+
+/// How tall a run of wrapped rows is, blanks included.
+fn row_height(rows: &[String], line: i32) -> i32 {
+    12 + rows.len() as i32 * line
+}
+
+/// The bar along the bottom of a highlight: what it was, and the call written
+/// across it.
+///
+/// A film package puts the words on the lower third of the picture instead of in
+/// a card over the middle of it, so the play is watched and read at once.
+pub fn draw_lower_third(frame: &mut Frame, label: &str, text: &str, accent: Rgb) {
+    let w = frame.w as i32;
+    let h = frame.h as i32;
+    let x = 56;
+    let panel_w = w - x * 2;
+    // Sized by the call it carries: a bar that reserves room for three lines to
+    // say one leaves a slab of ink across the bottom of the picture.
+    let rows: Vec<String> = wrap_to(text, 2, (panel_w - 48) as usize)
+        .into_iter()
+        .take(2)
+        .collect();
+    let bar_h = 34 + rows.len() as i32 * 26 + 12;
+    let y = h - bar_h - 26;
+    frame.rounded_rect_alpha(x, y, panel_w, bar_h, 10, Rgb::hex(0x0B1017), 0.74);
+    frame.fill_rect(x, y, 5, bar_h, accent);
+    font::draw_styled(frame, x + 22, y + 14, label, 1, accent, 1, false);
+    let mut ry = y + 34;
+    for piece in &rows {
+        font::draw_styled(frame, x + 22, ry, piece, 2, WHITE, 1, false);
+        ry += 26;
+    }
+}
+
 /// Two cards that each take half the frame, one per club.
 ///
 /// The introduction is a set of these rather than one panel: each club gets a
@@ -795,6 +884,80 @@ mod tests {
 
 
 
+
+    #[test]
+    fn the_notice_is_a_card_over_the_picture_not_a_page_instead_of_it() {
+        let base = Rgb::new(40, 80, 60);
+        let draw = |backdrop: Rgb| {
+            let mut f = Frame::new(1280, 720);
+            f.color.fill(backdrop);
+            draw_notice(
+                &mut f,
+                "THE PLAY",
+                "BOS 14 - CHI 7",
+                &["PASS COMPLETE FOR TWELVE YARDS".to_string()],
+                Rgb::hex(0xE2572B),
+            );
+            f
+        };
+        let dark = draw(base);
+        let light = draw(Rgb::new(80, 130, 100));
+
+        // The picture is still there, and still comes through the card: the same
+        // card over two different fields is not the same card.
+        let (mut inside, mut differs) = (0, 0);
+        for y in 300..430 {
+            for x in 400..880 {
+                inside += 1;
+                if dark.color[y * 1280 + x] != light.color[y * 1280 + x] {
+                    differs += 1;
+                }
+            }
+        }
+        assert!(inside > 50_000, "the sample is off the card: {inside} px");
+        assert!(
+            differs * 100 / inside > 30,
+            "the card is opaque: only {differs} of {inside} px saw the field"
+        );
+
+        // And it is a card, not a page: the edges of the frame carry the dimming
+        // and nothing else.
+        let mut veil = Frame::new(1280, 720);
+        veil.color.fill(base);
+        veil.fill_rect_alpha(0, 0, 1280, 720, INK, 0.32);
+        assert_eq!(
+            dark.color[360 * 1280 + 8],
+            veil.color[360 * 1280 + 8],
+            "the card reaches the edge of the picture"
+        );
+        assert_ne!(
+            dark.color[360 * 1280 + 640],
+            veil.color[360 * 1280 + 640],
+            "there is no card in the middle of the picture"
+        );
+    }
+
+    #[test]
+    fn the_lower_third_sits_at_the_bottom_and_leaves_the_play_alone() {
+        let base = Rgb::new(30, 60, 40);
+        let mut f = Frame::new(1280, 720);
+        f.color.fill(base);
+        draw_lower_third(&mut f, "Q2   3:12   HIGHLIGHT 1 OF 3", "PASS COMPLETE FOR 24 YARDS", Rgb::hex(0xE2572B));
+        let mut above = 0;
+        for y in 0..560 {
+            for x in 0..1280 {
+                if f.color[y * 1280 + x] != base {
+                    above += 1;
+                }
+            }
+        }
+        assert_eq!(above, 0, "the caption reached into the play: {above} px");
+        let painted = (600..694)
+            .flat_map(|y| (56..1224).map(move |x| (y, x)))
+            .filter(|(y, x)| f.color[y * 1280 + x] != base)
+            .count();
+        assert!(painted > 40_000, "the lower third is a speck: {painted} px");
+    }
 
     #[test]
     fn the_cards_are_glass_and_not_slate() {

@@ -35,7 +35,7 @@ use nopads_render::terminal;
 use crate::menu;
 use nopads_platform::pad::{self, Input, Pad};
 use nopads_platform::settings::Settings;
-use crate::view::{View, CANVAS_H, CANVAS_W, UI_H, UI_SCALE, UI_W};
+use crate::view::{Shot, View, CANVAS_H, CANVAS_W, UI_H, UI_SCALE, UI_W};
 
 /// Picture refresh for live play. The field is drawn at the full canvas size, so
 /// what you see is the renderer's real detail rather than a scaled-up quarter
@@ -303,6 +303,9 @@ pub struct Arcade {
     quit: bool,
     /// Penalty insurance: some pads report the stick's Y the other way round.
     flip_y: bool,
+    /// The film of the half's big plays, for the halftime reel: the plays as they
+    /// were played, not cards about them.
+    highlights: Vec<Clip>,
     /// The settings this game was started with, kept so a lens moved in the pause
     /// menu is still there the next time the game opens.
     settings: Option<Settings>,
@@ -412,6 +415,7 @@ impl Arcade {
             flip_y: false,
             settings: None,
             venue: 0,
+            highlights: Vec::new(),
             audio: Audio::silent(),
         }
     }
@@ -1356,6 +1360,10 @@ impl Arcade {
                     }
                 }
                 Action::ChooseConversion => {
+                    // The music that came up for the score stays up while the try
+                    // is picked and run: a conversion is a moment between the six
+                    // and the kick, and the stadium's DJ does not stop for it.
+                    self.audio.stadium(true);
                     // Pick the try, then go back round: a conversion is a snap
                     // like any other, so it gets called and played, not rolled.
                     // Whose try it is decides who picks it: once the player can
@@ -1671,42 +1679,56 @@ impl Arcade {
         self.highlight_reel()
     }
 
-    /// The reel: the plays that made the half, one card each over the picture.
+    /// The reel: the half's big plays as they were played, with the call written
+    /// along the bottom of the picture.
     ///
-    /// A card per play rather than a replay: the tape a snap is replayed from
-    /// borrows the roster and the call sheet it was run with, so keeping one from
-    /// the first quarter to the half would mean keeping the whole game alive at
-    /// once. What the reel shows is the play, held long enough to read it.
+    /// The tape a replay runs from borrows the roster and the call sheet it was
+    /// run with, so keeping one from the first quarter to the half meant keeping
+    /// the whole game alive at once, and the reel was a card per play instead.
+    /// What it keeps now is the picture of the play, taken while it ran: the room
+    /// sees the catch that was called, not a card about it.
     fn highlight_reel(&mut self) -> bool {
-        let accent = self.game.teams[self.my_team.unwrap_or(0)]
-            .primary
-            .lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3);
-        let plays = self.game.recent_plays(3);
-        if plays.is_empty() {
-            return true;
+        let clips = std::mem::take(&mut self.highlights);
+        let count = clips.len();
+        for (i, clip) in clips.iter().enumerate() {
+            if !self.play_clip(clip, i + 1, count) {
+                return false;
+            }
         }
-        let count = plays.len();
-        for (i, play) in plays.iter().enumerate() {
-            let mut frame = nopads_render::Frame::new(CANVAS_W, CANVAS_H);
-            let left = vec![play.to_uppercase()];
-            nopads_render::hud::draw_card(
-                &mut frame,
-                "HIGHLIGHT",
-                &format!("{} OF {}", i + 1, count),
-                &left,
-                &[],
-                accent,
-            );
+        true
+    }
+
+    /// One clip of the reel, run at the rate it was taken.
+    fn play_clip(&mut self, clip: &Clip, number: usize, count: usize) -> bool {
+        let label = format!(
+            "Q{}   {}   HIGHLIGHT {} OF {}",
+            clip.quarter,
+            clock_label(clip.clock),
+            number,
+            count
+        );
+        let mut skipped = false;
+        for shot in &clip.shots {
+            let mut frame = shot.frame();
+            nopads_render::hud::draw_lower_third(&mut frame, &label, &clip.text, clip.accent);
             if !self.view.show(&mut frame, &[]) {
                 return false;
             }
+            let input = self.wait(FILM_EVERY);
+            // A reaches the next one: the whole reel is a presentation, not a
+            // question, so there is nothing on it to answer.
+            if input.pressed.a || input.pressed.start {
+                skipped = true;
+                break;
+            }
+        }
+        // The last frame stays up with the call under it: the film is a second
+        // and two thirds, the sentence on it wants longer than that to be read.
+        if !skipped {
             let start = Instant::now();
-            loop {
-                let input = self.wait(Duration::from_millis(30));
-                if input.pressed.a
-                    || input.pressed.start
-                    || start.elapsed() >= Duration::from_millis(2600)
-                {
+            while start.elapsed() < FILM_READ {
+                let input = self.wait(Duration::from_millis(60));
+                if input.pressed.a || input.pressed.start {
                     break;
                 }
             }
@@ -1882,25 +1904,39 @@ impl Arcade {
         let mut nav = Nav::default();
         let mut pick = start.min(options.len().saturating_sub(1));
         let mut last = Instant::now();
+        let subtitle = self.header();
+        let accent = self.card_accent();
+        // The question is the card the play was read out on: a small pane of
+        // glass over the last picture, not a page that takes the picture away.
+        // It is drawn when the choice moves rather than every frame, because it
+        // is drawn over a copy of that picture.
+        let mut drawn: Option<usize> = None;
         // A button held from the last screen must not answer this one.
         self.view.reset();
         loop {
             let now = Instant::now();
             let dt = now.duration_since(last).as_secs_f32().min(0.1);
             last = now;
-            let mut lines = vec![self.header(), String::new(), format!("  {title}"), String::new()];
-            for (n, option) in options.iter().enumerate() {
-                lines.push(format!("    {} {}", if n == pick { ">>" } else { "  " }, option));
-            }
-            lines.push(String::new());
-            for line in note {
-                lines.push(format!("  {line}"));
-            }
-            lines.push(String::new());
-            lines.push("  [STICK] CHOOSE   [A] CONFIRM   [START] PAUSE".to_string());
-            if !self.view.page(&lines) {
-                self.quit = true;
-                return None;
+            if drawn != Some(pick) {
+                drawn = Some(pick);
+                let mut lines = Vec::with_capacity(options.len() + note.len() + 3);
+                for (n, option) in options.iter().enumerate() {
+                    lines.push(format!(
+                        "  {} {}",
+                        if n == pick { ">>" } else { "  " },
+                        option
+                    ));
+                }
+                lines.push(String::new());
+                for line in note {
+                    lines.push(format!("  {line}"));
+                }
+                lines.push(String::new());
+                lines.push("  [STICK] CHOOSE   [A] CONFIRM   [START] PAUSE".to_string());
+                if !self.view.card(title, &subtitle, &lines, accent) {
+                    self.quit = true;
+                    return None;
+                }
             }
             let input = self.input();
             if input.pressed.start {
@@ -2144,6 +2180,7 @@ impl Arcade {
             let rec = self.game.finish_throw_off(setup, result);
             // Through the same call a snap gets, for the card. The room already
             // answered the return at the whistle, in the loop.
+            self.keep_film(&rec);
             self.report(rec);
         }
         true
@@ -2167,8 +2204,14 @@ impl Arcade {
     // ------------------------------------------------------------------
 
     fn run_snap(&mut self, play: Play) {
-        // The stadium's music is for the lull after a play, not for the play.
-        self.audio.stadium(false);
+        // The stadium's music is for the lull after a play, not for the play --
+        // except a try, which is one snap between the score and the kick. Cutting
+        // the music for it left the whole conversion silent, so it runs through.
+        if matches!(self.game.phase, GamePhase::Conversion { .. }) {
+            self.audio.stadium(true);
+        } else {
+            self.audio.stadium(false);
+        }
         // Playing a snap is what tells us whose team this is, the first time.
         if self.my_team.is_none() {
             self.my_team = Some(self.game.possession);
@@ -2234,6 +2277,7 @@ impl Arcade {
         }
 
         if let Some(record) = record {
+            self.keep_film(&record);
             self.report(record);
         }
     }
@@ -2287,6 +2331,7 @@ impl Arcade {
         }
 
         if let Some(record) = record {
+            self.keep_film(&record);
             self.report(record);
         }
     }
@@ -2310,6 +2355,37 @@ impl Arcade {
                 self.show_result(&text, None);
             }
         }
+    }
+
+    /// The colour the cards carry: the player's club, lit.
+    fn card_accent(&self) -> nopads_core::math::Rgb {
+        self.game.teams[self.my_team.unwrap_or(0)]
+            .primary
+            .lerp(nopads_core::math::Rgb::hex(0xFFFFFF), 0.3)
+    }
+
+    /// Keep the film of the play that just finished, if the snap left one.
+    ///
+    /// Only the plays that earned a second look on the field are filmed, and only
+    /// three of them: a reel that runs every big play of a half is a second half
+    /// that starts late.
+    fn keep_film(&mut self, record: &PlayRecord) {
+        let Some(shots) = self.view.take_film() else {
+            return;
+        };
+        if shots.is_empty() {
+            return;
+        }
+        if self.highlights.len() >= REEL_CLIPS {
+            self.highlights.remove(0);
+        }
+        self.highlights.push(Clip {
+            text: record.description().to_uppercase(),
+            quarter: record.quarter(),
+            clock: record.clock(),
+            accent: self.card_accent(),
+            shots,
+        });
     }
 
     fn cpu_defense(&self) -> DefCall {
@@ -2544,17 +2620,16 @@ impl Arcade {
             .and_then(|i| self.game.teams[team].roster.get(i))
             .map(|p| p.last_name().to_string());
         let from = nopads_core::field::yards_to_goal(record.setup.los, record.setup.direction);
+        let subtitle = self.header();
+        let accent = self.card_accent();
         let mut lines = vec![
-            self.header(),
-            String::new(),
-            "  FLAG".to_string(),
-            String::new(),
             format!(
                 "  {} - {} - {}",
                 call.kind.label().to_uppercase(),
                 self.game.teams[team].abbr,
                 side
             ),
+            String::new(),
         ];
         if let Some(who) = who {
             lines.push(format!("  ON {who}"));
@@ -2572,7 +2647,7 @@ impl Arcade {
         }
         lines.push(String::new());
         lines.push("  [A] CONTINUE".to_string());
-        if !self.view.page_big(&lines) {
+        if !self.view.card("FLAG", &subtitle, &lines, accent) {
             self.quit = true;
             return;
         }
@@ -2590,20 +2665,22 @@ impl Arcade {
     }
 
     fn show_result(&mut self, text: &str, points: Option<u32>) {
-        let mut lines = vec![self.header(), String::new()];
-        if let Some(points) = points {
-            let label = if points == 2 { "POINTS" } else { "POINT" };
-            lines.push(format!("  CONVERSION - {points} {label}"));
-            lines.push(String::new());
-        }
-        lines.push(format!("  {}", text.to_uppercase()));
-        lines.push(String::new());
+        let title = match points {
+            Some(2) => "CONVERSION - 2 POINTS".to_string(),
+            Some(1) => "CONVERSION - 1 POINT".to_string(),
+            _ => "THE PLAY".to_string(),
+        };
+        let subtitle = self.header();
+        let accent = self.card_accent();
+        let mut lines = vec![format!("  {}", text.to_uppercase()), String::new()];
         for line in self.game.recent_plays(3) {
-            lines.push(format!("  · {line}"));
+            // A plain dash, not the bullet: the overlay font has no glyph for
+            // one and drew a box in front of every line.
+            lines.push(format!("  - {line}"));
         }
         lines.push(String::new());
         lines.push("  [A] CONTINUE".to_string());
-        if !self.view.page_big(&lines) {
+        if !self.view.card(&title, &subtitle, &lines, accent) {
             self.quit = true;
             return;
         }
@@ -3219,6 +3296,41 @@ fn pause_menu(
     action
 }
 
+/// A clock the way the card and the bug say it: minutes, then seconds.
+fn clock_label(clock: f32) -> String {
+    let c = clock.max(0.0);
+    let m = (c / 60.0).floor() as u32;
+    let s = (c - m as f32 * 60.0).floor() as u32;
+    format!("{m}:{s:02}")
+}
+
+/// A play kept for the halftime reel: the film of it, and what to say over it.
+struct Clip {
+    /// The play, as the card after it said it happened.
+    text: String,
+    quarter: u8,
+    clock: f32,
+    /// The club whose colour the caption carries.
+    accent: nopads_core::math::Rgb,
+    shots: Vec<Shot>,
+}
+
+/// The reel is a package, not a second half: three clips is what a halftime has
+/// time for before the room wants the ball back.
+const REEL_CLIPS: usize = 3;
+/// How often a play is photographed for the reel. A twelfth of a second runs the
+/// film back at a rate the eye follows without the file being a second game.
+const FILM_EVERY: Duration = Duration::from_millis(83);
+/// How much film one play may keep: the last second and two thirds of it, which
+/// is where a big play is won or lost.
+const FILM_FRAMES: usize = 20;
+/// Half the canvas each way: a reel is a remembered picture of the play, not a
+/// second copy of the game at full size.
+const FILM_SCALE: usize = 2;
+/// How long a clip's caption is left up after its film has run, so the call can
+/// be read without reaching for the pad.
+const FILM_READ: Duration = Duration::from_millis(900);
+
 /// How fast the tape runs. It was recorded one frame per fixed step, so it runs
 /// back at the rate it was played at.
 const TAPE_FPS: f32 = 60.0;
@@ -3599,6 +3711,13 @@ trait SnapSim: Clone {
     /// Whether the scoreboard belongs on this frame.
     fn scoreboard_visible(&self) -> bool;
 
+    /// Whether this play earned a place in the half's film. A card said what
+    /// happened; the reel shows it, so only the plays with something to see are
+    /// kept.
+    fn has_film(&self) -> bool {
+        false
+    }
+
     /// The play clock, at the line where it is still the player's to spend.
     fn clock_row(&self) -> Option<String> {
         None
@@ -3678,6 +3797,10 @@ impl SnapSim for PlaySim<'_> {
 
     fn scoreboard_visible(&self) -> bool {
         self.phase == Phase::PreSnap && !self.previewing()
+    }
+
+    fn has_film(&self) -> bool {
+        self.replay_look().is_some() || self.crowd().is_some()
     }
 
     fn clock_row(&self) -> Option<String> {
@@ -3797,6 +3920,10 @@ impl SnapSim for ThrowOffSim<'_> {
 
     fn scoreboard_visible(&self) -> bool {
         self.phase == ThrowPhase::Presnap
+    }
+
+    fn has_film(&self) -> bool {
+        self.replay_look().is_some() || self.crowd().is_some()
     }
 
     fn replay_look(&self) -> Option<Replay> {
@@ -4021,6 +4148,13 @@ fn snap_loop<S: SnapSim>(
     let mut turn: Option<Instant> = None;
     // The live play frame by frame, for the replay.
     let mut tape: Vec<S> = Vec::new();
+    // The same play as the half will see it: a picture every twelfth of a second,
+    // half size, rolling. The last twenty are kept, because where a big play is
+    // won is the end of it, and a card cannot show a catch.
+    let mut film: Vec<Shot> = Vec::new();
+    let mut filmed = Instant::now() - FILM_EVERY;
+    // A film left behind by a snap that never finished belongs to no play.
+    screen.view.take_film();
     // The ball stays dead for as long as the shot is held and the tape runs, so
     // the room is only told about the play once.
     let mut answered = false;
@@ -4168,6 +4302,13 @@ fn snap_loop<S: SnapSim>(
             if !screen.view.show(&mut frame, &lines) {
                 return false;
             }
+            if now.duration_since(filmed) >= FILM_EVERY {
+                filmed = now;
+                if film.len() == FILM_FRAMES {
+                    film.remove(0);
+                }
+                film.push(Shot::of(&frame, FILM_SCALE));
+            }
         }
 
         if screen.sim.is_done() {
@@ -4224,6 +4365,10 @@ fn snap_loop<S: SnapSim>(
                     if !kept {
                         return false;
                     }
+                }
+                // The play goes to the half's film, if it earned one.
+                if screen.sim.has_film() && !film.is_empty() {
+                    screen.view.set_film(std::mem::take(&mut film));
                 }
                 return true;
             }

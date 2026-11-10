@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.142-windows-x86_64.zip` from the
+Grab `7on7-v0.25.143-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -792,8 +792,11 @@ him.
 Fourth downs get their own prompt (go for it, or throw it off), and so do conversions
 (one point from the 5, two from the 10). Both are lists you drive with the d-pad or
 the stick — sideways or up and down, whichever way the list runs — with the
-highlighted line in the call sheet's accent, and A takes the answer. Conversions are
-then called and played like any other snap. In terminal mode the picture is sized
+highlighted line in the call sheet's accent, and A takes the answer. They are the
+same card the play is read out on: a small pane of glass over the last picture rather
+than a page that puts the picture away, and the stadium's music runs through the try
+instead of stopping for it. Conversions are then called and played like any other
+snap. In terminal mode the picture is sized
 from `COLUMNS` and `LINES`, so it adapts to whatever terminal you run it in.
 
 The flag itself does not stop the play. It goes down where the foul happened — a
@@ -1170,6 +1173,15 @@ pips, a down-and-distance card with play clock bar, the league badge, a lower-th
 ticker carrying the play-by-play line, big TOUCHDOWN / TURNOVER / SACK / TACKLE FOR
 LOSS / PASS BATTED DOWN / FLAG banners, the word over the dead ball while the
 players get up off the turf, and a full-screen post-game stats panel.
+
+Halftime opens on that same stats panel and then runs the half as film. The reel is
+the plays themselves — a score, a gain of fifteen yards or more, a turnover, a
+flagged foul — kept at the size of half the canvas while they were happening, so
+what the room watches is the catch that was called rather than a card saying it
+happened. The call is written along the lower third of the picture the way a
+highlight package does it, with the quarter and the clock on it, and A moves to the
+next one. Three clips is a package; a half with none of those plays goes straight to
+the second half's throw-off.
 
 Players are built at runtime from their attributes and appearance (skin tone,
 hair, beard, build) so the seven on the field match the roster. The body is a

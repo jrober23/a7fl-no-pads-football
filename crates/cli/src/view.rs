@@ -13,6 +13,7 @@
 use std::io::{self, Write};
 
 use nopads_core::math::{Rgb, Vec2};
+use nopads_render::hud;
 use nopads_render::raster::Frame;
 use nopads_render::terminal::{self, Screen};
 
@@ -55,7 +56,41 @@ fn backdrop() -> Rgb {
     Rgb::new(12, 16, 26)
 }
 
-pub enum View {
+/// A frame of the picture kept for the halftime reel: half the canvas, colour
+/// only.
+///
+/// A full 720p frame is five and a half megabytes of colour and depth. The reel
+/// needs the colour, at a size where a few seconds of play is a dozen megabytes
+/// rather than hundreds: half the canvas each way is what the tape can afford.
+pub struct Shot {
+    w: usize,
+    h: usize,
+    color: Vec<Rgb>,
+}
+
+impl Shot {
+    /// A picture of `frame` at `factor` fewer pixels each way.
+    pub fn of(frame: &Frame, factor: usize) -> Shot {
+        let small = frame.downsample(factor.max(1));
+        Shot {
+            w: small.w,
+            h: small.h,
+            color: small.color,
+        }
+    }
+
+    /// The shot as a full canvas frame, scaled up in whole pixels.
+    pub fn frame(&self) -> Frame {
+        let mut small = Frame::new(self.w, self.h);
+        small.color.clone_from(&self.color);
+        let mut out = Frame::new(CANVAS_W, CANVAS_H);
+        out.blit_up(&small, (CANVAS_W / self.w.max(1)).max(1));
+        out
+    }
+}
+
+/// Where the picture goes.
+enum Surface {
     Window(WindowView),
     /// The same game through Bevy's window. Built only with `--features bevy`,
     /// and only chosen when `--bevy` asked for it.
@@ -64,27 +99,98 @@ pub enum View {
     Term(Screen),
 }
 
+pub struct View {
+    surface: Surface,
+    /// The last full-canvas picture, kept for the card that goes over it. Only
+    /// the colour is kept: a card has nothing to say about depth.
+    last: Option<Frame>,
+    /// The film of the last play, when that play earned one.
+    film: Option<Vec<Shot>>,
+}
+
 impl View {
     /// Try a window first; fall back to the terminal when there is no display.
     pub fn open(force_terminal: bool, settings: &Settings) -> View {
         if !force_terminal {
             #[cfg(feature = "bevy_view")]
             if let Some(bevy) = BevyView::attach(settings) {
-                return View::Bevy(bevy);
+                return View {
+                    surface: Surface::Bevy(bevy),
+                    last: None,
+                    film: None,
+                };
             }
             if let Some(window) = WindowView::open(settings) {
-                return View::Window(window);
+                return View {
+                    surface: Surface::Window(window),
+                    last: None,
+                    film: None,
+                };
             }
         }
-        View::Term(Screen::fit())
+        View {
+            surface: Surface::Term(Screen::fit()),
+            last: None,
+            film: None,
+        }
+    }
+
+    /// Keep the film of the play that just finished, for the halftime reel.
+    pub fn set_film(&mut self, shots: Vec<Shot>) {
+        self.film = Some(shots);
+    }
+
+    /// Take the film, if the play that just finished left one.
+    pub fn take_film(&mut self) -> Option<Vec<Shot>> {
+        self.film.take()
+    }
+
+    /// Keep the picture the game just put up, so a card over it has something to
+    /// be over. Only the colour is copied, and into the same buffer each time.
+    fn remember(&mut self, frame: &Frame) {
+        if frame.w != CANVAS_W || frame.h != CANVAS_H {
+            return;
+        }
+        match &mut self.last {
+            Some(last) => last.color.clone_from(&frame.color),
+            None => {
+                let mut copy = Frame::new(CANVAS_W, CANVAS_H);
+                copy.color.clone_from(&frame.color);
+                self.last = Some(copy);
+            }
+        }
+    }
+
+    /// A card over the last picture: what happened, or what the game is asking.
+    ///
+    /// The read-out after a play and the conversion question take the same card:
+    /// small, over the shot rather than instead of it, and see-through enough
+    /// that the field is still the picture.
+    pub fn card(&mut self, title: &str, subtitle: &str, lines: &[String], accent: Rgb) -> bool {
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        match &self.last {
+            Some(last) => frame.color.clone_from(&last.color),
+            None => frame.clear(backdrop()),
+        }
+        hud::draw_notice(&mut frame, title, subtitle, lines, accent);
+        match &mut self.surface {
+            Surface::Window(window) => window.blit(&frame),
+            #[cfg(feature = "bevy_view")]
+            Surface::Bevy(view) => view.blit(&frame),
+            Surface::Term(screen) => {
+                print!("{}", terminal::picture_and_text(&frame, *screen, &[]));
+                io::stdout().flush().ok();
+                true
+            }
+        }
     }
 
     pub fn is_window(&self) -> bool {
-        match self {
-            View::Window(_) => true,
+        match &self.surface {
+            Surface::Window(_) => true,
             #[cfg(feature = "bevy_view")]
-            View::Bevy(_) => true,
-            View::Term(_) => false,
+            Surface::Bevy(_) => true,
+            Surface::Term(_) => false,
         }
     }
 
@@ -96,46 +202,51 @@ impl View {
     /// back somewhere else on the desktop every time difficulty was changed.
     pub fn apply(&mut self, settings: &Settings) {
         #[cfg(feature = "bevy_view")]
-        if let View::Bevy(view) = self {
+        if let Surface::Bevy(view) = &mut self.surface {
             view.apply(settings);
             return;
         }
-        let View::Window(window) = self else { return };
+        let Surface::Window(window) = &mut self.surface else {
+            return;
+        };
         if window.matches(settings) {
             return;
         }
         if let Some(opened) = WindowView::open(settings) {
-            *self = View::Window(opened);
+            self.surface = Surface::Window(opened);
         }
     }
 
     pub fn describe(&self) -> String {
-        match self {
-            View::Window(w) => w.describe(),
+        match &self.surface {
+            Surface::Window(w) => w.describe(),
             #[cfg(feature = "bevy_view")]
-            View::Bevy(view) => view.describe(),
-            View::Term(screen) => format!("terminal {}x{}", screen.cols, screen.rows),
+            Surface::Bevy(view) => view.describe(),
+            Surface::Term(screen) => format!("terminal {}x{}", screen.cols, screen.rows),
         }
     }
 
     /// Show a frame with a text bar along the bottom. Returns false when the
     /// player closed the window.
     pub fn show(&mut self, frame: &mut Frame, lines: &[String]) -> bool {
-        match self {
-            View::Window(window) => {
+        // Kept before it is drawn over, so the card that follows a play goes over
+        // the play rather than over a blank page.
+        self.remember(frame);
+        match &mut self.surface {
+            Surface::Window(window) => {
                 if frame.w == CANVAS_W && frame.h == CANVAS_H {
                     draw_hud(frame, lines);
                 }
                 window.blit(frame)
             }
             #[cfg(feature = "bevy_view")]
-            View::Bevy(view) => {
+            Surface::Bevy(view) => {
                 if frame.w == CANVAS_W && frame.h == CANVAS_H {
                     draw_hud(frame, lines);
                 }
                 view.blit(frame)
             }
-            View::Term(screen) => {
+            Surface::Term(screen) => {
                 print!("{}", terminal::picture_and_text(frame, *screen, lines));
                 io::stdout().flush().ok();
                 true
@@ -167,19 +278,19 @@ impl View {
     }
 
     fn page_at(&mut self, lines: &[String], scale: usize) -> bool {
-        match self {
-            View::Window(window) => {
+        match &mut self.surface {
+            Surface::Window(window) => {
                 let mut frame = Frame::new(CANVAS_W, CANVAS_H);
                 draw_page(&mut frame, lines, scale);
                 window.blit(&frame)
             }
             #[cfg(feature = "bevy_view")]
-            View::Bevy(view) => {
+            Surface::Bevy(view) => {
                 let mut frame = Frame::new(CANVAS_W, CANVAS_H);
                 draw_page(&mut frame, lines, scale);
                 view.blit(&frame)
             }
-            View::Term(screen) => {
+            Surface::Term(screen) => {
                 print!("{}", terminal::text_page(*screen, lines));
                 io::stdout().flush().ok();
                 true
@@ -189,20 +300,20 @@ impl View {
 
     /// Keyboard input, so the game is playable with no controller at all.
     pub fn poll(&mut self) -> Input {
-        match self {
-            View::Window(window) => window.poll(),
+        match &mut self.surface {
+            Surface::Window(window) => window.poll(),
             #[cfg(feature = "bevy_view")]
-            View::Bevy(view) => view.poll(),
-            View::Term(_) => Input::default(),
+            Surface::Bevy(view) => view.poll(),
+            Surface::Term(_) => Input::default(),
         }
     }
 
     pub fn reset(&mut self) {
-        if let View::Window(window) = self {
+        if let Surface::Window(window) = &mut self.surface {
             window.prev = Buttons::default();
         }
         #[cfg(feature = "bevy_view")]
-        if let View::Bevy(view) = self {
+        if let Surface::Bevy(view) = &mut self.surface {
             view.reset();
         }
     }
@@ -429,6 +540,29 @@ mod tests {
         for word in line.split_whitespace() {
             assert!(joined.contains(word), "{word:?} went missing");
         }
+    }
+
+    #[test]
+    fn a_shot_keeps_half_the_picture_and_gives_the_whole_frame_back() {
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        frame.clear(Rgb::new(10, 90, 40));
+        frame.fill_rect(0, 0, CANVAS_W as i32, 40, Rgb::new(200, 40, 30));
+        let shot = Shot::of(&frame, 2);
+        // Half the canvas each way is what makes a few seconds of play worth
+        // keeping in front of a half; the frame it came out of is five megabytes.
+        assert_eq!(shot.color.len(), (CANVAS_W / 2) * (CANVAS_H / 2));
+        let back = shot.frame();
+        assert_eq!((back.w, back.h), (CANVAS_W, CANVAS_H), "the shot lost the canvas");
+        assert_eq!(
+            back.color[10 * CANVAS_W + 10],
+            frame.color[10 * CANVAS_W + 10],
+            "the reel band at the top of the shot changed colour"
+        );
+        assert_eq!(
+            back.color[400 * CANVAS_W + 640],
+            frame.color[400 * CANVAS_W + 640],
+            "the field under the band changed colour"
+        );
     }
 
     #[test]
