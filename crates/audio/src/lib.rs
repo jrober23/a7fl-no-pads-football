@@ -59,6 +59,13 @@ const SOUND_DIR: &str = "sounds";
 const MUSIC_DEFAULT: f32 = 0.8;
 /// The folder inside `sounds` the front end's playlist is read from.
 const PLAYLIST_DIR: &str = "menu";
+/// The folder the stadium's music is read from: shuffled the same way, so a
+/// stadium with more than one track does not play the same record all evening.
+/// `sounds/music.wav` is still the one-track fallback.
+const STADIUM_DIR: &str = "stadium";
+/// The folder the play's own sounds are read from: one file per cue, named for
+/// the cue. `sounds/sfx/tackle.wav` is the tackle, and so on.
+const SFX_DIR: &str = "sfx";
 /// How long the match's intro song takes to fade once the kickoff arrives.
 const INTRO_FADE_SECONDS: f32 = 1.4;
 /// One sample of that fade. The level walks a straight line down rather than
@@ -80,7 +87,8 @@ pub struct Audio {
     /// never ends, so it plays until this is dropped. It is also the music bus:
     /// the bed today, a stadium loop when there is one.
     bed: Option<Player>,
-    /// The stadium's music, when the player brought a `music.wav`: looped, and
+    /// The stadium's music: every track in `sounds/stadium`, shuffled into one
+    /// running order and looped, with `music.wav` as a one-track fallback. It is
     /// audible only in the lull after a play.
     music: Option<Player>,
     /// The front end's playlist: every WAV in `sounds/menu`, joined into one
@@ -106,6 +114,16 @@ pub struct Audio {
     /// The crowd's answer to a big play, when the player brought a `rise.wav`:
     /// their own recording, played as it is rather than cut from the score's.
     rise_clip: Option<Arc<Vec<f32>>>,
+    /// The play's own sounds, when the player brought them: a throw, a catch, a
+    /// tackle, each read from `sounds/sfx` by name. A missing one is generated
+    /// when it is asked for, so the fallback costs nothing until a play makes
+    /// that sound.
+    throw_clip: Option<Arc<Vec<f32>>>,
+    catch_clip: Option<Arc<Vec<f32>>>,
+    tackle_clip: Option<Arc<Vec<f32>>>,
+    /// The player the cues play on. One at a time: every cue clears it, so a
+    /// sound is never heard a second after the moment it belongs to.
+    sfx: Option<Player>,
 }
 
 impl Audio {
@@ -121,10 +139,17 @@ impl Audio {
         let room = load_clip("crowd.wav");
         let cheer = load_clip("cheer.wav").map(Arc::new);
         let rise_clip = load_clip("rise.wav").map(Arc::new);
-        let music = load_clip("music.wav");
+        // The stadium's music, shuffled from its folder the same way the front
+        // end's playlist is, so a stadium with a dozen tracks cycles them.
+        let music = load_tracks(STADIUM_DIR, "music.wav");
         // The front end's playlist and the match's own song.
-        let playlist = load_playlist();
+        let playlist = load_tracks(PLAYLIST_DIR, "menu.wav");
         let intro_clip = load_clip("intro.wav").map(Arc::new);
+        // The play's own sounds. Each is optional: the generated version is
+        // played when the file is not there.
+        let throw_clip = load_effect("throw.wav");
+        let catch_clip = load_effect("catch.wav");
+        let tackle_clip = load_effect("tackle.wav");
         match DeviceSinkBuilder::open_default_sink() {
             Ok(mut sink) => {
                 // rodio prints a line to stderr when the sink is dropped. This
@@ -155,6 +180,9 @@ impl Audio {
                 }
                 // The intro song is queued per match, by `intro_song`.
                 let intro = Player::connect_new(sink.mixer());
+                // The cues share one player: a throw or a hit starts now, not
+                // after whatever was still playing.
+                let sfx = Player::connect_new(sink.mixer());
                 Audio {
                     _sink: Some(sink),
                     crowd: Some(crowd),
@@ -169,6 +197,10 @@ impl Audio {
                     stadium: Some(Arc::new(AtomicBool::new(false))),
                     cheer,
                     rise_clip,
+                    throw_clip,
+                    catch_clip,
+                    tackle_clip,
+                    sfx: Some(sfx),
                 }
             }
             Err(_) => Audio::silent(),
@@ -192,6 +224,10 @@ impl Audio {
             music_level: None,
             stadium: None,
             cheer: None,
+            throw_clip: None,
+            catch_clip: None,
+            tackle_clip: None,
+            sfx: None,
             rise_clip: None,
         }
     }
@@ -304,11 +340,46 @@ impl Audio {
     }
 
     /// The effects bus: the crowd's answer to a score, and the cues that join
-    /// it. This is the settings screen's EFFECTS row.
+    /// it. This is the settings screen's EFFECTS row, and it moves the crowd and
+    /// the play's own sounds together: one is nothing without the other.
     pub fn set_effects(&self, level: f32) {
+        let level = level.clamp(0.0, 1.0);
         if let Some(crowd) = &self.crowd {
-            crowd.set_volume(level.clamp(0.0, 1.0));
+            crowd.set_volume(level);
         }
+        if let Some(sfx) = &self.sfx {
+            sfx.set_volume(level);
+        }
+    }
+
+    /// The ball leaving the passer's hand.
+    pub fn throw_sound(&self) {
+        self.effect(&self.throw_clip, throw_whoosh);
+    }
+
+    /// A ball coming down in somebody's hands.
+    pub fn catch_sound(&self) {
+        self.effect(&self.catch_clip, catch_slap);
+    }
+
+    /// The hit landing.
+    pub fn tackle_sound(&self) {
+        self.effect(&self.tackle_clip, tackle_thud);
+    }
+
+    /// One cue on the effects bus: the player's own file when they brought one,
+    /// the generated version when they did not, and silence when there is no
+    /// device at all -- which is every headless run.
+    fn effect(&self, clip: &Option<Arc<Vec<f32>>>, generated: fn() -> Vec<f32>) {
+        let Some(sfx) = &self.sfx else {
+            return;
+        };
+        sfx.clear();
+        let samples = match clip {
+            Some(samples) => samples.as_ref().clone(),
+            None => generated(),
+        };
+        sfx.append(samples_buffer(samples));
     }
 
     /// Hold the bed down for as long as the guard lives.
@@ -599,6 +670,80 @@ fn shortened(mut samples: Vec<f32>, seconds: f32, level: f32) -> Vec<f32> {
     samples
 }
 
+/// The fallback for a throw: air moving, not a tone. A short burst of noise with
+/// a dull body and a bright edge to it, opening as the arm comes through and gone
+/// in a quarter of a second -- the sound of a hand letting go of something.
+fn throw_whoosh() -> Vec<f32> {
+    const SECONDS: f32 = 0.24;
+    let total = (SAMPLE_RATE as f32 * SECONDS) as usize;
+    let mut samples = Vec::with_capacity(total);
+    let mut noise = 0x7A11_2026u32;
+    let (mut low, mut high) = (0.0f32, 0.0f32);
+    for i in 0..total {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let white = next_noise(&mut noise);
+        // Two one-poles: the dull air the arm moves, and the hiss at the edge of
+        // the ball. A sweep to the bright band, because the hand is faster at the
+        // release than it was a moment before.
+        let sweep = (t / 0.055).clamp(0.0, 1.0);
+        low += (white - low) * 0.035;
+        high += (white - high) * (0.10 + 0.25 * sweep);
+        let body = low * 1.7 + high * 0.7;
+        // Open in thirty milliseconds, shut by the end: the ball is gone.
+        let attack = (t / 0.03).min(1.0);
+        let release = ((SECONDS - t) / (SECONDS * 0.75)).clamp(0.0, 1.0).powf(2.2);
+        samples.push((body * attack * release * 0.55).clamp(-1.0, 1.0));
+    }
+    samples
+}
+
+/// The fallback for a catch: hands taking a ball that was already moving. The
+/// attack is a sample long because a catch is a moment, and there is a dull thump
+/// under it so it reads as a body behind the hands rather than a hiss.
+fn catch_slap() -> Vec<f32> {
+    const SECONDS: f32 = 0.16;
+    let total = (SAMPLE_RATE as f32 * SECONDS) as usize;
+    let mut samples = Vec::with_capacity(total);
+    let mut noise = 0xC47C_2026u32;
+    let mut bright = 0.0f32;
+    for i in 0..total {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let white = next_noise(&mut noise);
+        bright += (white - bright) * 0.5;
+        let attack = (t / 0.002).min(1.0);
+        let release = (-t / 0.045).exp();
+        let thump = (t * std::f32::consts::TAU * 150.0).sin() * (-t / 0.05).exp();
+        samples.push(((bright * 0.55 * release + thump * 0.35) * attack).clamp(-1.0, 1.0));
+    }
+    samples
+}
+
+/// The fallback for a tackle: a body landing. A low tone that drops as the weight
+/// comes down, under the flat noise of two of them hitting the grass.
+fn tackle_thud() -> Vec<f32> {
+    const SECONDS: f32 = 0.34;
+    let total = (SAMPLE_RATE as f32 * SECONDS) as usize;
+    let mut samples = Vec::with_capacity(total);
+    let mut noise = 0x7AC4_1E00u32;
+    let mut body = 0.0f32;
+    let mut phase = 0.0f32;
+    for i in 0..total {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let white = next_noise(&mut noise);
+        // A body is a low tone that falls in pitch as it lands, not a drum.
+        body += (white - body) * 0.02;
+        let hz = 105.0 - 45.0 * (t / 0.12).min(1.0);
+        phase += std::f32::consts::TAU * hz / SAMPLE_RATE as f32;
+        let thump = phase.sin() * (-t / 0.10).exp();
+        let grass = (white - body) * (-t / 0.035).exp();
+        let attack = (t / 0.003).min(1.0);
+        samples.push(
+            ((thump * 0.7 + grass * 0.5 + body * 0.4) * attack).clamp(-1.0, 1.0),
+        );
+    }
+    samples
+}
+
 /// White noise in `-1..=1` from a xorshift, so none of this needs a dependency.
 fn next_noise(state: &mut u32) -> f32 {
     let mut x = *state;
@@ -634,12 +779,17 @@ fn sound_path(name: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// The front end's playlist: every WAV in `sounds/menu`, joined into one running
-/// order the game picks, so the menu has more than one track and does not open on
-/// the same one every evening. A single `sounds/menu.wav` is a playlist of one, so
-/// a player with one track does not have to make a folder for it.
-fn load_playlist() -> Option<Vec<f32>> {
-    let clips = playlist_clips();
+/// A folder of tracks joined into one running order the game picks, so a player
+/// with more than one track does not hear the same one first every evening: the
+/// front end's playlist and the stadium's music are the same thing.
+///
+/// A single `<single>.wav` is a playlist of one, so a player with one file does
+/// not have to make a folder for it.
+fn load_tracks(dir: &str, single: &str) -> Option<Vec<f32>> {
+    let mut clips = folder_clips(dir);
+    if clips.is_empty() {
+        clips = load_clip(single).into_iter().collect();
+    }
     if clips.is_empty() {
         return None;
     }
@@ -652,11 +802,11 @@ fn load_playlist() -> Option<Vec<f32>> {
     (!out.is_empty()).then_some(out)
 }
 
-/// Every track of the playlist, in the order the files were found: the first
-/// `sounds/menu` folder either root has.
-fn playlist_clips() -> Vec<Vec<f32>> {
+/// Every track of a folder, in the order the files were found: the first
+/// `sounds/<dir>` folder either root has.
+fn folder_clips(dir: &str) -> Vec<Vec<f32>> {
     for root in sound_roots() {
-        let dir = root.join(SOUND_DIR).join(PLAYLIST_DIR);
+        let dir = root.join(SOUND_DIR).join(dir);
         if !dir.is_dir() {
             continue;
         }
@@ -678,7 +828,7 @@ fn playlist_clips() -> Vec<Vec<f32>> {
             return clips;
         }
     }
-    load_clip("menu.wav").into_iter().collect()
+    Vec::new()
 }
 
 /// A running order for the playlist: Fisher-Yates from a seed, so a second evening
@@ -702,6 +852,18 @@ fn playlist_seed() -> u32 {
         .map(|since| since.subsec_nanos())
         .unwrap_or(0xA7F1_2026)
         | 1
+}
+
+/// One of the play's own sounds, by the cue it is named for, from
+/// `sounds/sfx`: nothing when the player did not bring one, and the generated
+/// version is played instead.
+fn load_effect(name: &str) -> Option<Arc<Vec<f32>>> {
+    sound_roots()
+        .into_iter()
+        .map(|root| root.join(SOUND_DIR).join(SFX_DIR).join(name))
+        .find(|path| path.is_file())
+        .and_then(|path| load_clip_at(&path))
+        .map(Arc::new)
 }
 
 /// A player's sound by name, or nothing when they did not bring one.
@@ -808,6 +970,9 @@ mod tests {
         audio.intro_fade();
         audio.stadium(true);
         audio.during_play();
+        audio.throw_sound();
+        audio.catch_sound();
+        audio.tackle_sound();
     }
 
     #[test]
@@ -870,6 +1035,10 @@ mod tests {
             music_level: None,
             stadium: None,
             cheer: None,
+            throw_clip: None,
+            catch_clip: None,
+            tackle_clip: None,
+            sfx: None,
             rise_clip: None,
         };
         {
@@ -1062,6 +1231,10 @@ mod tests {
             music_level: None,
             stadium: None,
             cheer: None,
+            throw_clip: None,
+            catch_clip: None,
+            tackle_clip: None,
+            sfx: None,
             rise_clip: Some(Arc::new(vec![0.25; 480])),
         };
         let rise: Vec<f32> = own().rise().collect();
@@ -1129,6 +1302,38 @@ mod tests {
             "the fade is not moving: {middle}"
         );
         assert!(last < 0.01, "the song never faded out: {last}");
+    }
+
+    #[test]
+    fn a_tackle_that_has_no_file_is_still_a_hit() {
+        // The generated stand-ins have to be real sounds: short, audible, and
+        // opening and closing on silence so nothing clicks on the way in or out.
+        for (name, clip, longest) in [
+            ("throw", throw_whoosh(), 0.3),
+            ("catch", catch_slap(), 0.2),
+            ("tackle", tackle_thud(), 0.4),
+        ] {
+            let seconds = clip.len() as f32 / SAMPLE_RATE as f32;
+            assert!(seconds <= longest, "the {name} lasts {seconds} s");
+            assert!(seconds > 0.05, "the {name} is a click, not a sound");
+            assert!(
+                clip[0].abs() < 0.05,
+                "the {name} opens on a step: {}",
+                clip[0]
+            );
+            let peak = clip.iter().fold(0.0f32, |loudest, s| loudest.max(s.abs()));
+            assert!(peak > 0.1, "the {name} cannot be heard: peak {peak}");
+            assert!(peak <= 1.0, "the {name} clips at {peak}");
+            let tail = &clip[clip.len() - 200..];
+            assert!(
+                tail.iter().all(|s| s.abs() < 0.1),
+                "the {name} stops on a step"
+            );
+            assert!(
+                clip.iter().all(|s| s.is_finite()),
+                "the {name} has a sample that is not a number"
+            );
+        }
     }
 
     /// Run by hand on a machine that has a sound card:

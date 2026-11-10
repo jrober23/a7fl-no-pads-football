@@ -193,6 +193,22 @@ pub enum BallHands {
     Swat,
 }
 
+/// A sound the play makes as it happens, for the client to play.
+///
+/// Nothing here knows what a speaker is: the sim says what happened and the
+/// client decides what that sounds like. A player who brought no sounds of their
+/// own hears the game's, and a client that cannot make a noise asks and throws
+/// the answer away.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cue {
+    /// The ball left the passer's hand.
+    Throw,
+    /// Somebody came down with it: a completion, or a pick.
+    Catch,
+    /// The hit landed.
+    Tackle,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlayOutcome {
     Run,
@@ -630,6 +646,10 @@ pub struct PlaySim<'a> {
     /// The move the carrier is in the middle of, if somebody asked for one.
     carrier_moves: CarrierMove,
     pub events: Vec<SimEvent>,
+    /// The sounds the play has made since the client last listened. Never more
+    /// than a handful: a client that never listens -- `sim`, `film`, the tests --
+    /// cannot grow this by running a game.
+    cues: Vec<Cue>,
     read_timer: f32,
     catch_spot: f32,
     scramble_started: bool,
@@ -813,6 +833,7 @@ impl<'a> PlaySim<'a> {
             option_choice: None,
             result: None,
             events: Vec::new(),
+            cues: Vec::new(),
             read_timer: 0.0,
             catch_spot: setup.los,
             scramble_started: false,
@@ -2198,10 +2219,27 @@ impl<'a> PlaySim<'a> {
         self.carrier = None;
         self.intended = receiver;
         self.phase = Phase::BallInAir;
+        self.cue(Cue::Throw);
         self.events.push(SimEvent {
             t: self.t,
             text: format!("{} lets it go", self.name_of(qb)),
         });
+    }
+
+    /// Note a sound for the client to play. The list is capped because a client
+    /// that never listens must not grow a vector across a whole game, and the
+    /// newest few are all a live play can use anyway.
+    fn cue(&mut self, cue: Cue) {
+        if self.cues.len() < 8 {
+            self.cues.push(cue);
+        }
+    }
+
+    /// Take the sounds made since the last call. The live loop calls this once a
+    /// frame and plays what it gets; a play run without a client fills the short
+    /// list and drops it with the sim.
+    pub fn take_cues(&mut self) -> Vec<Cue> {
+        std::mem::take(&mut self.cues)
     }
 
     fn start_scramble(&mut self, qb: usize) {
@@ -3407,6 +3445,7 @@ impl<'a> PlaySim<'a> {
             tackler_roster,
             fumbled,
         });
+        self.cue(Cue::Tackle);
         let text = format!(
             "{} wraps up {}!",
             self.name_of(tackler),
@@ -3928,6 +3967,7 @@ impl<'a> PlaySim<'a> {
                 self.catch_spot = self.players[receiver].pos.x;
                 self.ball.holder = Some(receiver);
                 self.phase = Phase::Run;
+                self.cue(Cue::Catch);
                 let air = ((self.players[receiver].pos.x - self.los) * self.dirf()).max(0.0);
                 self.events.push(SimEvent {
                     t: self.t,
@@ -4497,6 +4537,7 @@ impl<'a> PlaySim<'a> {
         self.phase = Phase::Return;
         self.intended = None;
         self.pass_caught = true;
+        self.cue(Cue::Catch);
         // The pad goes to the man with the ball: an interception a player made
         // himself should not then be run back by the coordinator.
         if self.human_defender.is_some() {

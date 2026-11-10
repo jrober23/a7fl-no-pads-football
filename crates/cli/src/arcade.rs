@@ -21,7 +21,7 @@ use nopads_core::playbook::{
     DefFront, DefRole, Formation, OffRole, Play,
 };
 use nopads_core::rules::{FoulTeam, THROW_OFF_MIN_AIR_YARDS};
-use nopads_core::sim::{Hit, DefControl, Phase, PlayResult, PlaySim, QbControl, SnapSetup};
+use nopads_core::sim::{Cue, DefControl, Hit, Phase, PlayResult, PlaySim, QbControl, SnapSetup};
 use nopads_core::team::{league_teams, Aspect, Team};
 use nopads_core::throwoff::{power_for_air, ThrowOffSetup, ThrowOffSim, ThrowPhase, ThrowRole};
 use nopads_render::broadcast::{HandCamera, Broadcast, CameraMode};
@@ -3561,6 +3561,15 @@ trait SnapSim: Clone {
         None
     }
 
+    /// The sounds the play has made since the last call: a throw, a catch, a hit.
+    ///
+    /// The sim does not know what a speaker is, so it says what happened and the
+    /// loop plays it. A play with no moments of its own -- the throw-off -- says
+    /// nothing, which is why this has a default.
+    fn cues(&mut self) -> Vec<Cue> {
+        Vec::new()
+    }
+
     /// The ball is still the player's to put in play.
     fn at_the_line(&self) -> bool;
 
@@ -3637,6 +3646,10 @@ impl SnapSim for PlaySim<'_> {
     fn crowd(&self) -> Option<Crowd> {
         let result = self.result.as_ref()?;
         crowd_for(result, self.setup.down, self.setup.to_go, self.setup.is_try)
+    }
+
+    fn cues(&mut self) -> Vec<Cue> {
+        self.take_cues()
     }
 
     fn at_the_line(&self) -> bool {
@@ -4104,6 +4117,17 @@ fn snap_loop<S: SnapSim>(
             }
         } else {
             acc = 0.0;
+        }
+
+        // What the play made a sound of since the last frame: a throw, a catch, a
+        // hit. The sim says what happened; this is where it becomes a sound, and
+        // the only place that knows whether there is a speaker to play it on.
+        for cue in screen.sim.cues() {
+            match cue {
+                Cue::Throw => screen.audio.throw_sound(),
+                Cue::Catch => screen.audio.catch_sound(),
+                Cue::Tackle => screen.audio.tackle_sound(),
+            }
         }
 
         // The word over a dead ball arrives over half a second rather than cutting
