@@ -545,6 +545,20 @@ impl GameState {
     /// interactive client can steer the quarterback and watch the play unfold
     /// before the result is booked. If the driver returns without a result the
     /// play is run to completion.
+    /// Spend time off the play clock while the call is being made.
+    ///
+    /// The count used to belong to the snap alone, so the sheet could be left
+    /// open as long as the player liked and the clock only started when he was
+    /// done reading. It starts with the sheet now. `true` on the tick that takes
+    /// it to nothing, which is a delay of game; the clock never runs past zero.
+    pub fn tick_play_clock(&mut self, dt: f32) -> bool {
+        if self.play_clock <= 0.0 || dt <= 0.0 {
+            return false;
+        }
+        self.play_clock = (self.play_clock - dt).max(0.0);
+        self.play_clock <= 0.0
+    }
+
     pub fn snap_with<F>(&mut self, play: Play, def: DefCall, mut drive: F) -> Option<PlayRecord>
     where
         F: for<'s> FnMut(&mut crate::sim::PlaySim<'s>),
@@ -1522,4 +1536,18 @@ mod tests {
             panic!("conversion should be a scrimmage snap");
         }
     }
+    #[test]
+    fn the_play_clock_runs_while_the_call_is_being_made() {
+        let teams = crate::team::league_teams();
+        let mut game = GameState::new(teams[0].clone(), teams[1].clone(), 7);
+        assert_eq!(game.play_clock, crate::rules::PLAY_CLOCK_SECONDS);
+        assert!(!game.tick_play_clock(1.0), "a second is not a delay of game");
+        assert_eq!(game.play_clock, crate::rules::PLAY_CLOCK_SECONDS - 1.0);
+        // The tick that empties it is the foul, and it does not run past nothing.
+        assert!(game.tick_play_clock(crate::rules::PLAY_CLOCK_SECONDS));
+        assert_eq!(game.play_clock, 0.0);
+        assert!(!game.tick_play_clock(5.0), "the clock was emptied twice");
+        assert_eq!(game.play_clock, 0.0);
+    }
+
 }
