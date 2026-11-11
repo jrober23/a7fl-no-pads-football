@@ -73,6 +73,13 @@ const INTRO_FADE_SECONDS: f32 = 1.4;
 /// One sample of that fade. The level walks a straight line down rather than
 /// chasing a target it never quite reaches, so the song truly gets to silence.
 const INTRO_STEP: f32 = 1.0 / (INTRO_FADE_SECONDS * SAMPLE_RATE as f32);
+/// How much of a song one play gets. A stadium's DJ cuts a record for a down
+/// and moves on to the next one, so this is a phrase or two rather than the
+/// whole track.
+const SNIPPET_SECONDS: f32 = 10.0;
+/// How the end of that snippet is taken: the last fraction of a second is
+/// faded, so a record cut short for the next play ends instead of clicking.
+const SNIPPET_TAIL: f32 = 0.6;
 
 /// The game's sound, or the absence of it.
 pub struct Audio {
@@ -90,9 +97,17 @@ pub struct Audio {
     /// the bed today, a stadium loop when there is one.
     bed: Option<Player>,
     /// The stadium's music: every track in `sounds/stadium`, shuffled into one
-    /// running order and looped, with `music.wav` as a one-track fallback. It is
-    /// audible only in the lull after a play.
+    /// running order, with `music.wav` as a one-track fallback. Each play gets a
+    /// snippet of the next song on that order, from somewhere inside it, rather
+    /// than the whole album running end to end under the game.
     music: Option<Player>,
+    /// Which snippet is due. The game bumps it when a play ends and the record
+    /// comes back; the track's source reads it every sample, so a new number is
+    /// a new song from a new spot in it.
+    snippet: Option<Arc<AtomicU32>>,
+    /// The deal this session's album was shuffled by, so the spot inside each
+    /// song is the same for a whole game and different from the last one.
+    salt: u32,
     /// The front end's playlist: every WAV in `sounds/menu`, joined into one
     /// running order and looped. The menu starts it and dropping this stops it,
     /// because a match has an intro song of its own.
@@ -156,7 +171,7 @@ impl Audio {
         let rise_clip = load_clip("rise.wav").map(Arc::new);
         // The stadium's music, shuffled from its folder the same way the front
         // end's playlist is, so a stadium with a dozen tracks cycles them.
-        let music = load_tracks(STADIUM_DIR, "music.wav");
+        let music = load_albums(STADIUM_DIR, "music.wav");
         // The front end's playlist and the match's own song.
         let playlist = load_tracks(PLAYLIST_DIR, "menu.wav");
         let intro_clip = load_clip("intro.wav").map(Arc::new);
@@ -188,11 +203,15 @@ impl Audio {
                 // The stadium's music is queued behind its own gate, held at
                 // silence: it comes up after a play, not before it.
                 let stadium_level = Arc::new(AtomicU32::new(0.0f32.to_bits()));
+                let snippet = Arc::new(AtomicU32::new(0));
+                let salt = playlist_seed();
                 let track = Player::connect_new(sink.mixer());
-                if let Some(samples) = music {
+                if let Some(album) = music {
                     track.append(StadiumClip::new(
-                        Arc::new(samples),
+                        Arc::new(album),
                         Arc::clone(&stadium_level),
+                        Arc::clone(&snippet),
+                        salt,
                     ));
                 }
                 // The playlist is queued and paused: the menu starts it, so a
@@ -214,6 +233,8 @@ impl Audio {
                     bed_level: Some(bed_level),
                     bed: Some(bed),
                     music: Some(track),
+                    snippet: Some(snippet),
+                    salt,
                     menu: Some(menu),
                     intro: Some(intro),
                     intro_clip,
@@ -245,6 +266,8 @@ impl Audio {
             bed_level: None,
             bed: None,
             music: None,
+            snippet: None,
+            salt: 0,
             menu: None,
             intro: None,
             intro_clip: None,
@@ -320,9 +343,23 @@ impl Audio {
     /// The stadium's music, on or off: it plays after a play, not before the snap
     /// and not under the introduction, the way a stadium's DJ is on the other side
     /// of the whistle.
+    ///
+    /// Opening it when it was shut is what a new play sounds like: the next song
+    /// on the running order, from somewhere inside it, rather than the record
+    /// picking up where the last lull left it.
     pub fn stadium(&self, on: bool) {
+        let was = self
+            .stadium
+            .as_ref()
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false);
         if let Some(flag) = &self.stadium {
             flag.store(on, Ordering::Relaxed);
+        }
+        if on && !was {
+            if let Some(next) = &self.snippet {
+                next.fetch_add(1, Ordering::Relaxed);
+            }
         }
         self.apply_stadium();
     }
@@ -682,29 +719,92 @@ impl Source for CrowdBed {
 /// over a third of a second rather than a switch.
 const STADIUM_STEP: f32 = 1.0 / (0.35 * SAMPLE_RATE as f32);
 
-/// The stadium's music as a `Source`: the joined playlist, looped, heard through
-/// a gate the game opens after a play and shuts on the snap.
+/// The stadium's music as a `Source`: a snippet of one song per play, heard
+/// through a gate the game opens after a play and shuts on the snap.
 ///
-/// The track was held silent with the player's own volume, which is a number the
-/// mixer reads on its own schedule and not a window anyone could see; a level
-/// read per sample is the same thing the crowd does, and it lets the window fade
-/// in instead of starting on a step.
+/// The album is a running order of whole tracks, and a play asks for the next one
+/// by bumping `snippet`. The snippet starts somewhere inside its song rather than
+/// at the top, because a DJ drops the needle where the good part is: twelve plays
+/// of twelve intros is not music. When the snippet ends the source goes quiet
+/// rather than honest -- a `Source` that returns `None` is a player that is
+/// finished and never plays again -- so there are samples of zero until the next
+/// play asks for a record.
+///
+/// The gate was the player's own volume, which is a number the mixer reads on its
+/// own schedule and not a window anyone could see; a level read per sample is the
+/// same thing the crowd does, and it lets the window fade in instead of starting
+/// on a step.
 struct StadiumClip {
-    samples: Arc<Vec<f32>>,
+    album: Arc<Vec<Vec<f32>>>,
+    /// The song playing, where in it, and where this snippet of it ends.
+    song: usize,
     at: usize,
+    end: usize,
+    /// How many samples the tail fade runs over.
+    tail: usize,
     gate: Arc<AtomicU32>,
+    snippet: Arc<AtomicU32>,
+    /// The snippet that is playing, so a bump is noticed on the next sample.
+    playing: u32,
+    salt: u32,
     level: f32,
 }
 
 impl StadiumClip {
-    fn new(samples: Arc<Vec<f32>>, gate: Arc<AtomicU32>) -> StadiumClip {
+    fn new(
+        album: Arc<Vec<Vec<f32>>>,
+        gate: Arc<AtomicU32>,
+        snippet: Arc<AtomicU32>,
+        salt: u32,
+    ) -> StadiumClip {
         let level = f32::from_bits(gate.load(Ordering::Relaxed));
-        StadiumClip {
-            samples,
+        let playing = snippet.load(Ordering::Relaxed);
+        let mut clip = StadiumClip {
+            album,
+            song: 0,
             at: 0,
+            end: 0,
+            tail: 1,
             gate,
+            snippet,
+            playing,
+            salt,
             level,
+        };
+        clip.choose();
+        clip
+    }
+
+    /// Take the record as it is asked for: the next song on the running order,
+    /// from a spot inside it that is not the beginning.
+    fn choose(&mut self) {
+        let playing = self.snippet.load(Ordering::Relaxed);
+        self.playing = playing;
+        self.end = 0;
+        let count = self.album.len();
+        if count == 0 {
+            return;
         }
+        // One song a play in the order the album was dealt, so a stadium with
+        // three songs plays all three before it repeats one.
+        self.song = (playing as usize) % count;
+        if self.album[self.song].is_empty() {
+            self.song = (0..count)
+                .find(|song| !self.album[*song].is_empty())
+                .unwrap_or(0);
+        }
+        let len = self.album[self.song].len();
+        let want = (SAMPLE_RATE as f32 * SNIPPET_SECONDS) as usize;
+        let span = len.saturating_sub(want);
+        let mut seed = (self.salt ^ playing.wrapping_mul(0x9E37_79B9)) | 1;
+        let start = if span == 0 {
+            0
+        } else {
+            (next_unit(&mut seed) * span as f32) as usize
+        };
+        self.at = start;
+        self.end = if span == 0 { len } else { start + want };
+        self.tail = ((SAMPLE_RATE as f32 * SNIPPET_TAIL) as usize).clamp(1, self.end - start);
     }
 }
 
@@ -712,17 +812,33 @@ impl Iterator for StadiumClip {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        if self.samples.is_empty() {
-            return None;
+        if self.snippet.load(Ordering::Relaxed) != self.playing {
+            self.choose();
         }
         let target = f32::from_bits(self.gate.load(Ordering::Relaxed));
         let step = (target - self.level).clamp(-STADIUM_STEP, STADIUM_STEP);
         self.level = (self.level + step).clamp(0.0, 1.0);
-        // The track runs while it is shut, the way a record does: the next window
-        // is where the song has got to, not its first two seconds again.
-        let sample = self.samples[self.at] * self.level;
-        self.at = (self.at + 1) % self.samples.len();
-        Some(sample)
+        // The snippet is over and the next play has not been called: silence,
+        // but samples of it, because an iterator that ends is a record that
+        // never comes back.
+        if self.at >= self.end {
+            return Some(0.0);
+        }
+        let left = self.end - self.at;
+        let fade = if left < self.tail {
+            left as f32 / self.tail as f32
+        } else {
+            1.0
+        };
+        let sample = self
+            .album
+            .get(self.song)
+            .and_then(|song| song.get(self.at))
+            .copied()
+            .unwrap_or(0.0);
+        let out = sample * self.level * fade;
+        self.at += 1;
+        Some(out)
     }
 }
 
@@ -740,6 +856,7 @@ impl Source for StadiumClip {
     }
 
     fn total_duration(&self) -> Option<Duration> {
+        // A snippet a play: it never finishes on its own, it just goes quiet.
         None
     }
 }
@@ -948,6 +1065,19 @@ fn sound_path(name: &str) -> Option<PathBuf> {
 /// A single `<single>.wav` is a playlist of one, so a player with one file does
 /// not have to make a folder for it.
 fn load_tracks(dir: &str, single: &str) -> Option<Vec<f32>> {
+    let order = load_albums(dir, single)?;
+    let total: usize = order.iter().map(|clip| clip.len()).sum();
+    let mut out = Vec::with_capacity(total);
+    for clip in order {
+        out.extend(clip);
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+/// The same running order kept as whole songs rather than joined into one: the
+/// stadium plays a snippet of a different one every play, so it has to know
+/// where each song ends and how much of it is worth cutting.
+fn load_albums(dir: &str, single: &str) -> Option<Vec<Vec<f32>>> {
     let mut clips = folder_clips(dir);
     if clips.is_empty() {
         clips = load_clip(single).into_iter().collect();
@@ -956,12 +1086,7 @@ fn load_tracks(dir: &str, single: &str) -> Option<Vec<f32>> {
         return None;
     }
     let order = rotate(clips, playlist_seed());
-    let total: usize = order.iter().map(|clip| clip.len()).sum();
-    let mut out = Vec::with_capacity(total);
-    for clip in order {
-        out.extend(clip);
-    }
-    (!out.is_empty()).then_some(out)
+    (!order.is_empty()).then_some(order)
 }
 
 /// Every track of a folder, in the order the files were found: the first
@@ -1191,6 +1316,8 @@ mod tests {
             bed_level: Some(Arc::clone(&level)),
             bed: None,
             music: None,
+            snippet: None,
+            salt: 0,
             menu: None,
             intro: None,
             intro_clip: None,
@@ -1404,6 +1531,8 @@ mod tests {
             bed_level: None,
             bed: None,
             music: None,
+            snippet: None,
+            salt: 0,
             menu: None,
             intro: None,
             intro_clip: None,
@@ -1490,7 +1619,16 @@ mod tests {
     #[test]
     fn the_stadium_track_waits_for_its_window() {
         let gate = Arc::new(AtomicU32::new(0.0f32.to_bits()));
-        let mut track = StadiumClip::new(Arc::new(vec![1.0; 480]), Arc::clone(&gate));
+        let snippet = Arc::new(AtomicU32::new(0));
+        // Long enough for a whole snippet, so the window is measured on music
+        // rather than on the silence after the record has been cut.
+        let song = vec![1.0; SAMPLE_RATE as usize * 20];
+        let mut track = StadiumClip::new(
+            Arc::new(vec![song]),
+            Arc::clone(&gate),
+            Arc::clone(&snippet),
+            7,
+        );
         // The ball is live: the record is still turning, and none of it is heard.
         let shut: Vec<f32> = (0..480).map(|_| track.next().expect("a sample")).collect();
         assert!(
@@ -1514,13 +1652,76 @@ mod tests {
             "the track never came up: it settled at {last}"
         );
         // Shut again on the snap, and back where it was when the next window
-        // opens: the track kept running while nobody was listening.
+        // opens: the record kept running while nobody was listening.
         gate.store(0, Ordering::Relaxed);
         let quiet: Vec<f32> = (0..SAMPLE_RATE as usize / 2)
             .map(|_| track.next().expect("a sample"))
             .collect();
         let tail = quiet[quiet.len() - 1].abs();
         assert!(tail < 0.01, "the window never shut: {tail}");
+    }
+
+    #[test]
+    fn a_play_gets_the_next_song_from_somewhere_inside_it() {
+        // Three songs, each a ramp up from its own floor, so a sample says both
+        // which song it is and how far into it the snippet began.
+        let len = SAMPLE_RATE as usize * 30;
+        let song = |k: usize| -> Vec<f32> {
+            (0..len)
+                .map(|i| k as f32 * 0.25 + i as f32 / len as f32 * 0.2)
+                .collect()
+        };
+        let gate = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let snippet = Arc::new(AtomicU32::new(0));
+        let mut track = StadiumClip::new(
+            Arc::new(vec![song(0), song(1), song(2)]),
+            Arc::clone(&gate),
+            Arc::clone(&snippet),
+            0x5EED_2026,
+        );
+        let (mut songs, mut spots) = (Vec::new(), Vec::new());
+        for _ in 0..6 {
+            let opening = track.next().expect("a sample");
+            let playing = (opening / 0.25).floor() as usize;
+            songs.push(playing);
+            spots.push((opening - playing as f32 * 0.25) / 0.2);
+            assert!(opening > 0.01, "the snippet was silent");
+            // The play ends and the next one is called.
+            snippet.fetch_add(1, Ordering::Relaxed);
+        }
+        // A different song every play, cycling the album in order.
+        assert_eq!(songs[..3], [0, 1, 2], "the album was not played in order");
+        assert_eq!(songs[3], 0, "the album did not come round again");
+        // And never from the top of one: a DJ drops the needle where the song is.
+        // A draw can land near a song's beginning, so the question is whether any
+        // of them opened at the very top, not how far in they landed.
+        assert!(
+            spots.iter().all(|spot| *spot > 0.0),
+            "a snippet opened at the top: {spots:?}"
+        );
+        let mut distinct = spots.clone();
+        distinct.sort_by(|a, b| a.partial_cmp(b).expect("a finite spot"));
+        distinct.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        assert!(
+            distinct.len() >= 4,
+            "six plays found only {} spots: {spots:?}",
+            distinct.len()
+        );
+        // The snippet ends rather than running on, and the source keeps going:
+        // an iterator that returns `None` is a record that never plays again.
+        for _ in 0..((SNIPPET_SECONDS * SAMPLE_RATE as f32) as usize) {
+            track.next();
+        }
+        let over: Vec<f32> = (0..480).map(|_| track.next().expect("a sample")).collect();
+        assert!(
+            over.iter().all(|sample| *sample == 0.0),
+            "the snippet ran on past its end"
+        );
+        snippet.fetch_add(1, Ordering::Relaxed);
+        let next = (0..480)
+            .map(|_| track.next().expect("a sample"))
+            .fold(0.0f32, f32::max);
+        assert!(next > 0.01, "the next play got no record: {next}");
     }
 
     #[test]

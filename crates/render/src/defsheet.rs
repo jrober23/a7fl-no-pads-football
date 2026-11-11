@@ -42,8 +42,10 @@ pub fn draw_layered(
     }
     let x0 = MARGIN + SIDE + GAP;
     let w = frame.w as i32 - x0 - MARGIN;
-    let top = 26;
-    let bottom = frame.h as i32 - 64;
+    // Under the header band, down to the bottom margin: the room the offense's
+    // sheet has now that its text is written along the top.
+    let top = 56;
+    let bottom = frame.h as i32 - 11;
     let card_w = (w - (COLS as i32 - 1) * GAP) / COLS as i32;
     let rows = ((list.len() + COLS - 1) / COLS).max(1) as i32;
     let card_h = (bottom - top - (rows - 1) * GAP) / rows;
@@ -66,7 +68,7 @@ fn draw_panel(frame: &mut Frame, fronts: &[DefFront], pick: usize, in_calls: boo
 
     let x = MARGIN;
     let box_w = 118;
-    let top = 30;
+    let top = 64;
     let row_h = 34;
     frame.rounded_rect(x, top - 8, box_w, fronts.len() as i32 * row_h + 14, 4, EDGE);
     for (i, f) in fronts.iter().enumerate() {
@@ -280,18 +282,26 @@ mod tests {
     }
 
     #[test]
-    fn the_layered_defensive_sheet_keeps_the_text_bar_clear() {
+    fn the_layered_defensive_sheet_uses_the_room_the_footer_had() {
+        // The text is a header now, so the band a footer used to hang in is
+        // card, and the band the header sits in is the sheet's own.
         let book = defensive_playbook();
         let fronts = fronts_in(&book);
+        let backdrop = nopads_core::math::Rgb::hex(0x0B0F16);
         for (i, _) in fronts.iter().enumerate() {
             let mut frame = Frame::new(640, 360);
             draw_layered(&mut frame, &book, &fronts, i, 0, false);
-            for y in 296..360 {
+            let used = (296usize..350)
+                .flat_map(|y| (149usize..630).map(move |x| (x, y)))
+                .filter(|(x, y)| frame.color[y * 640 + x] != backdrop)
+                .count();
+            assert!(used > 0, "front {i} still leaves a footer's worth of sheet");
+            for y in 24usize..56 {
                 for x in 0..640 {
                     assert_eq!(
                         frame.color[y * 640 + x],
-                        nopads_core::math::Rgb::hex(0x0B0F16),
-                        "card into the bar at {x},{y} on front {i}"
+                        backdrop,
+                        "the sheet is drawn into the header at {x},{y} on front {i}"
                     );
                 }
             }

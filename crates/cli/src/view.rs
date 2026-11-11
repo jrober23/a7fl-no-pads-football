@@ -266,6 +266,24 @@ impl View {
         self.show(&mut frame, lines)
     }
 
+    /// The same screen with its text along the top instead of under it.
+    ///
+    /// A call sheet is a page, not a live picture: the line the score and the
+    /// controls sit on was a footer there, hanging off the bottom edge below a
+    /// band of empty sheet. As a header it reads before the cards, the way a
+    /// page's own heading does, and the cards get the room the footer had.
+    pub fn show_ui_header(&mut self, ui: &mut Frame, lines: &[String]) -> bool {
+        // A terminal has no picture to write a band into: it prints the text
+        // under its block characters, which is the only place it can go.
+        if matches!(&self.surface, Surface::Term(_)) {
+            return self.show_ui(ui, lines);
+        }
+        let mut frame = Frame::new(CANVAS_W, CANVAS_H);
+        frame.blit_up(ui, UI_SCALE);
+        draw_hud_at(&mut frame, lines, HEADER_TOP, true);
+        self.show(&mut frame, &[])
+    }
+
     /// A full screen of text: the call sheet, a prompt, the box score.
     pub fn page(&mut self, lines: &[String]) -> bool {
         self.page_at(lines, PAGE_TEXT)
@@ -449,17 +467,30 @@ pub fn with_hud(mut frame: Frame, lines: &[String]) -> Frame {
     frame
 }
 
-/// Text bar drawn straight into the picture, in the broadcast font.
+/// Where a header band starts: under the title band every full page of the
+/// interface draws in its own top twenty-two pixels, which is forty-four on
+/// the canvas.
+const HEADER_TOP: i32 = 46;
+
+/// Text bar drawn straight into the picture, in the broadcast font, along the
+/// bottom of the frame: the line under a live picture.
 fn draw_hud(frame: &mut Frame, lines: &[String]) {
+    let height = lines.len() as i32 * 10 + 6;
+    draw_hud_at(frame, lines, frame.h as i32 - height, false);
+}
+
+/// The same bar at `top`, with its rule against the edge it is pinned to: an
+/// underline when it is a header, an overline when it is a footer.
+fn draw_hud_at(frame: &mut Frame, lines: &[String], top: i32, header: bool) {
     let count = lines.len() as i32;
     if count == 0 {
         return;
     }
     let width = frame.w as i32;
     let height = count * 10 + 6;
-    let top = frame.h as i32 - height;
     frame.fill_rect_alpha(0, top, width, height, backdrop(), 0.78);
-    frame.fill_rect(0, top, width, 1, Rgb::new(48, 92, 148));
+    let rule = if header { top + height - 1 } else { top };
+    frame.fill_rect(0, rule, width, 1, Rgb::new(48, 92, 148));
     for (i, line) in lines.iter().enumerate() {
         let color = if line.contains(">>") || line.starts_with("TARGET") {
             accent()

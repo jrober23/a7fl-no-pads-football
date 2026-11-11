@@ -311,7 +311,9 @@ pub fn draw_panel(
 
     let x = MARGIN;
     let box_w = 118;
-    let top = 30;
+    // Under the band the sheet's own text is written in, which sits between
+    // the title and the plays.
+    let top = 64;
     let row_h = 30;
     let rows = formations.len() as i32;
     frame.rounded_rect(x, top - 8, box_w, rows * row_h + 14, 4, EDGE);

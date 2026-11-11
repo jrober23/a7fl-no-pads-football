@@ -128,8 +128,12 @@ pub const SNAP_OFFSIDE: f32 = 0.3;
 /// again.
 pub const PUMP_TIME: f32 = 0.55;
 
-/// How long an interception may be run back before the returner is done.
-pub const RETURN_SECONDS: f32 = 9.0;
+/// The backstop on a return: how long a man may keep running one back before
+/// the whistle goes anyway. It is a limit on a return nobody can end, not a
+/// play clock -- a hundred yards at a runner's pace is fourteen seconds -- and
+/// it was being measured from the snap, so a pick four seconds into a throw
+/// had five seconds to find the other end zone.
+pub const RETURN_SECONDS: f32 = 20.0;
 /// How long the chase takes to reach full speed. They have to turn and run; the
 /// man with the ball does not. Without it the nearest two were on him as soon as
 /// the grace ran out and every interception came back three yards.
@@ -4651,7 +4655,10 @@ impl<'a> PlaySim<'a> {
             self.finish_return(spot, false);
             return;
         }
-        if self.t > SNAP_DELAY + RETURN_SECONDS {
+        // The return's own clock, not the snap's: this used to count from the
+        // snap, so a man who picked one off late in a play was whistled down
+        // half way across the field with nobody near him.
+        if self.return_t > RETURN_SECONDS {
             self.finish_return(spot, false);
         }
     }
@@ -5051,6 +5058,39 @@ mod tests {
             is_try: false,
         }
     }
+    #[test]
+    fn a_return_is_clocked_from_its_own_start_and_not_from_the_snap() {
+        let (off, def_) = teams();
+        let book = playbook();
+        let d = defensive_playbook();
+        let mut sim = PlaySim::new(&off, &def_, &book[0], &d[0], &setup(50.0, 2, 8.0, 11));
+        // A pick four and a half seconds into the play. The return used to be
+        // allowed nine seconds from the snap, which left it four: half the
+        // field, and no way to the other end zone even with nobody near him.
+        sim.t = SNAP_DELAY + 4.5;
+        sim.start_return(7, 60.0, 1, 12.0);
+        assert!(
+            matches!(sim.phase, Phase::Return),
+            "the pick did not start a return"
+        );
+        let mut ran = 0.0;
+        while matches!(sim.phase, Phase::Return) && ran < 40.0 {
+            // Hold the chase and the runner apart: this is about the clock,
+            // not about whether anybody can make the tackle.
+            for i in 0..7 {
+                sim.players[i].pos = Vec2::new(95.0, -20.0);
+            }
+            sim.players[7].pos = Vec2::new(60.0, 0.0);
+            sim.players[7].vel = Vec2::ZERO;
+            sim.step(FIXED_DT);
+            ran += FIXED_DT;
+        }
+        assert!(
+            ran > 10.0,
+            "the return was over after {ran} s: the snap's clock cut it short"
+        );
+    }
+
 
     #[test]
     fn a_snap_produces_a_legal_result() {

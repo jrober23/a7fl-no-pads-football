@@ -1748,6 +1748,10 @@ impl Arcade {
     /// formation and the second is a play inside it, and the flip toggle runs that
     /// play to the other side without a second card for it.
     fn call_sheet(&mut self) -> Option<Play> {
+        // The sheet is the lull between plays, so this is where the stadium's
+        // music belongs -- the first call of a game included, which used to be
+        // silent because only the end of a play brought the record back.
+        self.audio.stadium(true);
         let forms = formations_in(&self.book);
         if forms.is_empty() {
             return None;
@@ -1782,7 +1786,7 @@ impl Arcade {
                 self.flip,
             );
             let lines = self.call_sheet_lines(&forms, &list);
-            if !self.view.show_ui(&mut frame, &lines) {
+            if !self.view.show_ui_header(&mut frame, &lines) {
                 self.quit = true;
                 return None;
             }
@@ -2455,6 +2459,10 @@ impl Arcade {
     /// The defensive call sheet. One list is enough here: the player is picking a
     /// front and a coverage, not a file of plays.
     fn def_sheet(&mut self) -> Option<DefCall> {
+        // The sheet is the lull between plays, so this is where the stadium's
+        // music belongs -- the first call of a game included, which used to be
+        // silent because only the end of a play brought the record back.
+        self.audio.stadium(true);
         let fronts = fronts_in(&self.defbook);
         if fronts.is_empty() {
             return None;
@@ -2483,7 +2491,7 @@ impl Arcade {
             let mut frame = nopads_render::Frame::new(UI_W, UI_H);
             defsheet::draw_layered(&mut frame, &self.defbook, &fronts, front, pick, in_calls);
             let lines = self.def_sheet_lines(fronts[front], &list, pick, in_calls);
-            if !self.view.show_ui(&mut frame, &lines) {
+            if !self.view.show_ui_header(&mut frame, &lines) {
                 self.quit = true;
                 return None;
             }

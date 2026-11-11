@@ -18,6 +18,10 @@ const MARGIN: i32 = 11;
 const GAP: i32 = 6;
 /// Cards across in the play pane.
 pub const COLS: usize = 3;
+/// Where the cards start, and the margin they stop at: clear of the title
+/// band and of the line of text written under it.
+const BODY_TOP: i32 = 56;
+const BODY_BOTTOM: i32 = 11;
 
 /// Move a cursor inside one formation's plays, wrapping round the grid.
 pub fn step_in(len: usize, cursor: usize, dir: Dir) -> usize {
@@ -55,8 +59,11 @@ pub fn draw_layered(
     let list: Vec<usize> = nopads_core::playbook::plays_in(book, formations[form_pick.min(formations.len() - 1)]);
     let x0 = MARGIN + SIDE + GAP;
     let w = frame.w as i32 - x0 - MARGIN;
-    let top = 26;
-    let bottom = frame.h as i32 - 64;
+    // The cards start under the band the score and the controls are written
+    // in -- it is a header now, not the footer it was -- and run down to the
+    // bottom margin, which is the room that footer kept for itself.
+    let top = BODY_TOP;
+    let bottom = frame.h as i32 - BODY_BOTTOM;
     let card_w = (w - (COLS as i32 - 1) * GAP) / COLS as i32;
     let rows = ((list.len() + COLS - 1) / COLS).max(1) as i32;
     let card_h = (bottom - top - (rows - 1) * GAP) / rows;
@@ -107,18 +114,39 @@ mod tests {
     }
 
     #[test]
-    fn the_layered_sheet_keeps_the_text_bar_clear() {
+    fn the_sheet_uses_the_room_the_footer_had() {
+        // The text is a header now, so the band a footer used to hang in is card:
+        // if it were still reserved, every pixel of it would be the backdrop.
         let book = nopads_core::playbook::playbook();
         let forms = nopads_core::playbook::formations_in(&book);
+        let backdrop = nopads_core::math::Rgb::hex(0x0B0F16);
         for (i, _) in forms.iter().enumerate() {
             let mut frame = Frame::new(640, 360);
             draw_layered(&mut frame, &book, &forms, i, 0, true, false);
-            for y in 296..360 {
+            let used = (296usize..350)
+                .flat_map(|y| (149usize..630).map(move |x| (x, y)))
+                .filter(|(x, y)| frame.color[y * 640 + x] != backdrop)
+                .count();
+            assert!(used > 0, "formation {i} still leaves a footer's worth of sheet");
+        }
+    }
+
+    #[test]
+    fn nothing_is_drawn_under_the_header_band() {
+        // The band itself belongs to the client, which writes the score and the
+        // controls into it; a card creeping up into it would be drawn over.
+        let book = nopads_core::playbook::playbook();
+        let forms = nopads_core::playbook::formations_in(&book);
+        let backdrop = nopads_core::math::Rgb::hex(0x0B0F16);
+        for (i, _) in forms.iter().enumerate() {
+            let mut frame = Frame::new(640, 360);
+            draw_layered(&mut frame, &book, &forms, i, 0, true, false);
+            for y in 24usize..BODY_TOP as usize {
                 for x in 0..640 {
                     assert_eq!(
                         frame.color[y * 640 + x],
-                        nopads_core::math::Rgb::hex(0x0B0F16),
-                        "card into the bar at {x},{y} on formation {i}"
+                        backdrop,
+                        "the sheet is drawn into the header at {x},{y} on formation {i}"
                     );
                 }
             }
