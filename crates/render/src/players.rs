@@ -66,11 +66,11 @@ impl Detail {
     /// the one that decides how the game looks, and it got the bigger share of
     /// the polygon budget.
     pub fn for_distance(yards: f32) -> Detail {
-        if yards < 7.0 {
+        if yards < 6.5 {
             Detail::Close
-        } else if yards < 20.0 {
+        } else if yards < 16.0 {
             Detail::Full
-        } else if yards < 38.0 {
+        } else if yards < 32.0 {
             Detail::Mid
         } else {
             Detail::Far

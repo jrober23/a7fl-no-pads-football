@@ -587,11 +587,59 @@ impl SceneRenderer {
     /// Draw several meshes in one pass, so a frame of fourteen men is split
     /// across the machine once rather than fourteen times.
     pub fn draw_meshes(&self, frame: &mut Frame, meshes: &[&Mesh], cam: &Camera) {
-        let mut work = Vec::new();
-        for mesh in meshes {
-            self.prepare(mesh, cam, &mut work);
+        let t = std::time::Instant::now();
+        // Each mesh is projected and lit on its own -- a triangle knows nothing
+        // about the ones in another mesh -- so the meshes are shared out and the
+        // results joined in their original order. The sharing is by triangle
+        // count, largest first, because one man in close-up is a hundred times
+        // the work of a man on the far hash: divided by mesh, one band would be
+        // handed the whole frame while the rest waited for it.
+        let bands = threads().min(meshes.len().max(1));
+        let mut order: Vec<usize> = (0..meshes.len()).collect();
+        order.sort_by_key(|&i| std::cmp::Reverse(meshes[i].tris.len()));
+        let mut bins: Vec<Vec<usize>> = vec![Vec::new(); bands];
+        let mut load = vec![0usize; bands];
+        for i in order {
+            let b = (0..bands).min_by_key(|&b| load[b]).unwrap_or(0);
+            load[b] += meshes[i].tris.len();
+            bins[b].push(i);
         }
+        let mut slots: Vec<Vec<Ready>> = std::thread::scope(|scope| {
+            let mut handles = Vec::with_capacity(bands);
+            for bin in &bins {
+                handles.push(scope.spawn(move || {
+                    let mut done: Vec<(usize, Vec<Ready>)> = Vec::with_capacity(bin.len());
+                    for &i in bin {
+                        let mut out = Vec::new();
+                        self.prepare(meshes[i], cam, &mut out);
+                        done.push((i, out));
+                    }
+                    done
+                }));
+            }
+            let mut slots: Vec<Vec<Ready>> = (0..meshes.len()).map(|_| Vec::new()).collect();
+            for h in handles {
+                for (i, part) in h.join().expect("a mesh band panicked") {
+                    slots[i] = part;
+                }
+            }
+            slots
+        });
+        let mut work: Vec<Ready> = Vec::with_capacity(slots.iter().map(Vec::len).sum());
+        for part in slots.iter_mut() {
+            work.append(part);
+        }
+        let prep = t.elapsed();
+        let t = std::time::Instant::now();
         fill_tiles(frame, &work);
+        if std::env::var_os("NOPADS_TIMING").is_some() {
+            eprintln!(
+                "    prep {:>5.1}  fill {:>5.1}  tris {}",
+                prep.as_secs_f64() * 1000.0,
+                t.elapsed().as_secs_f64() * 1000.0,
+                work.len()
+            );
+        }
     }
 
     /// Project and light every triangle of a mesh into something a band can fill.
@@ -723,6 +771,15 @@ impl SceneRenderer {
                     tex: if whole { textured } else { None },
                     fog: self.lighting.fog,
                     fog_t: fog,
+                    ys: {
+                        let a = projected[0].1;
+                        let b = projected[i].1;
+                        let c = projected[i + 1].1;
+                        (
+                            a.min(b).min(c).floor().max(0.0) as i32,
+                            a.max(b).max(c).ceil() as i32,
+                        )
+                    },
                 });
             }
         }
@@ -985,10 +1042,18 @@ struct Ready<'a> {
     tex: Option<&'a Texture>,
     fog: Rgb,
     fog_t: f32,
+    /// The rows of the frame this triangle can touch, worked out once here so a
+    /// band can reject it with two compares instead of the edge maths.
+    ys: (i32, i32),
 }
 
 impl Ready<'_> {
     fn fill(&self, tile: &mut crate::raster::Tile) {
+        // Every band walks the whole list, so a triangle outside the band was
+        // the larger half of the walk: two compares and no arithmetic.
+        if self.ys.1 < tile.y0 as i32 || self.ys.0 >= (tile.y0 + tile.rows) as i32 {
+            return;
+        }
         match self.tex {
             Some(tex) => tile.textured_shade_tri(self.p, self.uv, self.shades, tex, self.fog, self.fog_t),
             None => tile.shade_tri(self.p, self.color, self.shades, self.fog, self.fog_t),

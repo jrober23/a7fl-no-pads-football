@@ -868,6 +868,56 @@ pub struct Tile<'a> {
     pub depth: &'a mut [f32],
 }
 
+
+/// The columns of one row a triangle can actually cover.
+///
+/// The three barycentric weights are linear in x, so the coverage of a row is an
+/// interval that can be solved for directly instead of testing every pixel of
+/// the triangle's bounding box. The box was the expensive part of the
+/// rasteriser: a limb is a long, thin triangle whose box is hundreds of pixels
+/// across and whose span is a dozen, so most of a row was walked only to be
+/// rejected. The pixel's own test is still made inside the span, so which pixels
+/// a triangle wins does not change -- only how many are looked at. `slack` is
+/// the tolerance that test takes, so a pixel it would keep is never outside.
+#[inline]
+fn span(min_x: i32, max_x: i32, w0: f32, w1: f32, dw0: f32, dw1: f32, slack: f32) -> (i32, i32) {
+    /// Half a pixel either side of the solved interval, so a rounding error in
+    /// the weights cannot drop a pixel the test itself would have kept.
+    const PAD: f32 = 0.05;
+    /// And the same insurance in weight space. On a sliver a weight moves so
+    /// slowly along a row that the drift of the inner loop's repeated additions
+    /// is worth a pixel or more, so the interval is widened by this much weight
+    /// wherever the row is nearly flat.
+    const SLACK: f32 = 0.002;
+    let mut lo = min_x as f32 - PAD;
+    let mut hi = max_x as f32 + PAD;
+    // w0 and w1: each weight is a half-line across the row, facing whichever way
+    // it runs.
+    for (edge, d) in [(w0 + slack, dw0), (w1 + slack, dw1)] {
+        let reach = SLACK / d.abs().max(1e-9);
+        if d > 0.0 {
+            lo = lo.max(min_x as f32 - edge / d - reach);
+        } else if d < 0.0 {
+            hi = hi.min(min_x as f32 - edge / d + reach);
+        } else if edge < 0.0 {
+            return (1, 0);
+        }
+    }
+    // w2 = 1 - w0 - w1 is the same test on the third edge.
+    let (sum, dsum) = (w0 + w1 - 1.0 - slack, dw0 + dw1);
+    let reach = SLACK / dsum.abs().max(1e-9);
+    if dsum > 0.0 {
+        hi = hi.min(min_x as f32 - sum / dsum + reach);
+    } else if dsum < 0.0 {
+        lo = lo.max(min_x as f32 - sum / dsum - reach);
+    } else if sum > 0.0 {
+        return (1, 0);
+    }
+    let first = lo.ceil().max(min_x as f32) as i32;
+    let last = hi.floor().min(max_x as f32) as i32;
+    (first, last)
+}
+
 impl Tile<'_> {
     /// The rows of a triangle that fall inside this band.
     #[inline]
@@ -920,18 +970,26 @@ impl Tile<'_> {
         let dw1_dx = (y2 - y0) * inv_area;
         let dw1_dy = (x0 - x2) * inv_area;
         let ds_dx = d0 * dw0_dx + d1 * dw1_dx;
-        let ds_dy = d0 * dw0_dy + d1 * dw1_dy;
+
 
         let (sx, sy) = (min_x as f32 + 0.5, min_y as f32 + 0.5);
         let mut row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv_area;
         let mut row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv_area;
-        let mut row_s = shades[2] + row0 * d0 + row1 * d1;
+        let d0 = shades[0] - shades[2];
+        let d1 = shades[1] - shades[2];
         for py in min_y..=max_y {
-            let mut w0 = row0;
-            let mut w1 = row1;
-            let mut s = row_s;
             let row = self.row(py);
-            for px in min_x..=max_x {
+            let (first, last) = span(min_x, max_x, row0, row1, dw0_dx, dw1_dx, 0.0);
+            if first > last {
+                row0 += dw0_dy;
+                row1 += dw1_dy;
+                continue;
+            }
+            let step = (first - min_x) as f32;
+            let mut w0 = row0 + step * dw0_dx;
+            let mut w1 = row1 + step * dw1_dx;
+            let mut s = shades[2] + w0 * d0 + w1 * d1;
+            for px in first..=last {
                 let w2 = 1.0 - w0 - w1;
                 if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
                     let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
@@ -952,7 +1010,6 @@ impl Tile<'_> {
             }
             row0 += dw0_dy;
             row1 += dw1_dy;
-            row_s += ds_dy;
         }
     }
 
@@ -999,12 +1056,18 @@ impl Tile<'_> {
         let (sx, sy) = (min_x as f32 + 0.5, min_y as f32 + 0.5);
         let mut row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv_area;
         let mut row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv_area;
-
         for py in min_y..=max_y {
-            let mut w0 = row0;
-            let mut w1 = row1;
             let row = self.row(py);
-            for px in min_x..=max_x {
+            let (first, last) = span(min_x, max_x, row0, row1, dw0_dx, dw1_dx, 0.0005);
+            if first > last {
+                row0 += dw0_dy;
+                row1 += dw1_dy;
+                continue;
+            }
+            let step = (first - min_x) as f32;
+            let mut w0 = row0 + step * dw0_dx;
+            let mut w1 = row1 + step * dw1_dx;
+            for px in first..=last {
                 let w2 = 1.0 - w0 - w1;
                 if w0 >= -0.0005 && w1 >= -0.0005 && w2 >= -0.0005 {
                     let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
@@ -1076,18 +1139,26 @@ impl Tile<'_> {
         let dw1_dx = (y2 - y0) * inv_area;
         let dw1_dy = (x0 - x2) * inv_area;
         let ds_dx = d0 * dw0_dx + d1 * dw1_dx;
-        let ds_dy = d0 * dw0_dy + d1 * dw1_dy;
+
 
         let (sx, sy) = (min_x as f32 + 0.5, min_y as f32 + 0.5);
         let mut row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv_area;
         let mut row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv_area;
-        let mut row_s = shades[2] + row0 * d0 + row1 * d1;
+        let d0 = shades[0] - shades[2];
+        let d1 = shades[1] - shades[2];
         for py in min_y..=max_y {
-            let mut w0 = row0;
-            let mut w1 = row1;
-            let mut s = row_s;
             let row = self.row(py);
-            for px in min_x..=max_x {
+            let (first, last) = span(min_x, max_x, row0, row1, dw0_dx, dw1_dx, 0.0);
+            if first > last {
+                row0 += dw0_dy;
+                row1 += dw1_dy;
+                continue;
+            }
+            let step = (first - min_x) as f32;
+            let mut w0 = row0 + step * dw0_dx;
+            let mut w1 = row1 + step * dw1_dx;
+            let mut s = shades[2] + w0 * d0 + w1 * d1;
+            for px in first..=last {
                 let w2 = 1.0 - w0 - w1;
                 if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
                     let iz = w0 * iz0 + w1 * iz1 + w2 * iz2;
@@ -1112,7 +1183,6 @@ impl Tile<'_> {
             }
             row0 += dw0_dy;
             row1 += dw1_dy;
-            row_s += ds_dy;
         }
     }
 }
@@ -1285,5 +1355,56 @@ mod blit_tests {
         big.blit_scaled(&small, 2);
         assert_eq!(big.color[0], Rgb::new(7, 7, 7));
         assert_eq!(big.depth[63], 0.0);
+    }
+}
+
+#[cfg(test)]
+mod span_tests {
+    use super::*;
+
+    /// A row's span must hold every pixel the barycentric test keeps.
+    ///
+    /// The span is an optimisation, not a second opinion about coverage: if it
+    /// ever cut inside a triangle the picture would lose pixels along an edge,
+    /// and only on some frames, depending on where the triangle landed.
+    #[test]
+    fn a_row_span_holds_every_pixel_the_test_keeps() {
+        let tris = [
+            [(0.0f32, 0.0f32), (639.0, 12.0), (17.0, 359.0)],
+            [(300.0, 100.0), (320.0, 104.0), (306.0, 300.0)],
+            [(12.0, 350.0), (600.0, 350.0), (300.0, 20.0)],
+            [(1.5, 1.5), (40.0, 359.5), (38.0, 358.0)],
+        ];
+        for p in tris {
+            let (x0, y0) = p[0];
+            let (x1, y1) = p[1];
+            let (x2, y2) = p[2];
+            let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
+            assert!(area.abs() > 1e-6);
+            let inv = 1.0 / area;
+            let min_x = x0.min(x1).min(x2).floor().max(0.0) as i32;
+            let max_x = x0.max(x1).max(x2).ceil().min(639.0) as i32;
+            let dw0_dx = (y1 - y2) * inv;
+            let dw1_dx = (y2 - y0) * inv;
+            let sx = min_x as f32 + 0.5;
+            for py in 0..360 {
+                let sy = py as f32 + 0.5;
+                let row0 = ((x1 - sx) * (y2 - sy) - (x2 - sx) * (y1 - sy)) * inv;
+                let row1 = ((x2 - sx) * (y0 - sy) - (x0 - sx) * (y2 - sy)) * inv;
+                let (first, last) = span(min_x, max_x, row0, row1, dw0_dx, dw1_dx, 0.0);
+                let (mut w0, mut w1) = (row0, row1);
+                for px in min_x..=max_x {
+                    let w2 = 1.0 - w0 - w1;
+                    if w0 >= 0.0 && w1 >= 0.0 && w2 >= 0.0 {
+                        assert!(
+                            px >= first && px <= last,
+                            "row {py}: pixel {px} is covered but the span is {first}..{last}"
+                        );
+                    }
+                    w0 += dw0_dx;
+                    w1 += dw1_dx;
+                }
+            }
+        }
     }
 }

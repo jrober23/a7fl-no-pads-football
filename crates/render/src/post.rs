@@ -86,32 +86,37 @@ fn soften_edges(frame: &mut Frame) {
     if w < 3 || h < 3 {
         return;
     }
-    let rows = h.div_ceil(bands()).max(1);
-    // The snapshot and the luma table come out of one walk. The edge pass asks
-    // for four neighbouring lumas at every pixel it considers -- twenty-odd flops
-    // a pixel to answer a question the picture can be asked once -- and it needs
-    // the picture as it was before it wrote anything. Both are the same read.
+    // The edge test asks whether there is an edge between two neighbours, and a
+    // block of four pixels answers that as well as one does. The luma plane is
+    // half the size of the picture; the blending is still per pixel, because
+    // that is where the picture is.
+    let (lw, lh) = (w.div_ceil(2), h.div_ceil(2));
     SCRATCH.with(|pad| {
     let mut pad = pad.borrow_mut();
     let Scratch { src, luma: luma_plane, .. } = &mut *pad;
     src.resize(w * h, Rgb::BLACK);
-    luma_plane.resize(w * h, 0.0);
+    src.clone_from_slice(&frame.color);
+    luma_plane.resize(lw * lh, 0.0);
     {
         let color = &frame.color;
+        let rows = lh.div_ceil(bands()).max(1);
         std::thread::scope(|scope| {
-            for (i, (band, lband)) in src
-                .chunks_mut(rows * w)
-                .zip(luma_plane.chunks_mut(rows * w))
-                .enumerate()
-            {
+            for (i, band) in luma_plane.chunks_mut(rows * lw).enumerate() {
                 scope.spawn(move || {
                     let y0 = i * rows;
-                    for local in 0..band.len() / w {
-                        let row = (y0 + local) * w;
-                        for x in 0..w {
-                            let c = color[row + x];
-                            band[local * w + x] = c;
-                            lband[local * w + x] = luma(c);
+                    for local in 0..band.len() / lw {
+                        let y = (y0 + local) * 2;
+                        for hx in 0..lw {
+                            let x = hx * 2;
+                            let mut sum = 0.0;
+                            for oy in 0..2 {
+                                for ox in 0..2 {
+                                    let px = (x + ox).min(w - 1);
+                                    let py = (y + oy).min(h - 1);
+                                    sum += luma(color[py * w + px]);
+                                }
+                            }
+                            band[local * lw + hx] = sum / 4.0;
                         }
                     }
                 });
@@ -120,6 +125,7 @@ fn soften_edges(frame: &mut Frame) {
     }
     let src = &src;
     let luma_plane = &luma_plane;
+    let rows = h.div_ceil(bands()).max(1);
     std::thread::scope(|scope| {
         for (i, band) in frame.color.chunks_mut(rows * w).enumerate() {
             scope.spawn(move || {
@@ -129,10 +135,17 @@ fn soften_edges(frame: &mut Frame) {
                     if y == 0 || y >= h - 1 {
                         continue;
                     }
+                    let hy = y / 2;
                     for x in 1..w - 1 {
                         let here = y * w + x;
-                        let vertical = (luma_plane[here - w] - luma_plane[here + w]).abs();
-                        let horizontal = (luma_plane[here + 1] - luma_plane[here - 1]).abs();
+                        let hx = x / 2;
+                        let at = hy * lw + hx;
+                        let up = if hy > 0 { luma_plane[at - lw] } else { luma_plane[at] };
+                        let down = if hy + 1 < lh { luma_plane[at + lw] } else { luma_plane[at] };
+                        let left = if hx > 0 { luma_plane[at - 1] } else { luma_plane[at] };
+                        let right = if hx + 1 < lw { luma_plane[at + 1] } else { luma_plane[at] };
+                        let vertical = (up - down).abs();
+                        let horizontal = (right - left).abs();
                         let edge = vertical.max(horizontal);
                         if edge < 12.0 {
                             continue;

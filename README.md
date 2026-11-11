@@ -13,7 +13,7 @@ rendered frames.
 
 ## Download (Windows)
 
-Grab `7on7-v0.25.143-windows-x86_64.zip` from the
+Grab `7on7-v0.25.144-windows-x86_64.zip` from the
 [releases page](https://github.com/jrober23/a7fl-no-pads-football/releases), unzip
 it anywhere and run `7on7.exe`. Switch the pad on before launching: the client
 looks for a controller for three seconds, then falls back to the keyboard. Windows
@@ -1211,6 +1211,18 @@ The figure animates the hits too. A tackle is a pose, not a state flag: the defe
 reaches out and around the man with his chest over his toes, and the carrier tips
 over the top of it, hips first, until he is flat on the turf. A finished contract is
 not needed to see who hit whom.
+
+The picture is a software renderer on a 640x360 canvas, and the frame is built to
+a budget. The men are lofted side by side and placed together, the turf is drawn
+at half resolution and blown back up, the crowd is rebuilt a quarter at a time
+and the edge softening reads a luma plane half the size of the picture. The
+rasteriser walks the span a triangle actually covers rather than its bounding
+box: a limb is a long, thin triangle whose box is most of the row and whose span
+is a dozen pixels, and asking the inner loop to reject the rest was the largest
+single cost in the frame. On a six-core desktop that took a frame of this canvas
+from about 53 ms to about 20 -- from under twenty frames a second to fifty --
+with the models, the shadows and the treatment unchanged. `NOPADS_TIMING=1`
+prints the per-pass split while the game runs.
 
 Each figure is built at one of three detail levels chosen by its distance from the
 lens, so a man on the far hash is not paying for eyes, a bicep and a fistful of

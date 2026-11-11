@@ -187,6 +187,10 @@ pub struct Broadcast {
     /// The crowd, one man at a time, so it can move.
     crowd: Vec<CrowdFigure>,
     crowd_t: f32,
+    /// The house in quarters, each one rebuilt on its own turn.
+    crowd_parts: Vec<Mesh>,
+    crowd_part: usize,
+    crowd_built: bool,
     /// The men on the field, kept between frames: a man is the same size of
     /// figure every frame, so the triangles he is built from have a home.
     men: Vec<Mesh>,
@@ -204,6 +208,16 @@ pub struct Broadcast {
     #[cfg(feature = "authored")]
     authored_field: Option<crate::authored::AuthoredField>,
 }
+
+/// The house is rebuilt in this many turns, a part a frame.
+const CROWD_PARTS: usize = 4;
+
+/// Past this many yards from the lens a man casts no shadow.
+///
+/// The blur smears a far man's silhouette into a smudge a few pixels wide, the
+/// same smudge every man on that side of the field makes, and projecting a whole
+/// body across the field to find it was work nobody can see in the picture.
+const SHADOW_REACH: f32 = 34.0;
 
 impl Broadcast {
     pub fn new(w: usize, h: usize, teams: [Team; 2]) -> Self {
@@ -276,6 +290,9 @@ impl Broadcast {
             hand: None,
             crowd,
             crowd_t: 0.0,
+            crowd_parts: vec![Mesh::new(); CROWD_PARTS],
+            crowd_part: 0,
+            crowd_built: false,
             men: Vec::new(),
             shadow_masks: Vec::new(),
             fish: if matches!(venue.kind(), crate::venues::Kind::Underwater) {
@@ -1116,7 +1133,7 @@ impl Broadcast {
         let build = t.elapsed();
         // Shadows first so every player casts one.
         let t = std::time::Instant::now();
-        self.draw_shadows(frame, camera, &men[..count]);
+        self.draw_shadows(frame, camera, &men[..count], bodies);
         let shadow = t.elapsed();
         let t = std::time::Instant::now();
         self.paint_men(frame, camera, &men[..count]);
@@ -1141,8 +1158,9 @@ impl Broadcast {
     /// is back next frame, and his buffers are still his. Returns how many of
     /// them are this frame's.
     fn build_men(&mut self, camera: &Camera, bodies: &[RenderPlayer], men: &mut Vec<Mesh>) -> usize {
+        let count = bodies.len();
         let mut close_builds = 0;
-        while men.len() < bodies.len() {
+        while men.len() < count {
             men.push(Mesh::new());
         }
         // The authored field replaces the whole picture, not one man in it.
@@ -1164,19 +1182,13 @@ impl Broadcast {
         }
         #[cfg(feature = "authored")]
         let hero_at = self.hero_slot(camera, bodies);
-        for (slot, (mesh, p)) in men.iter_mut().zip(bodies).enumerate() {
-            // `slot` is only read when a hero is compiled in.
-            let _ = slot;
-            #[cfg(feature = "authored")]
-            if hero_at == Some(slot) {
-                if let Some(actor) = self.hero_actor.as_ref() {
-                    Self::hero_into(&actor.hero, actor.scale, p, self.crowd_t, None, mesh);
-                    continue;
-                }
-            }
-            let roster = &self.teams[p.team].roster[p.roster];
-            let uniform = &self.uniforms[p.team];
-            let pose = Self::pose_of(p);
+        // What each man is drawn at, and what he is posed doing. The close-up
+        // budget is spent in order, so the choice is made in order; the models
+        // themselves depend on nothing but their own man, so they are built side
+        // by side afterwards. Lofting fourteen bodies was the longest piece of
+        // the frame that was not the picture itself.
+        let mut plan: Vec<(players::Detail, Pose)> = Vec::with_capacity(count);
+        for p in bodies {
             // A man a long way from the lens is built cheaply: at that size the
             // eyes and the quadriceps are less than a pixel each.
             let dist = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
@@ -1190,10 +1202,42 @@ impl Broadcast {
                     close_builds += 1;
                 }
             }
-            players::build_mesh_into(mesh, roster, uniform, &pose, p.roster as u32, detail);
-            mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
+            plan.push((detail, Self::pose_of(p)));
         }
-        bodies.len()
+        let bands = crate::scene::threads().min(count.max(1));
+        let per = count.div_ceil(bands).max(1);
+        let teams = &self.teams;
+        let uniforms = &self.uniforms;
+        std::thread::scope(|scope| {
+            for ((chunk, plan), people) in men[..count]
+                .chunks_mut(per)
+                .zip(plan.chunks(per))
+                .zip(bodies.chunks(per))
+            {
+                scope.spawn(move || {
+                    for ((mesh, (detail, pose)), p) in chunk.iter_mut().zip(plan).zip(people) {
+                        let roster = &teams[p.team as usize].roster[p.roster];
+                        let uniform = &uniforms[p.team as usize];
+                        players::build_mesh_into(
+                            mesh,
+                            roster,
+                            uniform,
+                            pose,
+                            p.roster as u32,
+                            *detail,
+                        );
+                        mesh.place(Vec3::new(p.pos.x, p.pos.y, 0.0), p.heading, 1.0);
+                    }
+                });
+            }
+        });
+        #[cfg(feature = "authored")]
+        if let (Some(slot), Some(actor)) = (hero_at, self.hero_actor.as_ref()) {
+            if let Some(p) = bodies.get(slot) {
+                Self::hero_into(&actor.hero, actor.scale, p, self.crowd_t, None, &mut men[slot]);
+            }
+        }
+        count
     }
 
     /// Which man, if any, the authored figure stands in for this frame.
@@ -1350,7 +1394,13 @@ impl Broadcast {
     /// It is built at half the canvas: a shadow is a blurred silhouette and
     /// carries no detail a smaller mask would lose, so the mask, its blur and
     /// its composite cost a quarter of what they did at full size.
-    fn draw_shadows(&mut self, frame: &mut Frame, camera: &Camera, built: &[Mesh]) {
+    fn draw_shadows(
+        &mut self,
+        frame: &mut Frame,
+        camera: &Camera,
+        built: &[Mesh],
+        people: &[RenderPlayer],
+    ) {
         const DARKNESS: f32 = 0.42;
         const TINT: Rgb = Rgb::hex(0x0B1A10);
         /// How much smaller the shadow mask is than the picture.
@@ -1393,9 +1443,17 @@ impl Broadcast {
         // the union below is exact rather than an approximation of one.
         let scene = &self.scene;
         std::thread::scope(|scope| {
-            for (part, chunk) in masks.iter_mut().zip(built.chunks(per)) {
+            for ((part, chunk), people) in masks
+                .iter_mut()
+                .zip(built.chunks(per))
+                .zip(people.chunks(per))
+            {
                 scope.spawn(move || {
-                    for mesh in chunk {
+                    for (mesh, p) in chunk.iter().zip(people) {
+                        let d = (camera.pos - Vec3::new(p.pos.x, p.pos.y, 1.0)).length();
+                        if d > SHADOW_REACH {
+                            continue;
+                        }
                         scene.cast_silhouette(part, camera, mesh, sun);
                     }
                 });
@@ -1420,12 +1478,19 @@ impl Broadcast {
     /// The crowd for this frame: everybody bobbing on his own phase, with a few
     /// arms up. Two quads a man, doubled over so the far side of the ground is
     /// not invisible to a backface cull.
-    fn crowd_frame(&mut self, camera: &Camera) -> Mesh {
+    /// One turn's share of the house.
+    ///
+    /// A crowd bobs; it does not bob at sixty hertz. Rebuilt a quarter at a
+    /// time, each part moves at fifteen, which is more than a man two hundred
+    /// yards away needs, and the frame pays to build one quarter of the house.
+    fn crowd_frame(&mut self, camera: &Camera, part: usize) -> Mesh {
         let t = self.crowd_t;
-        self.crowd_t += 1.0 / 60.0;
         let mut mesh = Mesh::new();
-        mesh.tris.reserve(self.crowd.len() * 8);
-        for f in &self.crowd {
+        mesh.tris.reserve(self.crowd.len() / CROWD_PARTS * 8 + 8);
+        for (i, f) in self.crowd.iter().enumerate() {
+            if i % CROWD_PARTS != part {
+                continue;
+            }
             // A bob under a pixel is not life, it is noise: it flips the man
             // between neighbouring scanlines every frame, which is the shimmer
             // that reads as flickering stands. The far half of the house stands
@@ -1639,15 +1704,29 @@ impl Broadcast {
         // arms up. It is rebuilt every frame because placing a mesh bakes it.
         let t_ground = tg.elapsed();
         let tsc = std::time::Instant::now();
-        let crowd = self.crowd_frame(&camera);
+        self.crowd_t += 1.0 / 60.0;
+        if !self.crowd_built {
+            for i in 0..CROWD_PARTS {
+                let mesh = self.crowd_frame(&camera, i);
+                self.crowd_parts[i] = mesh;
+            }
+            self.crowd_built = true;
+        } else {
+            let part = self.crowd_part;
+            self.crowd_part = (part + 1) % CROWD_PARTS;
+            let mesh = self.crowd_frame(&camera, part);
+            self.crowd_parts[part] = mesh;
+        }
         let school = (!self.fish.is_empty())
             .then(|| crate::venues::school_frame(&self.fish, self.crowd_t));
         // One pass for all the scenery rather than one per mesh: each pass costs
         // a hand-out to the machine, and the stands, the crowd and the school are
         // the same picture.
-        let mut scenery: Vec<&Mesh> = Vec::with_capacity(3);
+        let mut scenery: Vec<&Mesh> = Vec::with_capacity(CROWD_PARTS + 2);
         scenery.push(&self.stands);
-        scenery.push(&crowd);
+        for part in &self.crowd_parts {
+            scenery.push(part);
+        }
         if let Some(school) = &school {
             scenery.push(school);
         }
