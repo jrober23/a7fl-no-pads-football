@@ -747,6 +747,9 @@ struct StadiumClip {
     /// The snippet that is playing, so a bump is noticed on the next sample.
     playing: u32,
     salt: u32,
+    /// The draw this play's spots come from: a snippet that runs out while the
+    /// lull does moves on to another point on the same draw.
+    seed: u32,
     level: f32,
 }
 
@@ -769,6 +772,7 @@ impl StadiumClip {
             snippet,
             playing,
             salt,
+            seed: 0,
             level,
         };
         clip.choose();
@@ -793,14 +797,30 @@ impl StadiumClip {
                 .find(|song| !self.album[*song].is_empty())
                 .unwrap_or(0);
         }
-        let len = self.album[self.song].len();
+        // A fresh draw every play, so the same song is a different record.
+        self.seed = (self.salt ^ playing.wrapping_mul(0x9E37_79B9)) | 1;
+        self.place();
+    }
+
+    /// Put the needle on a new spot in the song that is playing: the start of a
+    /// snippet, never the start of the record. Called again when a snippet runs
+    /// out while the lull is still going, which is how a long wait keeps its
+    /// music instead of falling quiet after ten seconds.
+    fn place(&mut self) {
+        let len = match self.album.get(self.song) {
+            Some(song) => song.len(),
+            None => return,
+        };
+        if len == 0 {
+            self.end = 0;
+            return;
+        }
         let want = (SAMPLE_RATE as f32 * SNIPPET_SECONDS) as usize;
         let span = len.saturating_sub(want);
-        let mut seed = (self.salt ^ playing.wrapping_mul(0x9E37_79B9)) | 1;
         let start = if span == 0 {
             0
         } else {
-            (next_unit(&mut seed) * span as f32) as usize
+            (next_unit(&mut self.seed) * span as f32) as usize
         };
         self.at = start;
         self.end = if span == 0 { len } else { start + want };
@@ -818,11 +838,20 @@ impl Iterator for StadiumClip {
         let target = f32::from_bits(self.gate.load(Ordering::Relaxed));
         let step = (target - self.level).clamp(-STADIUM_STEP, STADIUM_STEP);
         self.level = (self.level + step).clamp(0.0, 1.0);
-        // The snippet is over and the next play has not been called: silence,
-        // but samples of it, because an iterator that ends is a record that
-        // never comes back.
+        // The snippet is done. With the lull still on, the record moves to
+        // another spot in the same song: a player reading the call sheet for a
+        // minute hears a minute of music. On the snap it waits, silent, until
+        // the next play asks for a record -- and it waits in samples rather
+        // than ending, because an iterator that returns nothing is a player
+        // that never plays again.
         if self.at >= self.end {
-            return Some(0.0);
+            if target <= 0.0 || self.end == 0 {
+                return Some(0.0);
+            }
+            self.place();
+            if self.at >= self.end {
+                return Some(0.0);
+            }
         }
         let left = self.end - self.at;
         let fade = if left < self.tail {
@@ -1707,21 +1736,69 @@ mod tests {
             "six plays found only {} spots: {spots:?}",
             distinct.len()
         );
-        // The snippet ends rather than running on, and the source keeps going:
-        // an iterator that returns `None` is a record that never plays again.
+        // The lull outlasts the snippet, so the record moves on to another spot
+        // in the same song rather than going quiet after ten seconds.
         for _ in 0..((SNIPPET_SECONDS * SAMPLE_RATE as f32) as usize) {
             track.next();
         }
-        let over: Vec<f32> = (0..480).map(|_| track.next().expect("a sample")).collect();
+        let resumed: Vec<f32> = (0..480).map(|_| track.next().expect("a sample")).collect();
         assert!(
-            over.iter().all(|sample| *sample == 0.0),
-            "the snippet ran on past its end"
+            resumed.iter().any(|sample| *sample > 0.01),
+            "the record went quiet in the middle of a lull"
         );
+        // Shut on the snap: quiet until the next play asks for a record.
+        gate.store(0, Ordering::Relaxed);
+        for _ in 0..(SAMPLE_RATE as usize / 2) {
+            track.next();
+        }
+        let quiet: Vec<f32> = (0..480).map(|_| track.next().expect("a sample")).collect();
+        assert!(
+            quiet.iter().all(|sample| sample.abs() < 0.01),
+            "the record played through the snap"
+        );
+        // And the next play is another song, because the album is dealt one a play.
         snippet.fetch_add(1, Ordering::Relaxed);
-        let next = (0..480)
+        gate.store(1.0f32.to_bits(), Ordering::Relaxed);
+        let next = (0..SAMPLE_RATE as usize / 2)
             .map(|_| track.next().expect("a sample"))
             .fold(0.0f32, f32::max);
         assert!(next > 0.01, "the next play got no record: {next}");
+    }
+
+    #[test]
+    fn the_record_moves_on_while_the_lull_does() {
+        // One long song and the gate open: each snippet is followed by another
+        // spot in the same song, so a minute on the call sheet is a minute of
+        // music rather than ten seconds and a silence.
+        let len = SAMPLE_RATE as usize * 60;
+        let song: Vec<f32> = (0..len).map(|i| i as f32 / len as f32).collect();
+        let gate = Arc::new(AtomicU32::new(1.0f32.to_bits()));
+        let snippet = Arc::new(AtomicU32::new(0));
+        let mut track = StadiumClip::new(
+            Arc::new(vec![song]),
+            Arc::clone(&gate),
+            Arc::clone(&snippet),
+            3,
+        );
+        let mut spots = Vec::new();
+        for _ in 0..4 {
+            spots.push(track.next().expect("a sample"));
+            for _ in 0..((SNIPPET_SECONDS * SAMPLE_RATE as f32) as usize) {
+                let sample = track.next().expect("a sample");
+                assert!(sample >= 0.0, "the record fell silent in the lull");
+            }
+        }
+        assert!(
+            spots.iter().all(|spot| *spot > 0.0),
+            "a snippet opened at the top: {spots:?}"
+        );
+        let mut distinct = spots.clone();
+        distinct.sort_by(|a, b| a.partial_cmp(b).expect("a finite spot"));
+        distinct.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+        assert!(
+            distinct.len() >= 3,
+            "the record stayed on one spot: {spots:?}"
+        );
     }
 
     #[test]
