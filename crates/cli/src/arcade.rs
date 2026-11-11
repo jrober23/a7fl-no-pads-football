@@ -1740,6 +1740,15 @@ impl Arcade {
     // Play calling
     // ------------------------------------------------------------------
 
+    /// Whether the sheet's count is running. It is, except on a try: the ball is
+    /// spotted and there is no count for the offense to burn.
+    fn sheet_clock_running(&self) -> bool {
+        !matches!(
+            self.game.phase,
+            GamePhase::ConversionChoice { .. } | GamePhase::Conversion { .. }
+        )
+    }
+
     /// The call sheet, layered the way a coach's file is: the formations down the
     /// left, the plays of the highlighted formation on the cards.
     ///
@@ -1770,6 +1779,10 @@ impl Arcade {
             let now = Instant::now();
             let dt = now.duration_since(last).as_secs_f32().min(0.1);
             last = now;
+            // The count is the player's the moment the sheet is his: time spent
+            // reading the book is time off the clock, which is what stops a lull
+            // between plays from lasting as long as he likes.
+            let ran_out = self.sheet_clock_running() && self.game.tick_play_clock(dt);
 
             let forms = formations_in(&self.book);
             let list = plays_in(&self.book, forms[self.form]);
@@ -1788,6 +1801,20 @@ impl Arcade {
             let lines = self.call_sheet_lines(&forms, &list);
             if !self.view.show_ui_header(&mut frame, &lines) {
                 self.quit = true;
+                return None;
+            }
+
+            if ran_out {
+                // Nothing left on the count: the call is made anyway, and the
+                // flag comes at the line as a delay of game.
+                if let Some(&index) = list.get(self.sheet_pick) {
+                    let mut play = self.book[index].clone();
+                    if self.flip {
+                        play = play.flipped();
+                    }
+                    self.flip = false;
+                    return Some(play);
+                }
                 return None;
             }
             let input = self.input();
@@ -1878,6 +1905,7 @@ impl Arcade {
                 forms.get(self.form).map(|f| f.label()).unwrap_or(""),
                 forms.len()
             ),
+            format!("  PLAY CLOCK  {:.0}", self.game.play_clock.ceil()),
         ];
         if self.in_plays {
             lines.push(
@@ -2227,6 +2255,10 @@ impl Arcade {
         let board = hud::Scoreboard::from_game(&self.game);
 
         let my_team = self.my_team.unwrap_or(self.game.possession);
+        // The count the sheet left is the count the line gets: a call made with
+        // four seconds on the clock starts the snap with four, and one made with
+        // none starts it with none, which is the delay of game.
+        let clock_left = self.game.play_clock;
 
         // Borrow the fields separately: the game owns the snap, the rest of the
         // struct drives the picture and reads the controls.
@@ -2241,7 +2273,9 @@ impl Arcade {
 
         let mut ask_timeout = false;
         let record = game.snap_with(play, def, |sim| {
-            // No automatic snap on offense: the ball goes when the player says so.
+            // No automatic snap on offense: the ball goes when the player says so,
+            // and the count it goes on is the one the sheet had left.
+            sim.play_clock = clock_left;
             sim.await_snap(true);
             let mut caller = OffenseSnap {
                 header: &header,
@@ -2485,6 +2519,7 @@ impl Arcade {
             let now = Instant::now();
             let dt = now.duration_since(last).as_secs_f32().min(0.1);
             last = now;
+            let ran_out = self.sheet_clock_running() && self.game.tick_play_clock(dt);
             let list = def_calls_in(&self.defbook, fronts[front]);
             pick = pick.min(list.len().saturating_sub(1));
 
@@ -2493,6 +2528,16 @@ impl Arcade {
             let lines = self.def_sheet_lines(fronts[front], &list, pick, in_calls);
             if !self.view.show_ui_header(&mut frame, &lines) {
                 self.quit = true;
+                return None;
+            }
+
+            if ran_out {
+                // Their ball: a slow call is not a foul by the player, so the call
+                // on the card is the one that gets played.
+                if let Some(&index) = list.get(pick) {
+                    self.def_pick = index;
+                    return Some(self.defbook[index].clone());
+                }
                 return None;
             }
             let input = self.input();
@@ -2574,6 +2619,7 @@ impl Arcade {
                 call.rushers()
             ),
             format!("  {}", jobs.join("   ")),
+            format!("  PLAY CLOCK  {:.0}", self.game.play_clock.ceil()),
         ];
         lines.push(if in_calls {
             "  [STICK] CALL   [A] TAKE IT   [B] BACK TO FRONTS   [START] PAUSE".to_string()
